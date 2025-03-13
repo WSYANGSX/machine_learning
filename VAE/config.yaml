@@ -1,0 +1,33 @@
+training:
+  batch_size: 256
+  epochs: 200
+  grad_clip: 5.0
+  save_interval: 10
+  beta: 0.01
+
+optimizer:
+  type: "Adam"
+  learning_rate: 1.0e-3
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  weight_decay: 1.0e-5
+  scheduler:
+    type: ReduceLROnPlateau
+    factor: 0.5
+    patience: 5
+
+data:
+  data_path: "./Machine learning/Auto_Encoder/data"
+  num_workers: 4
+  norm_mean: 0.1307
+  norm_std: 0.3081
+
+model:
+  initialize_weights: True
+  z_dim: 64
+
+logging:
+  log_interval: 10
+  log_dir: "./Machine learning/VAE/logs"
+  model_dir: "./Machine learning/VAE/checkpoints"
