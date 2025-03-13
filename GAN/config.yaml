@@ -26,7 +26,7 @@ optimizer:
     patience: 5
 
 data:
-  data_path: "./Machine learning/Auto_Encoder/data"
+  data_path: "./Auto_Encoder/data"
   num_workers: 4
   norm_mean: 0.1307
   norm_std: 0.3081
@@ -37,5 +37,5 @@ model:
 logging:
   discriminator_log_interval: 10
   generator_log_interval: 10
-  log_dir: "./Machine learning/GAN/logs"
-  model_dir: "./Machine learning/GAN/checkpoints"
+  log_dir: "./GAN/logs"
+  model_dir: "./GAN/checkpoints"

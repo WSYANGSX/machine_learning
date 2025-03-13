@@ -3,7 +3,6 @@ from collections import OrderedDict
 import torch.nn as nn
 from GAN import GAN
 from models import Generator, Discriminator
-from torch.nn.utils import spectral_norm
 
 
 def main():
@@ -43,7 +42,7 @@ def main():
     discriminator = Discriminator(input_size=d_input_size, layers=d_layers)
 
     gan = GAN(
-        config_file="./Machine learning/GAN/config.yaml",
+        config_file="./GAN/config.yaml",
         input_dim=g_input_dim,
         generator=generator,
         discriminator=discriminator,
