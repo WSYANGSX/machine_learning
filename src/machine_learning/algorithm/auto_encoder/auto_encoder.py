@@ -6,12 +6,14 @@ from tqdm import trange
 from typing import Literal
 from collections import OrderedDict
 from torch.utils.data import DataLoader
-from src.machine_learning.utils.data_utils import CustomDataset, data_parse
+from machine_learning.utils.data_utils import CustomDataset, data_parse
 
 import torch
 import torch.nn as nn
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
+
+from machine_learning.utils import print_dict
 
 
 class AutoEncoder(nn.Module):
@@ -74,7 +76,8 @@ class AutoEncoder(nn.Module):
         )
         with open(config_file, "r") as f:
             config = yaml.safe_load(f)
-        print("configuration parameters: ", config)
+        print("Configuration parameters: ")
+        print_dict(config)
 
         return config
 

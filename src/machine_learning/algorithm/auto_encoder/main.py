@@ -50,7 +50,7 @@ def main():
         ]
     )
     auto_encoder = AutoEncoder(
-        "./Machine learning/Auto_Encoder/config.yaml",
+        "./src/machine_learning/algorithm/auto_encoder/config.yaml",
         encoder_layers,
         decoder_layers,
         "cuda",

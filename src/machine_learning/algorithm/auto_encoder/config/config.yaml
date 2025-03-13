@@ -1,3 +1,5 @@
+algorithm: "auto_encoder"
+
 training:
   batch_size: 256
   epochs: 200
@@ -17,7 +19,7 @@ optimizer:
     patience: 5
 
 data:
-  data_path: "./Machine learning/Auto_Encoder/data"
+  data_path: "./src/machine_learning/data/minist"
   num_workers: 4
   norm_mean: 0.1307
   norm_std: 0.3081
@@ -27,5 +29,5 @@ model:
 
 logging:
   log_interval: 10
-  log_dir: "./Machine learning/Auto_Encoder/logs"
-  model_dir: "./Machine learning/Auto_Encoder/checkpoints"
+  log_dir: "./logs/auto_encoder/"
+  model_dir: "./checkpoints/auto_encoder/"

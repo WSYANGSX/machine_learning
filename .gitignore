@@ -11,9 +11,13 @@ tests/
 .idea/
 
 # 忽略日志文件
+logs/
 *.log
 
 # 忽略打包文件
 dist/
 build/
 *.egg-info/
+
+# 忽略训练模型
+checkpoints/
