@@ -1,0 +1,21 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}", // 关键参数1：工作目录设为项目根
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}" // 关键参数2：添加项目根到PYTHONPATH
+            },
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "envFile": "${workspaceFolder}/.env" // 可选：如果有环境变量文件
+        }
+    ]
+}
