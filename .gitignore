@@ -1,0 +1,19 @@
+# 忽略 python 缓存文件夹
+__pycache__/
+*.py[cod]
+
+# 忽略测试文件夹
+tests/
+**/tests/
+
+# 忽略 IDE 配置文件夹
+.vscode/
+.idea/
+
+# 忽略日志文件
+*.log
+
+# 忽略打包文件
+dist/
+build/
+*.egg-info/
