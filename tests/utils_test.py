@@ -1,6 +1,6 @@
 import os
 import sys
-from src.machine_learning.utils import print_dict
+from machine_learning.utils import print_dict
 
 
 if __name__ == "__main__":

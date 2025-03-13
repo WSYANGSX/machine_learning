@@ -11,11 +11,10 @@
             "program": "${file}",
             "cwd": "${workspaceFolder}", // 关键参数1：工作目录设为项目根
             "env": {
-                "PYTHONPATH": "${workspaceFolder}" // 关键参数2：添加项目根到PYTHONPATH
+                "PYTHONPATH": "${workspaceFolder}/src" // 关键参数2：添加项目根到PYTHONPATH
             },
             "console": "integratedTerminal",
             "justMyCode": true,
-            "envFile": "${workspaceFolder}/.env" // 可选：如果有环境变量文件
         }
     ]
 }
