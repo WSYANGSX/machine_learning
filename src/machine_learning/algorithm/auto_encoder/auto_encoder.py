@@ -1,7 +1,6 @@
 # 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
 import os
-import yaml
 from tqdm import trange
 from typing import Literal
 from collections import OrderedDict
@@ -13,10 +12,10 @@ import torch.nn as nn
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.utils import print_dict
+from machine_learning.algorithm.base import AlgorithmBase
 
 
-class AutoEncoder(nn.Module):
+class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
         config_file: str,
@@ -33,14 +32,7 @@ class AutoEncoder(nn.Module):
         - decoder_layers: 解码器层定义(OrderedDict)
         - device: 运行设备(auto自动选择)
         """
-        super().__init__()
-
-        # -------------------- 设备配置 --------------------
-        self.device = self._configure_device(device)
-
-        # -------------------- 配置加载 --------------------
-        self.config = self._load_config(config_file)
-        self._validate_config()
+        super().__init__(config_file=config_file, device=device)
 
         # -------------------- 模型构建 --------------------
         encoder = self._build_module(encoder_layers, "Encoder")
@@ -65,29 +57,6 @@ class AutoEncoder(nn.Module):
         self.writer = SummaryWriter(log_dir=self.config["logging"]["log_dir"])
         self.best_loss = float("inf")
 
-    def _configure_device(self, device: str) -> torch.device:
-        if device == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        return torch.device(device)
-
-    def _load_config(self, config_file: str) -> dict:
-        assert os.path.splitext(config_file)[1] == ".yaml" or os.path.splitext(config_file)[1] == ".yml", (
-            "Please ultilize a yaml configuration file."
-        )
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
-        print("Configuration parameters: ")
-        print_dict(config)
-
-        return config
-
-    def _validate_config(self):
-        """配置参数验证"""
-        required_sections = ["data", "model", "training", "optimizer", "logging"]
-        for section in required_sections:
-            if section not in self.config:
-                raise ValueError(f"配置文件中缺少必要部分: {section}")
-
     def _configure_optimizer(self) -> None:
         opt_config = self.config["optimizer"]
         if opt_config["type"] == "Adam":
@@ -108,6 +77,9 @@ class AutoEncoder(nn.Module):
             )
         else:
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
+
+    def build_model(self):
+        pass
 
     def _configure_scheduler(self) -> None:
         self.scheduler = None

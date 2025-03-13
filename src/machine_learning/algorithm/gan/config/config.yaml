@@ -1,0 +1,41 @@
+training:
+  batch_size: 256
+  epochs: 50
+  grad_clip: 5.0
+  save_interval: 10
+  n_discriminator: 5
+
+optimizer:
+  type: "Adam"
+  # 生成器参数
+  g_learning_rate: 1.0e-4
+  g_beta1: 0.9
+  g_beta2: 0.999
+  g_eps: 1.0e-8
+  g_weight_decay: 0
+  # 判别器参数
+  d_learning_rate: 4.0e-4
+  d_beta1: 0.9
+  d_beta2: 0.999
+  d_eps: 1.0e-8
+  d_weight_decay: 0
+  
+  scheduler:
+    type: ReduceLROnPlateau
+    factor: 0.5
+    patience: 5
+
+data:
+  data_path: "./Auto_Encoder/data"
+  num_workers: 4
+  norm_mean: 0.1307
+  norm_std: 0.3081
+
+model:
+  initialize_weights: True
+
+logging:
+  discriminator_log_interval: 10
+  generator_log_interval: 10
+  log_dir: "./GAN/logs"
+  model_dir: "./GAN/checkpoints"

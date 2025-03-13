@@ -3,7 +3,7 @@ import yaml
 from tqdm import trange
 from typing import Literal
 from torch.utils.data import DataLoader
-from data_load import CustomDataset, data_parse
+from machine_learning.utils import CustomDataset, data_parse
 
 import torch
 import torch.nn as nn

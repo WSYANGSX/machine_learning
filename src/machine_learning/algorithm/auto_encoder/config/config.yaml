@@ -1,4 +1,4 @@
-algorithm: "auto_encoder"
+algorithm: "auto_encoder1"
 
 training:
   batch_size: 256
@@ -29,5 +29,5 @@ model:
 
 logging:
   log_interval: 10
-  log_dir: "./logs/auto_encoder/"
+  # log_dir: "./logs/auto_encoder/"
   model_dir: "./checkpoints/auto_encoder/"
