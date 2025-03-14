@@ -50,13 +50,10 @@ class MLP(BaseNet):
 
     def _initialize_weights(self):
         for module in self.modules():
-            if isinstance(module, (nn.Conv1d, nn.ConvTranspose1d, nn.Linear)):
+            if isinstance(module, nn.Linear):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
-            elif isinstance(module, nn.BatchNorm1d):
-                nn.init.constant_(module.weight, 1)
-                nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         x = self.flatten(x)
