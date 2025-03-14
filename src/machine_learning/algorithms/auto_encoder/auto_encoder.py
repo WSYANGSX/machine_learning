@@ -8,15 +8,15 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from machine_learning.algorithm.base import AlgorithmBase
+from machine_learning.algorithms.base import AlgorithmBase
 
 
 class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
         config_file: str,
-        encoder_layers: nn.Module,
-        decoder_layers: nn.Module,
+        encoder: nn.Module,
+        decoder: nn.Module,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
@@ -41,20 +41,15 @@ class AutoEncoder(AlgorithmBase):
         self._configure_optimizer()
         self._configure_scheduler()
 
-        # ----------------- 配置数据转换器 -------------------
-        self._configure_transform()
-
-        # -------------------- 数据加载 --------------------
-        self._load_datasets()
-
-        # -------------------- 数据记录 --------------------
-        self._configure_writer()
+    def _build_model(self, encoder: nn.Module, decoder: nn.Module):
+        self.encoder = encoder
+        self.decoder = decoder
 
     def _configure_optimizer(self) -> None:
         opt_config = self.config["optimizer"]
         if opt_config["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
-                params=self.model.parameters(),
+                params=self.parameters(),
                 lr=opt_config["learning_rate"],
                 betas=(opt_config["beta1"], opt_config["beta2"]),
                 eps=opt_config["eps"],
@@ -62,7 +57,7 @@ class AutoEncoder(AlgorithmBase):
             )
         elif opt_config["type"] == "SGD":
             self.optimizer = torch.optim.SGD(
-                params=self.model.parameters(),
+                params=self.parameters(),
                 lr=opt_config["learning_rate"],
                 momentum=opt_config["momentum"],
                 dampening=opt_config["dampening"],
@@ -70,9 +65,6 @@ class AutoEncoder(AlgorithmBase):
             )
         else:
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
-
-    def build_model(self):
-        pass
 
     def _configure_scheduler(self) -> None:
         self.scheduler = None
@@ -88,7 +80,7 @@ class AutoEncoder(AlgorithmBase):
 
     def _initialize_weights(self) -> None:
         print("Initializing weights with Kaiming normal...")
-        for m in self.model.modules():
+        for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
                 if m.bias is not None:

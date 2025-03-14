@@ -17,6 +17,7 @@ class AlgorithmBase(nn.Module, ABC):
     def __init__(
         self,
         config_file: str,
+        name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ):
         super().__init__()
@@ -28,16 +29,15 @@ class AlgorithmBase(nn.Module, ABC):
         self.config = self._load_config(config_file)
         self._validate_config()
 
+        # -------------------- 设备配置 --------------------
+        self.name = name if name is not None else self.config.get("algorithm", __class__.__name__)
+
         # -------------------- 数据记录 --------------------
         self._configure_writer()
 
     @property
-    def device(self) -> torch.device:
-        return self.device
-
-    @property
-    def config(self) -> dict:
-        return self.config
+    def algo_name(self) -> str:
+        return self.name
 
     def _configure_device(self, device: str) -> torch.device:
         if device == "auto":
