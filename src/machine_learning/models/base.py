@@ -63,7 +63,7 @@ class MLP(BaseNet):
         summary(self, input_size=(1, self.input_dim))
 
 
-class CNN(BaseNet):
+class ImageNet(BaseNet):
     def __init__(
         self,
         image_size: tuple[int],
