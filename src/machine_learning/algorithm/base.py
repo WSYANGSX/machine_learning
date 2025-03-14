@@ -77,16 +77,15 @@ class AlgorithmBase(nn.Module, ABC):
     @abstractmethod
     def _configure_optimizer(self):
         NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
-        
+
     @abstractmethod
     def _configure_scheduler(self):
         NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
-        
+
     @abstractmethod
     def _configure_transform(self):
         NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
-        
-    @abstractmethod
-    def _load_datasets(self)
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
 
+    @abstractmethod
+    def _load_datasets(self):
+        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
