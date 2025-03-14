@@ -1,6 +1,7 @@
 # 忽略 python 缓存文件夹
 __pycache__/
 *.py[cod]
+**/__pycache__/
 
 # 忽略测试文件夹
 tests/

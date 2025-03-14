@@ -4,6 +4,8 @@ from collections import OrderedDict
 import torch.nn as nn
 from torchinfo import summary
 
+from machine_learning.utils import cal_conv_output_size
+
 
 class BaseNet(nn.Module, ABC):
     def __init__(self):
@@ -71,7 +73,7 @@ class CNN(BaseNet):
         hidden_layers: OrderedDict[nn.Module],
     ) -> None:
         """
-        Network for image handling
+        Network for CNN handling
 
         Args:
             input_size (tuple[int]): 输入数据的size (channels, ...).
@@ -87,35 +89,26 @@ class CNN(BaseNet):
         self.output_size = output_size
 
         prev_size = self.input_size
-        for key, value in hidden_layers.items():
+        for value in hidden_layers.values():
             if isinstance(value, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-                if value.in_features != prev_dim:
-                    raise ValueError(f"层{key}输入维度不匹配.")
-                prev_dim = value.out_features
-        if prev_dim != self.output_size:
-            raise ValueError("最后一层输出维度与 output_dim 不匹配.")
+                prev_size = cal_conv_output_size(prev_size, value)
+        if prev_size != self.output_size:
+            raise ValueError("最后一层输出大小与 output_size 不匹配.")
 
-        self.front_net = nn.Sequential(hidden_layers)
-        self.output_layer = nn.Linear()
+        self.layers = nn.Sequential(hidden_layers)
 
     def _initialize_weights(self):
         for module in self.modules():
-            if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+            if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
-            elif isinstance(module, nn.BatchNorm2d):
+            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
-        output1 = self.layer1(x)
-        output2 = self.layer2(output1)
+        return self.layers(x)
 
-        mu = self.mu(output2)
-        log_var = self.sigma(output2)
-
-        return mu, log_var
-
-    def __str__(self):
-        summary(self, input_size=self.input_size)
+    def view_structure(self):
+        summary(self, input_size=(1, *self.input_size))
