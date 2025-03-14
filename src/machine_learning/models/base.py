@@ -88,11 +88,13 @@ class CNN(BaseNet):
         self.input_size = input_size
         self.output_size = output_size
 
-        prev_size = self.input_size
-        for value in hidden_layers.values():
+        prev_size = (1, *self.input_size)
+        for key, value in hidden_layers.items():
             if isinstance(value, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+                if prev_size[1] != value.in_channels:
+                    raise ValueError(f"输入通道数与{key}层所需通道数不一致.")
                 prev_size = cal_conv_output_size(prev_size, value)
-        if prev_size != self.output_size:
+        if prev_size[1:] != self.output_size:
             raise ValueError("最后一层输出大小与 output_size 不匹配.")
 
         self.layers = nn.Sequential(hidden_layers)

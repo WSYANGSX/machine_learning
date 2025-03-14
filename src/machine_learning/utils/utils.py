@@ -33,7 +33,7 @@ def cal_conv_output_size(input_size: Sequence[int], conv_layer: nn.Module) -> Se
     spatial_dims = input_size[2:]
 
     if isinstance(conv_layer, nn.Conv1d):
-        if len(input_size) != 1:
+        if len(spatial_dims) != 1:
             raise ValueError(f"Conv1d 输入需要 1 个空间维度，实际输入为 {spatial_dims}")
         k = conv_layer.kernel_size[0]
         p = conv_layer.padding[0]
