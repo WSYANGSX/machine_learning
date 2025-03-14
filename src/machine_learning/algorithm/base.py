@@ -6,8 +6,11 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+import numpy as np
+from torchvision.transforms import Compose
+from torch.utils.data import DataLoader
 
-from machine_learning.utils import print_dict
+from machine_learning.utils import print_dict, CustomDataset
 
 
 class AlgorithmBase(nn.Module, ABC):
@@ -27,6 +30,14 @@ class AlgorithmBase(nn.Module, ABC):
 
         # -------------------- 数据记录 --------------------
         self._configure_writer()
+
+    @property
+    def device(self) -> torch.device:
+        return self.device
+
+    @property
+    def config(self) -> dict:
+        return self.config
 
     def _configure_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -69,23 +80,50 @@ class AlgorithmBase(nn.Module, ABC):
             raise RuntimeError(f"Failed to create log directory at {log_path}: {e}")
 
         self.writer = SummaryWriter(log_dir=log_path)
+        self.best_loss = float("inf")
+
+    def _load_datasets(
+        self,
+        train_data: torch.Tensor | np.ndarray,
+        train_labels: torch.Tensor | np.ndarray,
+        validate_data: torch.Tensor | np.ndarray,
+        validate_labels: torch.Tensor | np.ndarray,
+        transform: Compose,
+    ):
+        # 创建dataset和datasetloader
+        train_dataset = CustomDataset(train_data, train_labels, transform)
+        validate_dataset = CustomDataset(validate_data, validate_labels, transform)
+
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.config["training"]["batch_size"],
+            shuffle=True,
+            num_workers=self.config["data"]["num_workers"],
+        )
+        self.validate_loader = DataLoader(
+            validate_dataset,
+            batch_size=self.config["training"]["batch_size"],
+            shuffle=False,
+            num_workers=self.config["data"]["num_workers"],
+        )
 
     @abstractmethod
     def _build_model(self):
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
+        """
+        构建算法中使用的模型
+        """
+        pass
 
     @abstractmethod
     def _configure_optimizer(self):
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
+        """
+        配置优化器
+        """
+        pass
 
     @abstractmethod
     def _configure_scheduler(self):
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
-
-    @abstractmethod
-    def _configure_transform(self):
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
-
-    @abstractmethod
-    def _load_datasets(self):
-        NotImplementedError(f"Please implement the 'build_model' method for {self.__class__.__name__}.")
+        """
+        配置学习率调度器
+        """
+        pass

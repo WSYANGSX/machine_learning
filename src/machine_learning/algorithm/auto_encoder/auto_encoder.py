@@ -4,13 +4,9 @@ import os
 from tqdm import trange
 from typing import Literal
 from collections import OrderedDict
-from torch.utils.data import DataLoader
-from machine_learning.utils.data_utils import CustomDataset, data_parse
 
 import torch
 import torch.nn as nn
-from torchvision import transforms
-from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.algorithm.base import AlgorithmBase
 
@@ -19,25 +15,23 @@ class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
         config_file: str,
-        encoder_layers: OrderedDict[nn.Module],
-        decoder_layers: OrderedDict[nn.Module],
+        encoder_layers: nn.Module,
+        decoder_layers: nn.Module,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
         自编码器实现
 
         parameters:
-        - config_file: 配置文件路径(YAML格式)
-        - encoder_layers: 编码器层定义(OrderedDict)
-        - decoder_layers: 解码器层定义(OrderedDict)
-        - device: 运行设备(auto自动选择)
+        - config_file (str): 配置文件路径(YAML格式).
+        - encoder_layers (nn.Module): 编码器层定义.
+        - decoder_layers (nn.Module): 解码器层定义.
+        - device (str): 运行设备(auto自动选择).
         """
         super().__init__(config_file=config_file, device=device)
 
         # -------------------- 模型构建 --------------------
-        encoder = self._build_module(encoder_layers, "Encoder")
-        decoder = self._build_module(decoder_layers, "Decoder")
-        self.model = nn.Sequential(encoder, decoder).to(self.device)
+        self._build_model()
 
         # -------------------- 权重初始化 --------------------
         if self.config["model"]["initialize_weights"]:
@@ -54,8 +48,7 @@ class AutoEncoder(AlgorithmBase):
         self._load_datasets()
 
         # -------------------- 数据记录 --------------------
-        self.writer = SummaryWriter(log_dir=self.config["logging"]["log_dir"])
-        self.best_loss = float("inf")
+        self._configure_writer()
 
     def _configure_optimizer(self) -> None:
         opt_config = self.config["optimizer"]
@@ -93,14 +86,6 @@ class AutoEncoder(AlgorithmBase):
                 verbose=True,
             )
 
-    def _configure_transform(self) -> None:
-        self.transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(mean=self.config["data"]["norm_mean"], std=self.config["data"]["norm_std"]),
-            ]
-        )
-
     def _initialize_weights(self) -> None:
         print("Initializing weights with Kaiming normal...")
         for m in self.model.modules():
@@ -117,27 +102,6 @@ class AutoEncoder(AlgorithmBase):
         for name, layer in layers.items():
             print(f"  - {name}: {layer}")
         return nn.Sequential(layers)
-
-    def _load_datasets(self) -> None:
-        print("Loading datasets...")
-        train_data, train_labels, validate_data, validate_labels = data_parse(self.config["data"]["data_path"])
-
-        # 创建dataset和datasetloader
-        train_dataset = CustomDataset(train_data, train_labels, self.transform)
-        validate_dataset = CustomDataset(validate_data, validate_labels, self.transform)
-
-        self.train_loader = DataLoader(
-            train_dataset,
-            batch_size=self.config["training"]["batch_size"],
-            shuffle=True,
-            num_workers=self.config["data"]["num_workers"],
-        )
-        self.validate_loader = DataLoader(
-            validate_dataset,
-            batch_size=self.config["training"]["batch_size"],
-            shuffle=False,
-            num_workers=self.config["data"]["num_workers"],
-        )
 
     def train_epoch(self, epoch: int) -> float:
         """训练单个epoch"""
