@@ -73,7 +73,7 @@ class CNN(BaseNet):
         """CNN network
 
         Args:
-            image_size (tuple[int]): 输入图像数据的size (channels, weight, height).
+            image_size (tuple[int]): 输入图像数据的size (channels, height, weight).
             output_size (tuple[int]): 输出特征向量的size.
             hidden_layers (OrderedDict[nn.Module]): 隐藏层.
         """
