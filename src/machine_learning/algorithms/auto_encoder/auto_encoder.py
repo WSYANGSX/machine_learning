@@ -78,7 +78,6 @@ class AutoEncoder(AlgorithmBase):
             )
 
     def _initialize_weights(self) -> None:
-        print("Initializing weights with Kaiming normal...")
         for child in self.children():
             child._initialize_weights()
 

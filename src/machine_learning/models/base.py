@@ -48,6 +48,7 @@ class MLP(BaseNet):
         self.layers = nn.Sequential(hidden_layers)
 
     def _initialize_weights(self):
+        print("Initializing weights with Kaiming normal...")
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
@@ -100,6 +101,7 @@ class CNN(BaseNet):
         self.layers = nn.Sequential(hidden_layers)
 
     def _initialize_weights(self):
+        print("Initializing weights with Kaiming normal...")
         for module in self.modules():
             if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
