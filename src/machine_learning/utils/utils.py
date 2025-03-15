@@ -82,7 +82,6 @@ def cal_pooling_output_size(input_size: Sequence[int], pooling_layer: nn.Module)
     ) -> int:
         numerator = input_dim + 2 * padding - dilation * (kernel - 1)
         if ceil_mode:
-            # 向上取整逻辑（参考 PyTorch 官方文档）
             return (numerator + stride - 1) // stride
         else:
             # 向下取整逻辑

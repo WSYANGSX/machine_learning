@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 from collections import OrderedDict
-from auto_encoder import AutoEncoder
+from machine_learning.models import CNN, MLP
 
 
 def main():

@@ -3,10 +3,6 @@ __pycache__/
 *.py[cod]
 **/__pycache__/
 
-# 忽略测试文件夹
-tests/
-**/tests/
-
 # 忽略 IDE 配置文件夹
 .vscode/
 .idea/

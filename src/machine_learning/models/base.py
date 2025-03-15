@@ -4,7 +4,7 @@ from collections import OrderedDict
 import torch.nn as nn
 from torchinfo import summary
 
-from machine_learning.utils import cal_conv_output_size
+from machine_learning.utils import cal_conv_output_size, cal_pooling_output_size
 
 
 class BaseNet(nn.Module, ABC):
@@ -17,6 +17,10 @@ class BaseNet(nn.Module, ABC):
 
     @abstractmethod
     def view_structure(self):
+        pass
+
+    @abstractmethod
+    def check_layers(self):
         pass
 
 
@@ -35,14 +39,7 @@ class MLP(BaseNet):
         if not hidden_layers:
             raise ValueError("hidden_layers不能为空.")
 
-        prev_dim = input_dim
-        for key, value in hidden_layers.items():
-            if isinstance(value, nn.Linear):
-                if value.in_features != prev_dim:
-                    raise ValueError(f"层{key}输入维度不匹配.")
-                prev_dim = value.out_features
-        if prev_dim != output_dim:
-            raise ValueError("最后一层输出维度与 output_dim 不匹配.")
+        self.check_layers(input_dim, output_dim, hidden_layers)
 
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -63,6 +60,16 @@ class MLP(BaseNet):
 
     def view_structure(self):
         summary(self, input_size=(1, self.input_dim))
+
+    def check_layers(self, input_dim: int, output_dim: int, hidden_layers: OrderedDict[str, nn.Module]) -> None:
+        prev_dim = input_dim
+        for key, value in hidden_layers.items():
+            if isinstance(value, nn.Linear):
+                if value.in_features != prev_dim:
+                    raise ValueError(f"层{key}输入维度不匹配.")
+                prev_dim = value.out_features
+        if prev_dim != output_dim:
+            raise ValueError("最后一层输出维度与 output_dim 不匹配.")
 
 
 class CNN(BaseNet):
@@ -85,17 +92,10 @@ class CNN(BaseNet):
         if not hidden_layers:
             raise ValueError("hidden_layers不能为空.")
 
+        self.check_layers(input_size, output_size, hidden_layers)
+
         self.input_size = input_size
         self.output_size = output_size
-
-        prev_size = (1, *self.input_size)
-        for key, value in hidden_layers.items():
-            if isinstance(value, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-                if prev_size[1] != value.in_channels:
-                    raise ValueError(f"输入通道数与{key}层所需通道数不一致.")
-                prev_size = cal_conv_output_size(prev_size, value)
-        if prev_size[1:] != self.output_size:
-            raise ValueError("最后一层输出大小与 output_size 不匹配.")
 
         self.layers = nn.Sequential(hidden_layers)
 
@@ -114,3 +114,17 @@ class CNN(BaseNet):
 
     def view_structure(self):
         summary(self, input_size=(1, *self.input_size))
+
+    def check_layers(self, input_size, output_size, hidden_layers):
+        prev_size = (1, *input_size)
+        for key, value in hidden_layers.items():
+            if isinstance(value, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+                if prev_size[1] != value.in_channels:
+                    raise ValueError(f"输入通道数与{key}层所需通道数不一致.")
+                prev_size = cal_conv_output_size(prev_size, value)
+            elif isinstance(
+                value, (nn.AvgPool1d, nn.AvgPool2d, nn.AvgPool3d, nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d)
+            ):
+                prev_size = cal_pooling_output_size(prev_size, value)
+        if prev_size[1:] != output_size:
+            raise ValueError("最后一层输出大小与 output_size 不匹配.")

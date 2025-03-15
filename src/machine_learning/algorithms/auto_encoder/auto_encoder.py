@@ -3,11 +3,11 @@
 import os
 from tqdm import trange
 from typing import Literal
-from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 
+from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 
 
@@ -15,8 +15,8 @@ class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
         config_file: str,
-        encoder: nn.Module,
-        decoder: nn.Module,
+        encoder: BaseNet,
+        decoder: BaseNet,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
@@ -41,7 +41,7 @@ class AutoEncoder(AlgorithmBase):
         self._configure_optimizer()
         self._configure_scheduler()
 
-    def _build_model(self, encoder: nn.Module, decoder: nn.Module):
+    def _build_model(self, encoder: BaseNet, decoder: BaseNet):
         self.encoder = encoder
         self.decoder = decoder
 
@@ -75,29 +75,18 @@ class AutoEncoder(AlgorithmBase):
                 mode="min",
                 factor=sched_config.get("factor", 0.1),
                 patience=sched_config.get("patience", 10),
-                verbose=True,
             )
 
     def _initialize_weights(self) -> None:
         print("Initializing weights with Kaiming normal...")
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def _build_module(self, layers: OrderedDict[nn.Module], module_name: str) -> nn.Sequential:
-        print(f"Building {module_name}")
-        for name, layer in layers.items():
-            print(f"  - {name}: {layer}")
-        return nn.Sequential(layers)
+        for child in self.children():
+            child._initialize_weights()
 
     def train_epoch(self, epoch: int) -> float:
         """训练单个epoch"""
-        self.model.train()
+        self.encoder.train()
+        self.decoder.train
+
         total_loss = 0.0
         criterion = nn.MSELoss()
 
@@ -105,7 +94,10 @@ class AutoEncoder(AlgorithmBase):
             data = data.to(self.device, non_blocking=True)
 
             self.optimizer.zero_grad()
-            output = self.model(data)
+
+            z = self.encoder(data)
+            output = self.decoder(z)
+
             loss = criterion(output, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
@@ -123,14 +115,16 @@ class AutoEncoder(AlgorithmBase):
 
     def validate(self) -> float:
         """验证步骤"""
-        self.model.eval()
+        self.encoder.eval()
+        self.decoder.eval()
+        
         total_loss = 0.0
         criterion = nn.MSELoss()
 
         with torch.no_grad():
             for data, _ in self.validate_loader:
                 data = data.to(self.device, non_blocking=True)
-                recon = self.model(data)
+                recon = self.decoder(self.encoder(data))
                 total_loss += criterion(recon, data).item()
 
         avg_loss = total_loss / len(self.validate_loader)
@@ -190,14 +184,15 @@ class AutoEncoder(AlgorithmBase):
 
     def visualize_reconstruction(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self.model.eval()
+        self.decoder.eval()
+        self.encoder.eval()
 
         data, _ = next(iter(self.validate_loader))
         sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
         data = data[sample_indices].to(self.device)
 
         with torch.no_grad():
-            reconstructions = self.model(data)
+            reconstructions = self.decoder(self.encoder(data))
 
         import matplotlib.pyplot as plt
 
