@@ -13,10 +13,11 @@ optimizer:
   beta2: 0.999
   eps: 1.0e-8
   weight_decay: 1.0e-5
-  scheduler:
-    type: ReduceLROnPlateau
-    factor: 0.5
-    patience: 5
+  
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 5  
 
 data:
   data_path: "./src/machine_learning/data/minist"

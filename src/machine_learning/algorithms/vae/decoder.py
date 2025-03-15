@@ -5,7 +5,7 @@ from torchinfo import summary
 
 
 class Decoder(nn.Module):
-    def __init__(self, input_size: tuple[int]) -> None:
+    def __init__(self, input_size: int) -> None:
         super().__init__()
 
         self.input_size = input_size
@@ -13,7 +13,7 @@ class Decoder(nn.Module):
         self.layer1 = nn.Sequential(
             OrderedDict(
                 [
-                    ("linear", nn.Linear(input_size[-1], 294)),
+                    ("linear", nn.Linear(input_size, 294)),
                     ("reshape", nn.Unflatten(1, (6, 7, 7))),
                 ]
             ),
@@ -64,7 +64,7 @@ class Decoder(nn.Module):
         return output4
 
     def view_structure(self):
-        summary(self, input_size=self.input_size)
+        summary(self, input_size=(1, self.input_size))
 
     def view_modules(self):
         for module in self.named_children():
@@ -72,6 +72,6 @@ class Decoder(nn.Module):
 
 
 if __name__ == "__main__":
-    decoder = Decoder((1, 128))
+    decoder = Decoder(128)
     decoder._initialize_weights()
     decoder.view_structure()

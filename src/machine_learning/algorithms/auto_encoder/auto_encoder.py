@@ -17,6 +17,7 @@ class AutoEncoder(AlgorithmBase):
         config_file: str,
         encoder: BaseNet,
         decoder: BaseNet,
+        name: str = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
@@ -28,7 +29,7 @@ class AutoEncoder(AlgorithmBase):
         - decoder_layers (nn.Module): 解码器层定义.
         - device (str): 运行设备(auto自动选择).
         """
-        super().__init__(config_file=config_file, device=device)
+        super().__init__(config_file=config_file, name=name, device=device)
 
         # -------------------- 模型构建 --------------------
         self._build_model(encoder, decoder)
@@ -68,7 +69,7 @@ class AutoEncoder(AlgorithmBase):
 
     def _configure_scheduler(self) -> None:
         self.scheduler = None
-        sched_config = self.config["optimizer"].get("scheduler", {})
+        sched_config = self.config.get("scheduler", {})
         if sched_config.get("type") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
@@ -76,10 +77,6 @@ class AutoEncoder(AlgorithmBase):
                 factor=sched_config.get("factor", 0.1),
                 patience=sched_config.get("patience", 10),
             )
-
-    def _initialize_weights(self) -> None:
-        for child in self.children():
-            child._initialize_weights()
 
     def train_epoch(self, epoch: int) -> float:
         """训练单个epoch"""
@@ -116,7 +113,7 @@ class AutoEncoder(AlgorithmBase):
         """验证步骤"""
         self.encoder.eval()
         self.decoder.eval()
-        
+
         total_loss = 0.0
         criterion = nn.MSELoss()
 
@@ -167,7 +164,8 @@ class AutoEncoder(AlgorithmBase):
         """保存模型检查点"""
         state = {
             "epoch": epoch,
-            "model_state": self.model.state_dict(),
+            "encoder_state": self.encoder.state_dict(),
+            "decoder_state": self.decoder.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
             "best_loss": self.best_loss,
             "config": self.config,

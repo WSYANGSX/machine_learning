@@ -1,22 +1,26 @@
 import torch.nn as nn
 
 from collections import OrderedDict
+from machine_learning.algorithms import AutoEncoder
 from machine_learning.models import CNN, MLP
 
 
 def main():
-    # input image size N*1*28*28
+    image_size = (1, 28, 28)
+    
+    encoder = CNN
+    
     encoder_layers = OrderedDict(
         [
             (
                 "conv1",
-                nn.Conv2d(in_channels=1, out_channels=3, kernel_size=3, stride=2, padding=1),
+                nn.Conv2d(1, 3, 3, 2, 1),
             ),
             (
                 "BatchNorm1",
                 nn.BatchNorm2d(3),
             ),
-            ("relu1", nn.ReLU()),  # output image size N*3*14*14
+            ("relu1", nn.ReLU()),
             (
                 "conv2",
                 nn.Conv2d(3, 6, 3, 2, 1),
@@ -25,9 +29,9 @@ def main():
                 "BatchNorm2",
                 nn.BatchNorm2d(6),
             ),
-            ("relu2", nn.ReLU()),  # output image size N*6*7*7
-            ("reshape", nn.Flatten()),  # output image size N*294
-            ("linear", nn.Linear(294, 128)),  # output image size N*128
+            ("relu2", nn.ReLU()),
+            ("reshape", nn.Flatten()),
+            ("linear", nn.Linear(294, 128)),
         ]
     )
     decoder_layers = OrderedDict(
@@ -50,7 +54,7 @@ def main():
         ]
     )
     auto_encoder = AutoEncoder(
-        "./src/machine_learning/algorithm/auto_encoder/config/config.yaml",
+        "./src/machine_learning/algorithms/auto_encoder/config/config.yaml",
         encoder_layers,
         decoder_layers,
         "cuda",

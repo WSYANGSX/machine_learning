@@ -57,7 +57,7 @@ class AlgorithmBase(nn.Module, ABC):
 
     def _validate_config(self):
         """配置参数验证"""
-        required_sections = ["data", "model", "training", "optimizer", "logging"]
+        required_sections = ["data", "model", "training", "optimizer", "logging", "scheduler"]
         for section in required_sections:
             if section not in self.config:
                 raise ValueError(f"配置文件中缺少必要部分: {section}")
@@ -107,6 +107,10 @@ class AlgorithmBase(nn.Module, ABC):
             num_workers=self.config["data"]["num_workers"],
         )
 
+    def _initialize_weights(self) -> None:
+        for child in self.children():
+            child._initialize_weights()
+
     @abstractmethod
     def _build_model(self):
         """
@@ -126,4 +130,16 @@ class AlgorithmBase(nn.Module, ABC):
         """
         配置学习率调度器
         """
+        pass
+
+    @abstractmethod
+    def train_epoch(self, epoch) -> float:
+        pass
+
+    @abstractmethod
+    def validate(self) -> float:
+        pass
+
+    @abstractmethod
+    def save_checkpoint(self, epoch: int, is_best: bool = False) -> None:
         pass
