@@ -77,7 +77,7 @@ class CNN(BaseNet):
 
         Args:
             input_size (tuple[int]): 输入数据的size (channels, ...).
-            output_size (tuple[int]): 输出特征向量的size.
+            output_size (tuple[int]): 输出数据的size (channels, ...).
             hidden_layers (OrderedDict[nn.Module]): 隐藏层.
         """
         super().__init__()

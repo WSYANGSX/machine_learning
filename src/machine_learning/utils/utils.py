@@ -64,3 +64,72 @@ def cal_conv_output_size(input_size: Sequence[int], conv_layer: nn.Module) -> Se
         new_h = compute_dim(spatial_dims[1], kh, ph, sh, dh)
         new_w = compute_dim(spatial_dims[2], kw, pw, sw, dw)
         return (input_size[0], conv_layer.out_channels, new_d, new_h, new_w)
+
+
+def cal_pooling_output_size(input_size: Sequence[int], pooling_layer: nn.Module) -> Sequence[int]:
+    if not isinstance(
+        pooling_layer, (nn.AvgPool1d, nn.AvgPool2d, nn.AvgPool3d, nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d)
+    ):
+        raise ValueError("pooling_layer 必须是 PyTorch 的池化层实例")
+
+    # 提取 batch_size 和 channels
+    batch_size, channels = input_size[0], input_size[1]
+    spatial_dims = input_size[2:]
+
+    # 计算核心逻辑
+    def compute_dim(
+        input_dim: int, kernel: int, padding: int, stride: int, dilation: int = 1, ceil_mode: bool = False
+    ) -> int:
+        numerator = input_dim + 2 * padding - dilation * (kernel - 1)
+        if ceil_mode:
+            # 向上取整逻辑（参考 PyTorch 官方文档）
+            return (numerator + stride - 1) // stride
+        else:
+            # 向下取整逻辑
+            return (numerator - 1) // stride + 1
+
+    # 根据池化类型提取参数
+    if isinstance(pooling_layer, (nn.AvgPool1d, nn.MaxPool1d)):
+        expected_dims = 1
+        kernel = pooling_layer.kernel_size
+        padding = pooling_layer.padding
+        stride = pooling_layer.stride
+        ceil_mode = pooling_layer.ceil_mode if hasattr(pooling_layer, "ceil_mode") else False
+        dilation = getattr(pooling_layer, "dilation", (1,))[0] if isinstance(pooling_layer, nn.MaxPool1d) else 1
+    elif isinstance(pooling_layer, (nn.AvgPool2d, nn.MaxPool2d)):
+        expected_dims = 2
+        kernel = pooling_layer.kernel_size
+        padding = pooling_layer.padding
+        stride = pooling_layer.stride
+        ceil_mode = pooling_layer.ceil_mode if hasattr(pooling_layer, "ceil_mode") else False
+        dilation = getattr(pooling_layer, "dilation", (1, 1)) if isinstance(pooling_layer, nn.MaxPool2d) else (1, 1)
+    elif isinstance(pooling_layer, (nn.AvgPool3d, nn.MaxPool3d)):
+        expected_dims = 3
+        kernel = pooling_layer.kernel_size
+        padding = pooling_layer.padding
+        stride = pooling_layer.stride
+        ceil_mode = pooling_layer.ceil_mode if hasattr(pooling_layer, "ceil_mode") else False
+        dilation = (
+            getattr(pooling_layer, "dilation", (1, 1, 1)) if isinstance(pooling_layer, nn.MaxPool3d) else (1, 1, 1)
+        )
+    else:
+        raise ValueError("不支持的池化类型")
+
+    # 校验空间维度
+    if len(spatial_dims) != expected_dims:
+        raise ValueError(f"{type(pooling_layer).__name__} 需要 {expected_dims} 个空间维度，输入为 {len(spatial_dims)}")
+
+    # 计算每个空间维度的新尺寸
+    new_dims = []
+    for i in range(expected_dims):
+        new_dim = compute_dim(
+            input_dim=spatial_dims[i],
+            kernel=kernel[i] if isinstance(kernel, tuple) else kernel,
+            padding=padding[i] if isinstance(padding, tuple) else padding,
+            stride=stride[i] if isinstance(stride, tuple) else stride,
+            dilation=dilation[i] if isinstance(dilation, tuple) else dilation,
+            ceil_mode=ceil_mode,
+        )
+        new_dims.append(new_dim)
+
+    return (batch_size, channels, *new_dims)

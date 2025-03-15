@@ -31,7 +31,7 @@ class AutoEncoder(AlgorithmBase):
         super().__init__(config_file=config_file, device=device)
 
         # -------------------- 模型构建 --------------------
-        self._build_model()
+        self._build_model(encoder, decoder)
 
         # -------------------- 权重初始化 --------------------
         if self.config["model"]["initialize_weights"]:
