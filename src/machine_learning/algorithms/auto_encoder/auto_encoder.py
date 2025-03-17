@@ -1,7 +1,6 @@
 # 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
 import os
-from tqdm import trange
 from itertools import chain
 from typing import Literal, Mapping
 
@@ -39,11 +38,11 @@ class AutoEncoder(AlgorithmBase):
     def _configure_optimizer(self) -> None:
         opt_config = self.config["optimizer"]
 
-        params = chain(self._models["encoder"].parameters(), self._models["decoder"].parameters())
+        self.params = chain(self._models["encoder"].parameters(), self._models["decoder"].parameters())
 
         if opt_config["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
-                params=params,
+                params=self.params,
                 lr=opt_config["learning_rate"],
                 betas=(opt_config["beta1"], opt_config["beta2"]),
                 eps=opt_config["eps"],
@@ -51,7 +50,7 @@ class AutoEncoder(AlgorithmBase):
             )
         elif opt_config["type"] == "SGD":
             self.optimizer = torch.optim.SGD(
-                params=params,
+                params=self.params,
                 lr=opt_config["learning_rate"],
                 momentum=opt_config["momentum"],
                 dampening=opt_config["dampening"],
@@ -71,7 +70,7 @@ class AutoEncoder(AlgorithmBase):
                 patience=sched_config.get("patience", 10),
             )
 
-    def train_epoch(self, epoch: int, writer: SummaryWriter) -> float:
+    def train_epoch(self, epoch: int, writer: SummaryWriter) -> tuple[float, dict]:
         """训练单个epoch"""
         self._models["encoder"].train()
         self._models["decoder"].train()
@@ -84,13 +83,13 @@ class AutoEncoder(AlgorithmBase):
 
             self.optimizer.zero_grad()
 
-            z = self.encoder(data)
-            output = self.decoder(z)
+            z = self._models["encoder"](data)
+            output = self._models["decoder"](z)
 
             loss = criterion(output, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.config["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.params, self.config["training"]["grad_clip"])
             self.optimizer.step()
 
             total_loss += loss.item()

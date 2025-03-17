@@ -117,7 +117,7 @@ class AlgorithmBase(ABC):
         pass
 
     @abstractmethod
-    def train_epoch(self, epoch) -> float:
+    def train_epoch(self, epoch) -> tuple[float, dict]:
         pass
 
     @abstractmethod
