@@ -20,7 +20,6 @@ scheduler:
   patience: 5  
 
 data:
-  data_path: "./src/machine_learning/data/minist"
   num_workers: 4
   norm_mean: 0.1307
   norm_std: 0.3081

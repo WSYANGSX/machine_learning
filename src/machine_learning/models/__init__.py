@@ -1,1 +1,1 @@
-from .base import BaseNet, MLP, CNN  # noqa F:401
+from .base import BaseNet, MLP, CNN  # noqa: F401

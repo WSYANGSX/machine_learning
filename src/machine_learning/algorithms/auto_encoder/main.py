@@ -1,16 +1,20 @@
 import torch.nn as nn
+from torchvision import transforms
+
+from machine_learning.models import CNN
+from machine_learning.algorithms import AutoEncoder
+from machine_learning.algorithms.vae.decoder import Decoder
+from machine_learning.utils import data_parse
+
 
 from collections import OrderedDict
-from machine_learning.algorithms import AutoEncoder
-from machine_learning.models import CNN, MLP
 
 
 def main():
-    image_size = (1, 28, 28)
-    
-    encoder = CNN
-    
-    encoder_layers = OrderedDict(
+    input_size = (1, 28, 28)
+    output_size = 128
+
+    hidden_layers = OrderedDict(
         [
             (
                 "conv1",
@@ -34,31 +38,25 @@ def main():
             ("linear", nn.Linear(294, 128)),
         ]
     )
-    decoder_layers = OrderedDict(
-        [
-            ("linear", nn.Linear(128, 294)),
-            ("reshape", nn.Unflatten(1, (6, 7, 7))),
-            ("BatchNorm1", nn.BatchNorm2d(6)),
-            ("relu1", nn.ReLU()),
-            (
-                "deconv1",
-                nn.ConvTranspose2d(6, 3, 3, 2, 1, output_padding=1),
-            ),  # 输出尺寸：(16,12,12)),
-            ("BatchNorm2", nn.BatchNorm2d(3)),
-            ("relu2", nn.ReLU()),
-            (
-                "deconv2",
-                nn.ConvTranspose2d(3, 1, 3, 2, 1, output_padding=1),
-            ),  # 输出尺寸：(16,12,12)),
-            ("relu3", nn.ReLU()),
-        ]
-    )
+    encoder = CNN(input_size=input_size, output_size=output_size, hidden_layers=hidden_layers)
+    encoder.view_structure()
+
+    decoder = Decoder(output_size)
+    encoder.view_structure()
+
     auto_encoder = AutoEncoder(
         "./src/machine_learning/algorithms/auto_encoder/config/config.yaml",
-        encoder_layers,
-        decoder_layers,
         "cuda",
     )
+
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=0.1307, std=0.3081),
+        ]
+    )
+    data = data_parse("./src/machine_learning/data/minist")
+    auto_encoder._load_datasets(*data, transform)
 
     auto_encoder.train_model()
 

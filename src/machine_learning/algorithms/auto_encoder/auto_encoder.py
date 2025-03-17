@@ -2,10 +2,12 @@
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
 import os
 from tqdm import trange
-from typing import Literal
+from itertools import chain
+from typing import Literal, Mapping
 
 import torch
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
@@ -14,9 +16,8 @@ from machine_learning.algorithms.base import AlgorithmBase
 class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
-        config_file: str,
-        encoder: BaseNet,
-        decoder: BaseNet,
+        cfg: str,
+        models: Mapping[str, BaseNet],
         name: str = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -25,32 +26,24 @@ class AutoEncoder(AlgorithmBase):
 
         parameters:
         - config_file (str): 配置文件路径(YAML格式).
-        - encoder_layers (nn.Module): 编码器层定义.
-        - decoder_layers (nn.Module): 解码器层定义.
+        - models (Mapping[str, BaseNet]): auto-encoder算法所需模型.{"encoder":model1,"decoder":model2}.
+        - name (str): 算法名称. Default to "auto_encoder".
         - device (str): 运行设备(auto自动选择).
         """
-        super().__init__(config_file=config_file, name=name, device=device)
-
-        # -------------------- 模型构建 --------------------
-        self._build_model(encoder, decoder)
-
-        # -------------------- 权重初始化 --------------------
-        if self.config["model"]["initialize_weights"]:
-            self._initialize_weights()
+        super().__init__(cfg=cfg, models=models, name=name, device=device)
 
         # -------------------- 配置优化器 --------------------
         self._configure_optimizer()
         self._configure_scheduler()
 
-    def _build_model(self, encoder: BaseNet, decoder: BaseNet):
-        self.encoder = encoder
-        self.decoder = decoder
-
     def _configure_optimizer(self) -> None:
         opt_config = self.config["optimizer"]
+
+        params = chain(self._models["encoder"].parameters(), self._models["decoder"].parameters())
+
         if opt_config["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
-                params=self.parameters(),
+                params=params,
                 lr=opt_config["learning_rate"],
                 betas=(opt_config["beta1"], opt_config["beta2"]),
                 eps=opt_config["eps"],
@@ -58,7 +51,7 @@ class AutoEncoder(AlgorithmBase):
             )
         elif opt_config["type"] == "SGD":
             self.optimizer = torch.optim.SGD(
-                params=self.parameters(),
+                params=params,
                 lr=opt_config["learning_rate"],
                 momentum=opt_config["momentum"],
                 dampening=opt_config["dampening"],
@@ -78,16 +71,16 @@ class AutoEncoder(AlgorithmBase):
                 patience=sched_config.get("patience", 10),
             )
 
-    def train_epoch(self, epoch: int) -> float:
+    def train_epoch(self, epoch: int, writer: SummaryWriter) -> float:
         """训练单个epoch"""
-        self.encoder.train()
-        self.decoder.train
+        self._models["encoder"].train()
+        self._models["decoder"].train()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
 
         for batch_idx, (data, _) in enumerate(self.train_loader):
-            data = data.to(self.device, non_blocking=True)
+            data = data.to(self._device, non_blocking=True)
 
             self.optimizer.zero_grad()
 
@@ -97,68 +90,34 @@ class AutoEncoder(AlgorithmBase):
             loss = criterion(output, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.config["training"]["grad_clip"])
             self.optimizer.step()
 
             total_loss += loss.item()
 
             if batch_idx % self.config["logging"].get("log_interval", 10) == 0:
-                self.writer.add_scalar("Loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
+                writer.add_scalar("Loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
 
         avg_loss = total_loss / len(self.train_loader)
-        self.writer.add_scalar("Loss/train", avg_loss, epoch)  # epoch loss
+        writer.add_scalar("Loss/train", avg_loss, epoch)  # epoch loss
         return avg_loss
 
     def validate(self) -> float:
         """验证步骤"""
-        self.encoder.eval()
-        self.decoder.eval()
+        self.models["encoder"].eval()
+        self.models["decoder"].eval()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
 
         with torch.no_grad():
-            for data, _ in self.validate_loader:
-                data = data.to(self.device, non_blocking=True)
+            for data, _ in self.val_loader:
+                data = data.to(self._device, non_blocking=True)
                 recon = self.decoder(self.encoder(data))
                 total_loss += criterion(recon, data).item()
 
-        avg_loss = total_loss / len(self.validate_loader)
+        avg_loss = total_loss / len(self.val_loader)
         return avg_loss
-
-    def train_model(self) -> None:
-        """完整训练"""
-        print("Start training...")
-        for epoch in trange(self.config["training"]["epochs"]):
-            train_loss = self.train_epoch(epoch)
-            val_loss = self.validate()
-
-            # 学习率调整
-            if self.scheduler is not None:
-                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(val_loss)
-                else:
-                    self.scheduler.step()
-
-            # 记录验证损失
-            self.writer.add_scalar("Loss/val", val_loss, epoch)
-
-            # 保存最佳模型
-            if val_loss < self.best_loss:
-                self.best_loss = val_loss
-                self.save_checkpoint(epoch, is_best=True)
-
-            # 定期保存
-            if (epoch + 1) % self.config["training"]["save_interval"] == 0:
-                self.save_checkpoint(epoch)
-
-            # 打印日志
-            print(
-                f"Epoch {epoch + 1:03d} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"LR: {self.optimizer.param_groups[0]['lr']:.2e}"
-            )
 
     def save_checkpoint(self, epoch: int, is_best: bool = False) -> None:
         """保存模型检查点"""
