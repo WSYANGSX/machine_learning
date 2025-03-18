@@ -1,8 +1,7 @@
 import os
 import torch
-import torch.nn as nn  # noqa:F401
 import numpy as np
-from typing import Sequence
+from typing import Sequence, Any
 from tqdm import trange
 
 from torchvision.transforms import Compose
@@ -22,7 +21,7 @@ class Trainer:
 
         Args:
             cfg (dict): 训练器配置信息.
-            data (Sequence[torch.Tensor  |  np.ndarray]): 数据集 (train_data, train_labels, val_data, val_labels)
+            data (Sequence[torch.Tensor | np.ndarray]): 数据集 (train_data, train_labels, val_data, val_labels)
             transform (transforms.Compose): 数据转换器.
             algo (AlgorithmBase): 算法.
         """
@@ -38,7 +37,7 @@ class Trainer:
         self.best_loss = float("inf")
 
     def _configure_writer(self):
-        log_path = self.cfg["logging"].get(
+        log_path = self.cfg.get(
             "log_dir",
             os.path.join(
                 os.getcwd(),
@@ -70,43 +69,82 @@ class Trainer:
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=self.cfg["training"]["batch_size"],
+            batch_size=self.cfg["batch_size"],
             shuffle=True,
-            num_workers=self.cfg["data"]["num_workers"],
+            num_workers=self.cfg["data_num_workers"],
         )
         val_loader = DataLoader(
             validate_dataset,
-            batch_size=self.cfg["training"]["batch_size"],
+            batch_size=self.cfg["batch_size"],
             shuffle=False,
-            num_workers=self.cfg["data"]["num_workers"],
+            num_workers=self.cfg["data_num_workers"],
         )
         return train_loader, val_loader
 
-    def train_model(self) -> None:
+    def train(self, start_epoch: int = 0) -> None:
         """完整训练"""
         print("[INFO] Start training...")
-        for epoch in trange(self.cfg["training"]["epochs"]):
-            train_loss, info = self._algorithm.train_epoch(epoch)
+
+        for epoch in trange(start_epoch, self.cfg.get("epochs", 100)):
+            train_loss = self._algorithm.train_epoch(epoch, self.writer, self.cfg.get("log_interval", 10))
             val_loss = self._algorithm.validate()
 
             # 学习率调整
-            if self._algorithm.scheduler:
-                if isinstance(self._algorithm.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    self._algorithm.scheduler.step(val_loss)
-                else:
-                    self._algorithm.scheduler.step()
+            if self._algorithm._schedulers:
+                for key, val in self._algorithm._schedulers.items():
+                    if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        val.step(val_loss[key])
+                    else:
+                        val.step()
+
+            # 记录训练损失
+            for key, val in train_loss.items():
+                self.writer.add_scalar(f"{key} loss/train", val, epoch)
 
             # 记录验证损失
-            self.writer.add_scalar("Loss/val", val_loss, epoch)
+            for key, val in val_loss.items():
+                self.writer.add_scalar(f"{key} loss/val", val, epoch)
 
             # 保存最佳模型
-            if val_loss < self.best_loss:
-                self.best_loss = val_loss
-                self.save_checkpoint(epoch, is_best=True)
+            if "save_metric" in val_loss:
+                if val_loss["save_metric"] < self.best_loss:
+                    self.best_loss = val_loss["save_metric"]
+                    self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
+            else:
+                raise ValueError("val loss has no save metric.")
 
             # 定期保存
-            if (epoch + 1) % self.cfg["training"]["save_interval"] == 0:
-                self.save_checkpoint(epoch)
+            if (epoch + 1) % self.cfg.get("save_interval", 10) == 0:
+                self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=False)
 
             # 打印日志
-            print(info)
+            print(f"Epoch: {epoch + 1:03d} | ", end="")
+            for key, val in train_loss.items():
+                print(f"{key} train loss {val:.4f} | ", end="")
+            for key, val in val_loss.items():
+                print(f"{key} val loss {val:.4f} | ", end="")
+            for key, opt in self._algorithm._optimizers.items():
+                print(f"{key} lr: {opt.param_groups[0]['lr']:.2e} | ")
+
+    def train_from_checkpoint(self, checkpoint: str) -> None:
+        point = self.load(checkpoint)
+
+        self.cfg = point["cfg"]
+
+        epoch = point["epoch"]
+
+        self.train(epoch)
+
+    def eval(self):
+        self._algorithm.eval()
+
+    def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
+        filename = f"checkpoint_epoch_{epoch}.pth"
+        if is_best:
+            filename = "best_model.pth"
+        save_path = os.path.join(self.cfg["model_dir"], filename)
+
+        self._algorithm.save(epoch, loss, best_loss, save_path)
+
+    def load(self, checkpoint: str) -> dict[str:Any]:
+        return self._algorithm.load(checkpoint)

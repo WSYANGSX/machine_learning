@@ -4,8 +4,7 @@ from typing import Literal, Mapping
 from abc import ABC, abstractmethod
 
 import torch
-import torch.nn as nn  # noqa: F401
-
+from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.utils import print_dict
@@ -30,20 +29,22 @@ class AlgorithmBase(ABC):
         super().__init__()
 
         self._models = models
+        self._optimizers = {}
+        self._schedulers = {}
 
         # -------------------- 设备配置 --------------------
         self._device = self._configure_device(device)
 
         # -------------------- 配置加载 --------------------
-        self._config = self._load_config(cfg)
+        self._cfg = self._load_config(cfg)
         self._validate_config()
 
         # -------------------- 设备配置 --------------------
-        self._name = name if name is not None else self.config.get("algorithm", __class__.__name__)
+        self._name = name if name is not None else self._cfg.get("algorithm", __class__.__name__)
 
         # -------------------- 配置模型 --------------------
         self._configure_models()
-        if self.config["model"]["initialize_weights"]:
+        if self.cfg["model"]["initialize_weights"]:
             self._initialize_weights()
 
     @property
@@ -51,12 +52,12 @@ class AlgorithmBase(ABC):
         return self._name
 
     @property
-    def models(self) -> list:
-        return self._models.keys()
+    def models(self) -> dict:
+        return self._models
 
     @property
-    def config(self) -> dict:
-        return self._config
+    def cfg(self) -> dict:
+        return self._cfg
 
     def _configure_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -76,20 +77,21 @@ class AlgorithmBase(ABC):
 
     def _validate_config(self):
         """配置参数验证"""
-        required_sections = ["model", "optimizer", "scheduler"]
+        required_sections = ["algorithm", "model", "optimizer", "scheduler", "training"]
         for section in required_sections:
-            if section not in self.config:
+            if section not in self.cfg:
                 raise ValueError(f"配置文件中缺少必要部分: {section}")
 
     def _configure_models(self):
         """
         配置模型
         """
-        for model in self.models:
+        for model in self._models.values():
             model.to(self._device)
+            model.view_structure()
 
     def _initialize_weights(self) -> None:
-        for model in self.models:
+        for model in self._models.values():
             model._initialize_weights()
 
     def _initialize_data_loader(self, train_data_loader, val_data_loader) -> None:
@@ -117,15 +119,15 @@ class AlgorithmBase(ABC):
         pass
 
     @abstractmethod
-    def train_epoch(self, epoch) -> tuple[float, dict]:
+    def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
         pass
 
     @abstractmethod
-    def validate(self) -> float:
+    def validate(self) -> dict[str, float]:
         pass
 
     @abstractmethod
-    def save(self, epoch: int, is_best: bool = False) -> None:
+    def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
         pass
 
     @abstractmethod

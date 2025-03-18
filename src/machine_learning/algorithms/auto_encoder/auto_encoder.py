@@ -1,8 +1,7 @@
 # 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
-import os
 from itertools import chain
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Any
 
 import torch
 import torch.nn as nn
@@ -32,45 +31,57 @@ class AutoEncoder(AlgorithmBase):
         super().__init__(cfg=cfg, models=models, name=name, device=device)
 
         # -------------------- 配置优化器 --------------------
-        self._configure_optimizer()
-        self._configure_scheduler()
+        self._configure_optimizers()
+        self._configure_schedulers()
 
-    def _configure_optimizer(self) -> None:
-        opt_config = self.config["optimizer"]
+    def _configure_optimizers(self) -> None:
+        opt_cfg = self._cfg["optimizer"]
 
         self.params = chain(self._models["encoder"].parameters(), self._models["decoder"].parameters())
 
-        if opt_config["type"] == "Adam":
-            self.optimizer = torch.optim.Adam(
-                params=self.params,
-                lr=opt_config["learning_rate"],
-                betas=(opt_config["beta1"], opt_config["beta2"]),
-                eps=opt_config["eps"],
-                weight_decay=opt_config["weight_decay"],
+        if opt_cfg["type"] == "Adam":
+            self._optimizers.update(
+                {
+                    "ae": torch.optim.Adam(
+                        params=self.params,
+                        lr=opt_cfg["learning_rate"],
+                        betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
+                        eps=opt_cfg["eps"],
+                        weight_decay=opt_cfg["weight_decay"],
+                    ),
+                }
             )
-        elif opt_config["type"] == "SGD":
-            self.optimizer = torch.optim.SGD(
-                params=self.params,
-                lr=opt_config["learning_rate"],
-                momentum=opt_config["momentum"],
-                dampening=opt_config["dampening"],
-                weight_decay=opt_config["weight_decay"],
+        elif opt_cfg["type"] == "SGD":
+            self._optimizers.update(
+                {
+                    "ae": torch.optim.SGD(
+                        params=self.params,
+                        lr=opt_cfg["learning_rate"],
+                        momentum=opt_cfg["momentum"],
+                        dampening=opt_cfg["dampening"],
+                        weight_decay=opt_cfg["weight_decay"],
+                    ),
+                }
             )
         else:
-            ValueError(f"暂时不支持优化器:{opt_config['type']}")
+            ValueError(f"暂时不支持优化器:{opt_cfg['type']}")
 
-    def _configure_scheduler(self) -> None:
-        self.scheduler = None
-        sched_config = self.config.get("scheduler", {})
-        if sched_config.get("type") == "ReduceLROnPlateau":
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                mode="min",
-                factor=sched_config.get("factor", 0.1),
-                patience=sched_config.get("patience", 10),
+    def _configure_schedulers(self) -> None:
+        sch_config = self._cfg["scheduler"]
+
+        if sch_config.get("type") == "ReduceLROnPlateau":
+            self._schedulers.update(
+                {
+                    "ae": torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        self._optimizers["ae"],
+                        mode="min",
+                        factor=sch_config.get("factor", 0.1),
+                        patience=sch_config.get("patience", 10),
+                    )
+                }
             )
 
-    def train_epoch(self, epoch: int, writer: SummaryWriter) -> tuple[float, dict]:
+    def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         """训练单个epoch"""
         self._models["encoder"].train()
         self._models["decoder"].train()
@@ -81,7 +92,7 @@ class AutoEncoder(AlgorithmBase):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self._device, non_blocking=True)
 
-            self.optimizer.zero_grad()
+            self._optimizers["ae"].zero_grad()
 
             z = self._models["encoder"](data)
             output = self._models["decoder"](z)
@@ -89,22 +100,22 @@ class AutoEncoder(AlgorithmBase):
             loss = criterion(output, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.params, self.config["training"]["grad_clip"])
-            self.optimizer.step()
+            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["training"]["grad_clip"])
+            self._optimizers["ae"].step()
 
             total_loss += loss.item()
 
-            if batch_idx % self.config["logging"].get("log_interval", 10) == 0:
-                writer.add_scalar("Loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
+            if batch_idx % log_interval == 0:
+                writer.add_scalar("loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
 
         avg_loss = total_loss / len(self.train_loader)
-        writer.add_scalar("Loss/train", avg_loss, epoch)  # epoch loss
-        return avg_loss
 
-    def validate(self) -> float:
+        return {"ae": avg_loss}  # 统一接口
+
+    def validate(self) -> dict[str, float]:
         """验证步骤"""
-        self.models["encoder"].eval()
-        self.models["decoder"].eval()
+        self._models["encoder"].eval()
+        self._models["decoder"].eval()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -112,42 +123,56 @@ class AutoEncoder(AlgorithmBase):
         with torch.no_grad():
             for data, _ in self.val_loader:
                 data = data.to(self._device, non_blocking=True)
-                recon = self.decoder(self.encoder(data))
+                z = self._models["encoder"](data)
+                recon = self._models["decoder"](z)
                 total_loss += criterion(recon, data).item()
 
         avg_loss = total_loss / len(self.val_loader)
-        return avg_loss
 
-    def save_checkpoint(self, epoch: int, is_best: bool = False) -> None:
+        return {"ae": avg_loss, "save_metric": avg_loss}  # 统一接口
+
+    def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
         """保存模型检查点"""
-        state = {
-            "epoch": epoch,
-            "encoder_state": self.encoder.state_dict(),
-            "decoder_state": self.decoder.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(),
-            "best_loss": self.best_loss,
-            "config": self.config,
-        }
+        state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
+        # 保存模型参数
+        for key, val in self._models.items():
+            state["models"].update({key: val.state_dict()})
+        # 保存优化器参数
+        for key, val in self._optimizers.items():
+            state["optimizers"].update({key: val.state_dict()})
 
-        filename = f"checkpoint_epoch_{epoch}.pth"
-        if is_best:
-            filename = "best_model.pth"
-
-        save_path = os.path.join(self.config["logging"]["model_dir"], filename)
         torch.save(state, save_path)
         print(f"Saved checkpoint to {save_path}")
 
-    def visualize_reconstruction(self, num_samples: int = 5) -> None:
-        """可视化重构结果"""
-        self.decoder.eval()
-        self.encoder.eval()
+    def load(self, checkpoint: str) -> tuple[Any]:
+        state = torch.load(checkpoint)
+        # 加载模型参数
+        for key, val in self._models.items():
+            val.load_state_dict(state["models"][key])
 
-        data, _ = next(iter(self.validate_loader))
+        # 加载优化器参数
+        for key, val in self._optimizers.items():
+            val.load_state_dict(state["optimizers"][key])
+
+        epoch = state["epoch"]
+        cfg = state["cfg"]
+        loss = state["loss"]
+        best_loss = state["best loss"]
+
+        return {"epoch": epoch, "cfg": cfg, "loss": loss, "best_loss": best_loss}
+
+    def eval(self, num_samples: int = 5) -> None:
+        """可视化重构结果"""
+        self._models["encoder"].eval()
+        self._models["decoder"].eval()
+
+        data, _ = next(iter(self.val_loader))
         sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
-        data = data[sample_indices].to(self.device)
+        data = data[sample_indices].to(self._device)
 
         with torch.no_grad():
-            reconstructions = self.decoder(self.encoder(data))
+            z = self._models["encoder"](data)
+            reconstructions = self._models["decoder"](z)
 
         import matplotlib.pyplot as plt
 

@@ -13,21 +13,8 @@ scheduler:
   factor: 0.5
   patience: 5  
 
-training:
-  batch_size: 256
-  epochs: 200
-  grad_clip: 5.0
-  save_interval: 10
-
-data:
-  num_workers: 4
-  norm_mean: 0.1307
-  norm_std: 0.3081
-
 model:
   initialize_weights: True
 
-logging:
-  log_interval: 10
-  # log_dir: "./logs/auto_encoder/"
-  model_dir: "./checkpoints/auto_encoder/"
+training:
+  grad_clip: 5.0

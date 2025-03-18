@@ -368,7 +368,7 @@ class GAN(nn.Module):
 
             # 打印日志
             print(
-                f"Epoch {epoch + 1:03d} | "
+                f"Epoch: {epoch + 1:03d} | "
                 f"Discriminator Loss: {d_loss:.4f} | "
                 f"Generator Loss: {g_loss:.4f} | "
                 f"D_LR: {self.discriminator_optimizer.param_groups[0]['lr']:.2e} | "
