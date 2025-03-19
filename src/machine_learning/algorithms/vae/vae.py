@@ -51,18 +51,6 @@ class VAE(AlgorithmBase):
                     )
                 }
             )
-        elif opt_config["type"] == "SGD":
-            self._optimizers.update(
-                {
-                    "vae": torch.optim.SGD(
-                        params=self.params,
-                        lr=opt_config["learning_rate"],
-                        momentum=opt_config["momentum"],
-                        dampening=opt_config["dampening"],
-                        weight_decay=opt_config["weight_decay"],
-                    )
-                }
-            )
         else:
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
 

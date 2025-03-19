@@ -8,9 +8,6 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from data_load import CustomDataset, data_parse
-
-from utils import print_dict
 
 torch.set_printoptions(threshold=torch.inf)
 

@@ -1,1 +1,3 @@
-from .base import BaseNet  # noqa: F401
+from .base import BaseNet
+
+__all__ = ["BaseNet"]

@@ -51,18 +51,6 @@ class AutoEncoder(AlgorithmBase):
                     ),
                 }
             )
-        elif opt_cfg["type"] == "SGD":
-            self._optimizers.update(
-                {
-                    "ae": torch.optim.SGD(
-                        params=self.params,
-                        lr=opt_cfg["learning_rate"],
-                        momentum=opt_cfg["momentum"],
-                        dampening=opt_cfg["dampening"],
-                        weight_decay=opt_cfg["weight_decay"],
-                    ),
-                }
-            )
         else:
             ValueError(f"暂时不支持优化器:{opt_cfg['type']}")
 

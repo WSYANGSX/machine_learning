@@ -9,6 +9,7 @@ from torchinfo import summary
 from machine_learning.models import BaseNet
 
 
+# 模型定义
 class Encoder(BaseNet):
     def __init__(
         self,
@@ -32,17 +33,6 @@ class Encoder(BaseNet):
 
         self.mu = nn.Linear(294, self.z_dim)
         self.sigma = nn.Linear(294, self.z_dim)
-
-    def _initialize_weights(self):
-        print("Initializing weights with Kaiming normal...")
-        for module in self.modules():
-            if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
-                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-                nn.init.constant_(module.weight, 1)
-                nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         mid_val = self.layer1(x)
@@ -80,16 +70,6 @@ class Decoder(BaseNet):
         self.layer3 = nn.Sequential(
             nn.BatchNorm2d(3), nn.ReLU(), nn.ConvTranspose2d(3, 1, 3, 2, 1, output_padding=1), nn.Sigmoid()
         )
-
-    def _initialize_weights(self):
-        for module in self.modules():
-            if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-            elif isinstance(module, nn.BatchNorm2d):
-                nn.init.constant_(module.weight, 1)
-                nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         mid_val = self.layer1(x)

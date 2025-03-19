@@ -15,7 +15,7 @@ from utils import print_dict
 torch.set_printoptions(threshold=torch.inf)
 
 
-class GAN(nn.Module):
+class Diffusion(nn.Module):
     def __init__(
         self,
         config_file: str,
