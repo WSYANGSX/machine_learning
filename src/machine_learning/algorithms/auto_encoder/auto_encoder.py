@@ -142,7 +142,7 @@ class AutoEncoder(AlgorithmBase):
             state["optimizers"].update({key: val.state_dict()})
 
         torch.save(state, save_path)
-        print(f"Saved checkpoint to {save_path}")
+        print(f"\nSaved checkpoint to {save_path}")
 
     def load(self, checkpoint: str) -> tuple[Any]:
         state = torch.load(checkpoint)
