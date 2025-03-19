@@ -1,6 +1,10 @@
 import torch  # noqa F:401
 import torch.nn as nn
+import numpy as np
+
 from typing import Sequence
+
+import matplotlib.pyplot as plt
 
 
 def print_dict(input_dict: dict, indent: int = 0) -> None:
@@ -132,3 +136,23 @@ def cal_pooling_output_size(input_size: Sequence[int], pooling_layer: nn.Module)
         new_dims.append(new_dim)
 
     return (batch_size, channels, *new_dims)
+
+
+def plot_raw_recon_figures(raw_figures: torch.Tensor | np.ndarray, recon_figures: torch.Tensor | np.ndarray):
+    plt.figure(figsize=(10, 4))
+    num_figures = len(raw_figures)
+
+    for i in range(len(raw_figures)):
+        # 原始图像
+        ax = plt.subplot(2, num_figures, i + 1)
+        plt.imshow(raw_figures[i].cpu().squeeze(), cmap="gray")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+
+        # 重构图像
+        ax = plt.subplot(2, num_figures, i + 1 + num_figures)
+        plt.imshow(recon_figures[i].cpu().squeeze(), cmap="gray")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+
+    plt.show()

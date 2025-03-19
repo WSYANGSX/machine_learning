@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils import plot_raw_recon_figures
 
 
 class AutoEncoder(AlgorithmBase):
@@ -130,21 +131,6 @@ class AutoEncoder(AlgorithmBase):
 
         with torch.no_grad():
             z = self._models["encoder"](data)
-            reconstructions = self._models["decoder"](z)
+            recons = self._models["decoder"](z)
 
-        import matplotlib.pyplot as plt
-
-        plt.figure(figsize=(10, 4))
-        for i in range(num_samples):
-            # 原始图像
-            ax = plt.subplot(2, num_samples, i + 1)
-            plt.imshow(data[i].cpu().squeeze(), cmap="gray")
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
-
-            # 重构图像
-            ax = plt.subplot(2, num_samples, i + 1 + num_samples)
-            plt.imshow(reconstructions[i].cpu().squeeze(), cmap="gray")
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
-        plt.show()
+        plot_raw_recon_figures(data, recons)

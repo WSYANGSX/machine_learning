@@ -52,12 +52,16 @@ class AlgorithmBase(ABC):
         return self._name
 
     @property
-    def models(self) -> dict:
+    def models(self) -> dict[str, BaseNet]:
         return self._models
 
     @property
     def cfg(self) -> dict:
         return self._cfg
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
 
     def _configure_device(self, device: str) -> torch.device:
         if device == "auto":

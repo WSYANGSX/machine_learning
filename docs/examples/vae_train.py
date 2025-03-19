@@ -104,7 +104,7 @@ def main():
     data = data_parse("./src/machine_learning/data/minist")
 
     train_cfg = {
-        "epochs": 100,
+        "epochs": 10,
         "log_dir": "./logs/vae/",
         "model_dir": "./checkpoints/vae/",
         "log_interval": 10,

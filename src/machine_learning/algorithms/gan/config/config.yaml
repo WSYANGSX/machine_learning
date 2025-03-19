@@ -1,3 +1,5 @@
+algorithm: "gan"
+
 training:
   batch_size: 256
   epochs: 50
@@ -20,10 +22,10 @@ optimizer:
   d_eps: 1.0e-8
   d_weight_decay: 0
   
-  scheduler:
-    type: ReduceLROnPlateau
-    factor: 0.5
-    patience: 5
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 5
 
 data:
   data_path: "./Auto_Encoder/data"

@@ -2,6 +2,7 @@ from itertools import chain
 from typing import Literal, Mapping
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils import plot_raw_recon_figures
 
 import torch
 import torch.nn as nn
@@ -26,9 +27,6 @@ class VAE(AlgorithmBase):
         - device (str): 运行设备(auto自动选择).
         """
         super().__init__(cfg, models, name, device)
-
-        # -------------------- 设备配置 --------------------
-        self.device = self._configure_device(device)
 
         # -------------------- 配置优化器 --------------------
         self._configure_optimizers()
@@ -55,7 +53,7 @@ class VAE(AlgorithmBase):
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
 
     def _configure_schedulers(self) -> None:
-        sch_config = self._cfg["scheduler"]
+        sch_config = self.cfg["scheduler"]
 
         if sch_config.get("type") == "ReduceLROnPlateau":
             self._schedulers.update(
@@ -144,21 +142,6 @@ class VAE(AlgorithmBase):
             mu, log_var = self._models["encoder"](data)
             # std = torch.exp(0.5 * log_var)
             # z = mu + std * torch.randn_like(mu)
-            reconstructions = self._models["decoder"](mu)
+            recons = self._models["decoder"](mu)
 
-        import matplotlib.pyplot as plt
-
-        plt.figure(figsize=(10, 4))
-        for i in range(num_samples):
-            # 原始图像
-            ax = plt.subplot(2, num_samples, i + 1)
-            plt.imshow(data[i].cpu().squeeze(), cmap="gray")
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
-
-            # 重构图像
-            ax = plt.subplot(2, num_samples, i + 1 + num_samples)
-            plt.imshow(reconstructions[i].cpu().squeeze(), cmap="gray")
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
-        plt.show()
+        plot_raw_recon_figures(data, recons)
