@@ -71,9 +71,3 @@ class Encoder(nn.Module):
     def view_modules(self):
         for module in self.named_children():
             print(module)
-
-
-if __name__ == "__main__":
-    encoder = Encoder((1, 1, 28, 28), z_dim=128)
-    encoder._initialize_weights()
-    encoder.view_structure()

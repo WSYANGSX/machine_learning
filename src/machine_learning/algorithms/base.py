@@ -1,6 +1,6 @@
 import os
 import yaml
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Any
 from abc import ABC, abstractmethod
 
 import torch
@@ -126,10 +126,32 @@ class AlgorithmBase(ABC):
     def validate(self) -> dict[str, float]:
         pass
 
-    @abstractmethod
     def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
-        pass
+        """保存模型检查点"""
+        state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
+        # 保存模型参数
+        for key, val in self._models.items():
+            state["models"].update({key: val.state_dict()})
+        # 保存优化器参数
+        for key, val in self._optimizers.items():
+            state["optimizers"].update({key: val.state_dict()})
 
-    @abstractmethod
-    def load(self, epoch: int, is_best: bool = False) -> None:
-        pass
+        torch.save(state, save_path)
+        print(f"\nSaved checkpoint to {save_path}")
+
+    def load(self, checkpoint: str) -> tuple[Any]:
+        state = torch.load(checkpoint)
+        # 加载模型参数
+        for key, val in self._models.items():
+            val.load_state_dict(state["models"][key])
+
+        # 加载优化器参数
+        for key, val in self._optimizers.items():
+            val.load_state_dict(state["optimizers"][key])
+
+        epoch = state["epoch"]
+        cfg = state["cfg"]
+        loss = state["loss"]
+        best_loss = state["best loss"]
+
+        return {"epoch": epoch, "cfg": cfg, "loss": loss, "best_loss": best_loss}

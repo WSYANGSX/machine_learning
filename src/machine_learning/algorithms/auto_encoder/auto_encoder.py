@@ -23,7 +23,7 @@ class AutoEncoder(AlgorithmBase):
         自编码器实现
 
         parameters:
-        - config_file (str): 配置文件路径(YAML格式).
+        - cfg (str): 配置文件路径(YAML格式).
         - models (Mapping[str, BaseNet]): auto-encoder算法所需模型.{"encoder":model1,"decoder":model2}.
         - name (str): 算法名称. Default to "auto_encoder".
         - device (str): 运行设备(auto自动选择).
