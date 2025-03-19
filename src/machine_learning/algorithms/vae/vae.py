@@ -1,3 +1,4 @@
+from itertools import chain
 from typing import Literal, Mapping
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
@@ -30,14 +31,17 @@ class VAE(AlgorithmBase):
         self.device = self._configure_device(device)
 
         # -------------------- 配置优化器 --------------------
-        self._configure_optimizer()
-        self._configure_scheduler()
+        self._configure_optimizers()
+        self._configure_schedulers()
 
-    def _configure_optimizer(self) -> None:
+    def _configure_optimizers(self) -> None:
         opt_config = self.cfg["optimizer"]
+
+        self.params = chain(self.models["encoder"].parameters(), self.models["decoder"].parameters())
+
         if opt_config["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
-                params=self.parameters(),
+                params=self.params,
                 lr=opt_config["learning_rate"],
                 betas=(opt_config["beta1"], opt_config["beta2"]),
                 eps=opt_config["eps"],
@@ -45,7 +49,7 @@ class VAE(AlgorithmBase):
             )
         elif opt_config["type"] == "SGD":
             self.optimizer = torch.optim.SGD(
-                params=self.parameters(),
+                params=self.params,
                 lr=opt_config["learning_rate"],
                 momentum=opt_config["momentum"],
                 dampening=opt_config["dampening"],
@@ -54,9 +58,9 @@ class VAE(AlgorithmBase):
         else:
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
 
-    def _configure_scheduler(self) -> None:
-        self.scheduler = None
+    def _configure_schedulers(self) -> None:
         sched_config = self.cfg["optimizer"].get("scheduler", {})
+
         if sched_config.get("type") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
@@ -88,7 +92,7 @@ class VAE(AlgorithmBase):
             loss = criterion(output, data) + kl_d.mean() * self.cfg["training"]["beta"]
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
             self.optimizer.step()
 
             total_loss += loss.item()

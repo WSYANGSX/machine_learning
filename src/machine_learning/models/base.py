@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 import torch.nn as nn
 
 
@@ -12,8 +13,4 @@ class BaseNet(nn.Module, ABC):
 
     @abstractmethod
     def view_structure(self):
-        pass
-
-    @abstractmethod
-    def check_layers(self):
         pass

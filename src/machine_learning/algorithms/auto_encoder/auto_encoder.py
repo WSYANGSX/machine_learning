@@ -1,7 +1,7 @@
 # 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
 from itertools import chain
-from typing import Literal, Mapping, Any
+from typing import Literal, Mapping
 
 import torch
 import torch.nn as nn
@@ -37,7 +37,7 @@ class AutoEncoder(AlgorithmBase):
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
 
-        self.params = chain(self._models["encoder"].parameters(), self._models["decoder"].parameters())
+        self.params = chain(self.models["encoder"].parameters(), self.models["decoder"].parameters())
 
         if opt_cfg["type"] == "Adam":
             self._optimizers.update(
@@ -130,36 +130,6 @@ class AutoEncoder(AlgorithmBase):
         avg_loss = total_loss / len(self.val_loader)
 
         return {"ae": avg_loss, "save_metric": avg_loss}  # 统一接口
-
-    def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
-        """保存模型检查点"""
-        state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
-        # 保存模型参数
-        for key, val in self._models.items():
-            state["models"].update({key: val.state_dict()})
-        # 保存优化器参数
-        for key, val in self._optimizers.items():
-            state["optimizers"].update({key: val.state_dict()})
-
-        torch.save(state, save_path)
-        print(f"\nSaved checkpoint to {save_path}")
-
-    def load(self, checkpoint: str) -> tuple[Any]:
-        state = torch.load(checkpoint)
-        # 加载模型参数
-        for key, val in self._models.items():
-            val.load_state_dict(state["models"][key])
-
-        # 加载优化器参数
-        for key, val in self._optimizers.items():
-            val.load_state_dict(state["optimizers"][key])
-
-        epoch = state["epoch"]
-        cfg = state["cfg"]
-        loss = state["loss"]
-        best_loss = state["best loss"]
-
-        return {"epoch": epoch, "cfg": cfg, "loss": loss, "best_loss": best_loss}
 
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""

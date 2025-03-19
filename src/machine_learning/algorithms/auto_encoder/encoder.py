@@ -25,12 +25,10 @@ class Encoder(BaseNet):
         self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 2, 2, 0), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
         self.layer2 = nn.Sequential(nn.Conv2d(3, 10, 2, 2, 0), nn.BatchNorm2d(10), nn.ReLU())  # (10,7,7)
         self.layer3 = nn.Sequential(nn.Conv2d(10, 15, 2, 2, 0), nn.BatchNorm2d(15), nn.ReLU(), nn.Flatten())  # (15,3,3)
-
-        self.mu = nn.Linear(135, self.z_dim)
-        self.sigma = nn.Linear(135, self.z_dim)
+        self.layer4 = nn.Linear(135, self.z_dim)
 
     def _initialize_weights(self):
-        print("Initializing weights with Kaiming normal...")
+        print("[INFO] Initializing weights with Kaiming normal...")
         for module in self.modules():
             if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
@@ -44,11 +42,9 @@ class Encoder(BaseNet):
         mid_val = self.layer1(x)
         mid_val = self.layer2(mid_val)
         mid_val = self.layer3(mid_val)
+        output = self.layer4(mid_val)
 
-        mu = self.mu(mid_val)
-        log_var = self.sigma(mid_val)
-
-        return mu, log_var
+        return output
 
     def view_structure(self):
         summary(self, input_size=(1, *self.input_size))

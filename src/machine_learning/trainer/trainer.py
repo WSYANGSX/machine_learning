@@ -139,10 +139,26 @@ class Trainer:
         self._algorithm.eval()
 
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
+        model_path = self.cfg.get(
+            "model_dir",
+            os.path.join(
+                os.getcwd(),
+                "checkpoints",
+                self._algorithm.name,
+            ),
+        )
+
+        model_path = os.path.abspath(model_path)
+
+        try:
+            os.makedirs(model_path, exist_ok=True)
+        except OSError as e:
+            raise RuntimeError(f"Failed to create log directory at {model_path}: {e}")
+
         filename = f"checkpoint_epoch_{epoch}.pth"
         if is_best:
             filename = "best_model.pth"
-        save_path = os.path.join(self.cfg["model_dir"], filename)
+        save_path = os.path.join(model_path, filename)
 
         self._algorithm.save(epoch, loss, best_loss, save_path)
 
