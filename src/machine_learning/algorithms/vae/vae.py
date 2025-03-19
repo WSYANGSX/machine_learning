@@ -40,34 +40,45 @@ class VAE(AlgorithmBase):
         self.params = chain(self.models["encoder"].parameters(), self.models["decoder"].parameters())
 
         if opt_config["type"] == "Adam":
-            self.optimizer = torch.optim.Adam(
-                params=self.params,
-                lr=opt_config["learning_rate"],
-                betas=(opt_config["beta1"], opt_config["beta2"]),
-                eps=opt_config["eps"],
-                weight_decay=opt_config["weight_decay"],
+            self._optimizers.update(
+                {
+                    "vae": torch.optim.Adam(
+                        params=self.params,
+                        lr=opt_config["learning_rate"],
+                        betas=(opt_config["beta1"], opt_config["beta2"]),
+                        eps=opt_config["eps"],
+                        weight_decay=opt_config["weight_decay"],
+                    )
+                }
             )
         elif opt_config["type"] == "SGD":
-            self.optimizer = torch.optim.SGD(
-                params=self.params,
-                lr=opt_config["learning_rate"],
-                momentum=opt_config["momentum"],
-                dampening=opt_config["dampening"],
-                weight_decay=opt_config["weight_decay"],
+            self._optimizers.update(
+                {
+                    "vae": torch.optim.SGD(
+                        params=self.params,
+                        lr=opt_config["learning_rate"],
+                        momentum=opt_config["momentum"],
+                        dampening=opt_config["dampening"],
+                        weight_decay=opt_config["weight_decay"],
+                    )
+                }
             )
         else:
             ValueError(f"暂时不支持优化器:{opt_config['type']}")
 
     def _configure_schedulers(self) -> None:
-        sched_config = self.cfg["optimizer"].get("scheduler", {})
+        sch_config = self._cfg["scheduler"]
 
-        if sched_config.get("type") == "ReduceLROnPlateau":
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                mode="min",
-                factor=sched_config.get("factor", 0.1),
-                patience=sched_config.get("patience", 10),
-                verbose=True,
+        if sch_config.get("type") == "ReduceLROnPlateau":
+            self._schedulers.update(
+                {
+                    "vae": torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        self._optimizers["vae"],
+                        mode="min",
+                        factor=sch_config.get("factor", 0.1),
+                        patience=sch_config.get("patience", 10),
+                    )
+                }
             )
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> float:
@@ -81,7 +92,7 @@ class VAE(AlgorithmBase):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
 
-            self.optimizer.zero_grad()
+            self._optimizers["vae"].zero_grad()
 
             mu, log_var = self._models["encoder"](data)
             std = torch.exp(0.5 * log_var)
@@ -93,7 +104,7 @@ class VAE(AlgorithmBase):
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
-            self.optimizer.step()
+            self._optimizers["vae"].step()
 
             total_loss += loss.item()
 
@@ -142,10 +153,10 @@ class VAE(AlgorithmBase):
         data = data[sample_indices].to(self.device)
 
         with torch.no_grad():
-            mu, log_var = self.encoder(data)
+            mu, log_var = self._models["encoder"](data)
             # std = torch.exp(0.5 * log_var)
             # z = mu + std * torch.randn_like(mu)
-            reconstructions = self.decoder(mu)
+            reconstructions = self._models["decoder"](mu)
 
         import matplotlib.pyplot as plt
 
