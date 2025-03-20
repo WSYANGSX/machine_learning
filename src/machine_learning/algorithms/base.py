@@ -56,6 +56,14 @@ class AlgorithmBase(ABC):
         return self._models
 
     @property
+    def optimizers(self) -> dict[str, BaseNet]:
+        return self._optimizers
+
+    @property
+    def schedulers(self) -> dict[str, BaseNet]:
+        return self._schedulers
+
+    @property
     def cfg(self) -> dict:
         return self._cfg
 
@@ -133,9 +141,11 @@ class AlgorithmBase(ABC):
     def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
         """保存模型检查点"""
         state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
+
         # 保存模型参数
-        for key, val in self._models.items():
+        for key, val in self.models.items():
             state["models"].update({key: val.state_dict()})
+
         # 保存优化器参数
         for key, val in self._optimizers.items():
             state["optimizers"].update({key: val.state_dict()})
@@ -145,8 +155,10 @@ class AlgorithmBase(ABC):
 
     def load(self, checkpoint: str) -> tuple[Any]:
         state = torch.load(checkpoint)
+        print_dict(state)
+
         # 加载模型参数
-        for key, val in self._models.items():
+        for key, val in self.models.items():
             val.load_state_dict(state["models"][key])
 
         # 加载优化器参数

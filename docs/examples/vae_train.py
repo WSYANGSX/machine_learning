@@ -1,10 +1,10 @@
+import torch.nn as nn
+from torchinfo import summary
 from torchvision import transforms
 
 from machine_learning.algorithms import VAE
 from machine_learning.trainer import Trainer
 from machine_learning.utils import data_parse
-import torch.nn as nn
-from torchinfo import summary
 
 from machine_learning.models import BaseNet
 
@@ -53,7 +53,7 @@ class Decoder(BaseNet):
         Network for vae decoder.
 
         Args:
-            z_dim (int): 多维高斯的维度.
+            z_dim (int): 特征向量的维度.
         """
         super().__init__()
 

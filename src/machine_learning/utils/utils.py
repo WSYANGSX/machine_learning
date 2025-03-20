@@ -156,3 +156,16 @@ def plot_raw_recon_figures(raw_figures: torch.Tensor | np.ndarray, recon_figures
         ax.get_yaxis().set_visible(False)
 
     plt.show()
+
+
+def plot_figures(figures: torch.Tensor | np.ndarray):
+    plt.figure(figsize=(10, 4))
+
+    num_figures = len(figures)
+    for i in range(num_figures):
+        ax = plt.subplot(1, num_figures, i + 1)
+        plt.imshow(figures[i].cpu().squeeze(), cmap="gray")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+
+    plt.show()

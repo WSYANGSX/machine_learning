@@ -34,7 +34,7 @@ class Trainer:
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
-        self.best_loss = float("inf")
+        self.best_loss = None
 
     def _configure_writer(self):
         log_path = self.cfg.get(
@@ -111,7 +111,7 @@ class Trainer:
                     self.best_loss = val_loss["save_metric"]
                     self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
             else:
-                raise ValueError("val loss has no save metric.")
+                print("Val loss has no save metric, saving of the best loss model skipped.")
 
             # 定期保存
             if (epoch + 1) % self.cfg.get("save_interval", 10) == 0:

@@ -132,7 +132,8 @@ def main():
 
     trainer = Trainer(train_cfg, data, transform, auto_encoder)
 
-    trainer.train()
+    # trainer.train()
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
     trainer.eval()
 
 

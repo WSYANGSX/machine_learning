@@ -1,9 +1,10 @@
 from typing import Literal, Mapping
-from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import plot_raw_recon_figures
 
 import torch
+
+from machine_learning.models import BaseNet
+from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils import plot_figures
 
 
 class GAN(AlgorithmBase):
@@ -29,11 +30,8 @@ class GAN(AlgorithmBase):
         self._configure_optimizers()
         self._configure_schedulers()
 
-        # --------------------- 先验 -----------------------
-        self.prior = torch.distributions.MultivariateNormal(
-            loc=torch.zeros(self.models["generator"].input_dim, device=self.device),
-            covariance_matrix=torch.eye(self.models["generator"].input_dim, device=self.device),
-        )
+        # -------------------- 先验 ------------------------
+        self.z_dim = self.models["generator"].input_dim
 
     def _configure_optimizers(self) -> None:
         opt_config = self.cfg["optimizer"]
@@ -71,7 +69,7 @@ class GAN(AlgorithmBase):
             self._schedulers.update(
                 {
                     "generator": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self.models["generator"],
+                        self._optimizers["generator"],
                         mode="min",
                         factor=sched_config.get("factor", 0.1),
                         patience=sched_config.get("patience", 10),
@@ -81,7 +79,7 @@ class GAN(AlgorithmBase):
             self._schedulers.update(
                 {
                     "discriminator": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self.models["discriminator"],
+                        self._optimizers["discriminator"],
                         mode="min",
                         factor=sched_config.get("factor", 0.1),
                         patience=sched_config.get("patience", 10),
@@ -89,7 +87,7 @@ class GAN(AlgorithmBase):
                 }
             )
 
-    def train_discriminator(self, epoch: int) -> float:
+    def train_discriminator(self) -> float:
         """训练单个discriminator epoch"""
         self.models["generator"].eval()
         self.models["discriminator"].train()
@@ -99,14 +97,15 @@ class GAN(AlgorithmBase):
         for _, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
 
-            z_prior = self.prior.sample((len(data),))
-            data_ = self.generator(z_prior)
+            z_prior = torch.randn((len(data), self.z_dim), device=self.device, dtype=torch.float32)
+            data_ = self.models["generator"](z_prior)
+
             self._optimizers["discriminator"].zero_grad()
 
-            output_t = self.discriminator(data)
-            output_f = self.discriminator(data_)
+            real_preds = self.models["discriminator"](data)
+            fake_preds = self.models["discriminator"](data_)
 
-            loss = discriminator_criterion(output_t, output_f)
+            loss = discriminator_criterion(real_preds, fake_preds)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.models["discriminator"].parameters(), self.cfg["training"]["grad_clip"])
@@ -116,28 +115,32 @@ class GAN(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"d_loss": avg_loss}
+        return avg_loss
 
     def eval_discriminator(self) -> float:
         self.models["discriminator"].eval()
+        self.models["generator"].eval()
+
         val_total_loss = 0.0
 
         with torch.no_grad():
             for data, _ in self.val_loader:
                 data = data.to(self.device, non_blocking=True)
 
-                z_prior = self.prior.sample((len(data),))
-                data_ = self.generator(z_prior)
+                z_prior = torch.randn((len(data), self.z_dim), device=self.device, dtype=torch.float32)
+                data_ = self.models["generator"](z_prior)
 
-                output_t = self.discriminator(data)
-                output_f = self.discriminator(data_)
+                real_preds = self.models["discriminator"](data)
+                fake_preds = self.models["discriminator"](data_)
 
-                loss = discriminator_criterion(output_t, output_f)
+                loss = discriminator_criterion(real_preds, fake_preds)
                 val_total_loss += loss.item()
 
-        return val_total_loss / len(self.val_loader)
+        avg_loss = val_total_loss / len(self.val_loader)
 
-    def train_generator(self, epoch: int):
+        return avg_loss
+
+    def train_generator(self):
         """训练单个generator epoch"""
         self.models["generator"].train()
         self.models["discriminator"].eval()
@@ -147,12 +150,12 @@ class GAN(AlgorithmBase):
         for _, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
 
-            z_prior = self.prior.sample((len(data),))
-            data_ = self.generator(z_prior)
+            z_prior = torch.randn((len(data), self.z_dim), device=self.device, dtype=torch.float32)
+            data_ = self.models["generator"](z_prior)
 
             self._optimizers["generator"].zero_grad()
 
-            output_f = self.discriminator(data_)
+            output_f = self.models["discriminator"](data_)
 
             loss = generator_criterion(output_f)
             loss.backward()  # 反向传播计算各权重的梯度
@@ -168,68 +171,51 @@ class GAN(AlgorithmBase):
 
     def eval_generator(self) -> float:
         self.models["generator"].eval()
+        self.models["discriminator"].eval()
+
         val_total_loss = 0.0
 
         with torch.no_grad():
             for data, _ in self.val_loader:
                 data = data.to(self.device, non_blocking=True)
 
-                z_prior = self.prior.sample((len(data),))
-                data_ = self.generator(z_prior)
+                z_prior = torch.randn((len(data), self.z_dim), device=self.device, dtype=torch.float32)
+                data_ = self.models["generator"](z_prior)
 
-                output_f = self.discriminator(data_)
+                output_f = self.models["discriminator"](data_)
 
                 loss = generator_criterion(output_f)
                 val_total_loss += loss.item()
 
-        return val_total_loss / len(self.val_loader)
+        avg_loss = val_total_loss / len(self.val_loader)
+
+        return avg_loss
 
     def train_epoch(self, epoch, writer, log_interval):
         """训练单个epoch"""
-        self._models["encoder"].train()
-        self._models["decoder"].train()
+        for i in range(self.cfg["training"].get("n_discriminator", 4)):
+            d_loss = self.train_discriminator()
+        g_loss = self.train_generator()
 
-        total_loss = 0.0
-        criterion = nn.MSELoss()
+        return {"discriminator": d_loss, "generator": g_loss}
 
-        for batch_idx, (data, _) in enumerate(self.train_loader):
-            data = data.to(self.device, non_blocking=True)
-
-            self._optimizers["vae"].zero_grad()
-
-            mu, log_var = self._models["encoder"](data)
-            std = torch.exp(0.5 * log_var)
-            z = mu + std * torch.randn_like(mu)
-            output = self._models["decoder"](z)
-
-            kl_d = 0.5 * torch.sum(mu.pow(2) + log_var.exp() - log_var - 1, dim=1)
-            loss = criterion(output, data) + kl_d.mean() * self.cfg["training"]["beta"]
-            loss.backward()  # 反向传播计算各权重的梯度
-
-            torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
-            self._optimizers["vae"].step()
-
-            total_loss += loss.item()
-
-            if batch_idx % log_interval == 0:
-                writer.add_scalar("loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
-                writer.add_scalar("kl/train_batch", kl_d.mean().item(), epoch * len(self.train_loader))  # batch kl
-
-        avg_loss = total_loss / len(self.train_loader)
-
-        return {"vae": avg_loss}
+    def validate(self) -> dict[str, float]:
+        """验证步骤"""
+        d_loss = self.eval_discriminator()
+        g_loss = self.eval_generator()
+        return {"discriminator": d_loss, "generator": g_loss}  # 统一接口
 
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self._models["encoder"].eval()
-        self._models["decoder"].eval()
+        self._models["generator"].eval()
+        self._models["discriminator"].eval()
 
-        z = self.prior.sample((num_samples,))
+        z = torch.randn((num_samples, self.z_dim), device=self.device, dtype=torch.float32)
 
         with torch.no_grad():
-            recons = self.generator(z)
+            recons = self.models["generator"](z)
 
-        plot_raw_recon_figures()
+        plot_figures(recons)
 
 
 """
