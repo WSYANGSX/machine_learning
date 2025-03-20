@@ -155,7 +155,6 @@ class AlgorithmBase(ABC):
 
     def load(self, checkpoint: str) -> tuple[Any]:
         state = torch.load(checkpoint)
-        print_dict(state)
 
         # 加载模型参数
         for key, val in self.models.items():
