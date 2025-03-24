@@ -127,12 +127,9 @@ class Trainer:
                 print(f"{key} lr: {opt.param_groups[0]['lr']:.2e} | ")
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
-        point = self.load(checkpoint)
-
-        self.cfg = point["cfg"]
-
-        epoch = point["epoch"]
-
+        state_dict = self.load(checkpoint)
+        self.cfg = state_dict["cfg"]
+        epoch = state_dict["epoch"]
         self.train(epoch)
 
     def eval(self):

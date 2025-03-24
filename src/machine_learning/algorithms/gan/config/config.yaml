@@ -25,6 +25,6 @@ model:
   
 training:
   grad_clip: 
-    generator: 1.0
-    discriminator: 1.0
+    generator: 5.0
+    discriminator: 5.0
   n_discriminator: 1

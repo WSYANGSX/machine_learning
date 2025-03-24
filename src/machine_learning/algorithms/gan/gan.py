@@ -187,7 +187,8 @@ class GAN(AlgorithmBase):
 
     def train_epoch(self, epoch, writer, log_interval):
         """训练单个epoch"""
-        for i in range(self.cfg["training"].get("n_discriminator", 4)):
+        n_discriminator = self.cfg["training"].get("n_discriminator", 1)
+        for _ in range(n_discriminator):
             d_loss = self.train_discriminator()
         g_loss = self.train_generator()
 
@@ -201,8 +202,8 @@ class GAN(AlgorithmBase):
 
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self._models["generator"].eval()
-        self._models["discriminator"].eval()
+        self.models["generator"].eval()
+        self.models["discriminator"].eval()
 
         z = torch.randn((num_samples, self.z_dim), device=self.device, dtype=torch.float32)
 
@@ -217,11 +218,11 @@ Helper functions
 """
 
 
-def discriminator_criterion(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> float:
+def discriminator_criterion(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> torch.Tensor:
     real_loss = torch.nn.functional.binary_cross_entropy_with_logits(real_preds, torch.ones_like(real_preds))
     fake_loss = torch.nn.functional.binary_cross_entropy_with_logits(fake_preds, torch.zeros_like(fake_preds))
     return (real_loss + fake_loss) / 2.0
 
 
-def generator_criterion(fake_preds: torch.Tensor) -> float:
+def generator_criterion(fake_preds: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.binary_cross_entropy_with_logits(fake_preds, torch.ones_like(fake_preds))

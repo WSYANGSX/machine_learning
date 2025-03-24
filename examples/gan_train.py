@@ -23,15 +23,13 @@ class Generator(BaseNet):
         self.input_dim = input_dim
         self.output_size = output_size
 
-        self.layer1 = nn.Sequential(nn.Linear(self.input_dim, 256), nn.LeakyReLU(0.2), nn.BatchNorm1d(256))
-        self.layer2 = nn.Sequential(nn.Linear(256, 512), nn.LeakyReLU(0.2), nn.BatchNorm1d(512))
-        self.layer3 = nn.Sequential(nn.Linear(512, 1024), nn.LeakyReLU(0.2), nn.BatchNorm1d(1024))
-        self.layer4 = nn.Sequential(
-            nn.Linear(1024, np.prod(self.output_size)),
-            nn.LeakyReLU(0.2),
-            nn.BatchNorm1d(np.prod(self.output_size)),
+        self.layer1 = nn.Sequential(nn.Linear(self.input_dim, 128), nn.LeakyReLU(0.2))
+        self.layer2 = nn.Sequential(nn.Linear(128, 256), nn.LeakyReLU(0.2), nn.BatchNorm1d(256, 0.8))
+        self.layer3 = nn.Sequential(nn.Linear(256, 512), nn.LeakyReLU(0.2), nn.BatchNorm1d(512, 0.8))
+        self.layer4 = nn.Sequential(nn.Linear(512, 1024), nn.LeakyReLU(0.2), nn.BatchNorm1d(1024, 0.8))
+        self.layer5 = nn.Sequential(
+            nn.Linear(1024, np.prod(self.output_size)), nn.Tanh(), nn.Unflatten(1, self.output_size)
         )
-        self.layer5 = nn.Unflatten(1, (1, 28, 28))
 
     def forward(self, x):
         y = self.layer1(x)
@@ -60,8 +58,8 @@ class Discriminator(BaseNet):
 
         self.layer1 = nn.Sequential(nn.Flatten())
         self.layer2 = nn.Sequential(nn.Linear(np.prod(input_size), 512), nn.LeakyReLU(0.2))
-        self.layer3 = nn.Sequential(nn.Linear(512, 256), nn.LeakyReLU())
-        self.layer4 = nn.Sequential(nn.Linear(256, 1))
+        self.layer3 = nn.Sequential(nn.Linear(512, 256), nn.LeakyReLU(0.2))
+        self.layer4 = nn.Linear(256, 1)
 
     def forward(self, x):
         y = self.layer1(x)
@@ -108,7 +106,7 @@ def main():
 
     trainer = Trainer(train_cfg, data, transform, gan)
 
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_99.pth")
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_39.pth")
     trainer.train()
     trainer.eval()
 
