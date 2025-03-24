@@ -1,0 +1,141 @@
+from torchvision import transforms
+
+from machine_learning.algorithms import AutoEncoder
+from machine_learning.trainer import Trainer
+from machine_learning.utils import data_parse
+from machine_learning.models import BaseNet
+
+import torch.nn as nn
+from torchinfo import summary
+
+
+class Encoder(BaseNet):
+    def __init__(
+        self,
+        input_size: tuple[int],
+        z_dim: int,
+    ) -> None:
+        """
+        Network for vae encoder.
+
+        Args:
+            input_size (tuple[int]): 输入数据的size (channels, ...).
+            z_dim (int): 多维高斯的维度.
+        """
+        super().__init__()
+
+        self.input_size = input_size
+        self.z_dim = z_dim
+
+        self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 2, 2, 0), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
+        self.layer2 = nn.Sequential(nn.Conv2d(3, 10, 2, 2, 0), nn.BatchNorm2d(10), nn.ReLU())  # (10,7,7)
+        self.layer3 = nn.Sequential(nn.Conv2d(10, 15, 2, 2, 0), nn.BatchNorm2d(15), nn.ReLU(), nn.Flatten())  # (15,3,3)
+        self.layer4 = nn.Linear(135, self.z_dim)
+
+    def _initialize_weights(self):
+        print("[INFO] Initializing weights with Kaiming normal...")
+        for module in self.modules():
+            if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)):
+                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+
+    def forward(self, x):
+        mid_val = self.layer1(x)
+        mid_val = self.layer2(mid_val)
+        mid_val = self.layer3(mid_val)
+        output = self.layer4(mid_val)
+
+        return output
+
+    def view_structure(self):
+        summary(self, input_size=(1, *self.input_size))
+
+
+class Decoder(BaseNet):
+    def __init__(self, z_dim: int) -> None:
+        """
+        Network for vae decoder.
+
+        Args:
+            z_dim (int): 多维高斯的维度.
+        """
+        super().__init__()
+
+        self.z_dim = z_dim
+
+        self.layer1 = nn.Sequential(nn.Linear(self.z_dim, 294), nn.Unflatten(1, (6, 7, 7)))
+
+        self.layer2 = nn.Sequential(
+            nn.BatchNorm2d(6),
+            nn.ReLU(),
+            nn.ConvTranspose2d(6, 3, 3, 2, 1, output_padding=1),
+        )
+
+        self.layer3 = nn.Sequential(
+            nn.BatchNorm2d(3), nn.ReLU(), nn.ConvTranspose2d(3, 1, 3, 2, 1, output_padding=1), nn.Sigmoid()
+        )
+
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.BatchNorm2d):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+
+    def forward(self, x):
+        mid_val = self.layer1(x)
+        mid_val = self.layer2(mid_val)
+        output = self.layer3(mid_val)
+
+        return output
+
+    def view_structure(self):
+        summary(self, input_size=(1, self.z_dim))
+
+
+def main():
+    input_size = (1, 28, 28)
+    output_size = 128
+
+    encoder = Encoder(input_size, output_size)
+    decoder = Decoder(output_size)
+
+    auto_encoder = AutoEncoder(
+        "./src/machine_learning/algorithms/auto_encoder/config/config.yaml",
+        {"encoder": encoder, "decoder": decoder},
+    )
+
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=0.1307, std=0.3081),
+        ]
+    )
+    data = data_parse("./src/machine_learning/data/minist")
+
+    train_cfg = {
+        "epochs": 100,
+        "log_dir": "./logs/auto_encoder/",
+        "model_dir": "./checkpoints/auto_encoder/",
+        "log_interval": 10,
+        "save_interval": 10,
+        "batch_size": 256,
+        "data_num_workers": 4,
+    }
+
+    trainer = Trainer(train_cfg, data, transform, auto_encoder)
+
+    # trainer.train()
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+    trainer.eval()
+
+
+if __name__ == "__main__":
+    main()

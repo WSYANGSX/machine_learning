@@ -20,7 +20,7 @@ class GAN(AlgorithmBase):
 
         parameters:
         - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): vae算法所需模型.{"generator":model1,"discriminator":model2}.
+        - models (Mapping[str, BaseNet]): gan算法所需模型.{"generator": model1, "discriminator": model2}.
         - name (str): 算法名称. Default to "gan".
         - device (str): 运行设备(auto自动选择).
         """
@@ -65,24 +65,14 @@ class GAN(AlgorithmBase):
     def _configure_schedulers(self) -> None:
         sched_config = self.cfg["scheduler"]
 
-        if sched_config.get("type") == "ReduceLROnPlateau":
+        if sched_config.get("type") == "StepLR":
             self._schedulers.update(
-                {
-                    "generator": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self._optimizers["generator"],
-                        mode="min",
-                        factor=sched_config.get("factor", 0.1),
-                        patience=sched_config.get("patience", 10),
-                    )
-                }
+                {"generator": torch.optim.lr_scheduler.StepLR(self._optimizers["generator"], step_size=30, gamma=0.1)}
             )
             self._schedulers.update(
                 {
-                    "discriminator": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self._optimizers["discriminator"],
-                        mode="min",
-                        factor=sched_config.get("factor", 0.1),
-                        patience=sched_config.get("patience", 10),
+                    "discriminator": torch.optim.lr_scheduler.StepLR(
+                        self._optimizers["discriminator"], step_size=30, gamma=0.1
                     )
                 }
             )
@@ -108,7 +98,9 @@ class GAN(AlgorithmBase):
             loss = discriminator_criterion(real_preds, fake_preds)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.models["discriminator"].parameters(), self.cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(
+                self.models["discriminator"].parameters(), self.cfg["training"]["grad_clip"]["discriminator"]
+            )
             self._optimizers["discriminator"].step()
 
             total_loss += loss.item()
@@ -155,12 +147,14 @@ class GAN(AlgorithmBase):
 
             self._optimizers["generator"].zero_grad()
 
-            output_f = self.models["discriminator"](data_)
+            fake_preds = self.models["discriminator"](data_)
 
-            loss = generator_criterion(output_f)
+            loss = generator_criterion(fake_preds)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.models["generator"].parameters(), self.cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(
+                self.models["generator"].parameters(), self.cfg["training"]["grad_clip"]["generator"]
+            )
             self._optimizers["generator"].step()
 
             total_loss += loss.item()
@@ -182,9 +176,9 @@ class GAN(AlgorithmBase):
                 z_prior = torch.randn((len(data), self.z_dim), device=self.device, dtype=torch.float32)
                 data_ = self.models["generator"](z_prior)
 
-                output_f = self.models["discriminator"](data_)
+                fake_preds = self.models["discriminator"](data_)
 
-                loss = generator_criterion(output_f)
+                loss = generator_criterion(fake_preds)
                 val_total_loss += loss.item()
 
         avg_loss = val_total_loss / len(self.val_loader)
@@ -226,7 +220,7 @@ Helper functions
 def discriminator_criterion(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> float:
     real_loss = torch.nn.functional.binary_cross_entropy_with_logits(real_preds, torch.ones_like(real_preds))
     fake_loss = torch.nn.functional.binary_cross_entropy_with_logits(fake_preds, torch.zeros_like(fake_preds))
-    return real_loss + fake_loss
+    return (real_loss + fake_loss) / 2.0
 
 
 def generator_criterion(fake_preds: torch.Tensor) -> float:

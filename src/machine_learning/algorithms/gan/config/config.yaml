@@ -16,13 +16,15 @@ optimizer:
   d_weight_decay: 0
   
 scheduler:
-  type: ReduceLROnPlateau
-  factor: 0.5
-  patience: 5
+  type: StepLR
+  step_size: 30
+  gamma: 0.1
 
 model:
   initialize_weights: True
   
 training:
-  grad_clip: 5.0
-  n_discriminator: 5
+  grad_clip: 
+    generator: 1.0
+    discriminator: 1.0
+  n_discriminator: 1
