@@ -95,20 +95,20 @@ def main():
     data = data_parse("./src/machine_learning/data/minist")
 
     train_cfg = {
-        "epochs": 100,
+        "epochs": 1000,
         "log_dir": "./logs/gan/",
         "model_dir": "./checkpoints/gan/",
         "log_interval": 10,
         "save_interval": 10,
-        "batch_size": 256,
+        "batch_size": 512,
         "data_num_workers": 4,
     }
 
     trainer = Trainer(train_cfg, data, transform, gan)
 
-    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_39.pth")
-    trainer.train()
-    trainer.eval()
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")
+    # trainer.train()
+    trainer.eval(10)
 
 
 if __name__ == "__main__":

@@ -132,8 +132,8 @@ class Trainer:
         epoch = state_dict["epoch"]
         self.train(epoch)
 
-    def eval(self):
-        self._algorithm.eval()
+    def eval(self, num_samples: int = 5):
+        self._algorithm.eval(num_samples)
 
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
         model_path = self.cfg.get(

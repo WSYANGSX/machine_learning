@@ -27,4 +27,4 @@ training:
   grad_clip: 
     generator: 5.0
     discriminator: 5.0
-  n_discriminator: 1
+  n_discriminator: 4

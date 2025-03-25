@@ -138,6 +138,10 @@ class AlgorithmBase(ABC):
     def validate(self) -> dict[str, float]:
         pass
 
+    @abstractmethod
+    def eval(self, num_samples: int) -> None:
+        pass
+
     def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
         """保存模型检查点"""
         state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
