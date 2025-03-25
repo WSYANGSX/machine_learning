@@ -59,7 +59,7 @@ class Diffusion(AlgorithmBase):
     def _configure_schedulers(self) -> None:
         sch_config = self.cfg["scheduler"]
 
-        if sch_config.get("type") == "ReduceLROnPlateau":
+        if sch_config and sch_config.get("type") == "ReduceLROnPlateau":
             self._schedulers.update(
                 {
                     "noise_predictor": torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -84,6 +84,7 @@ class Diffusion(AlgorithmBase):
         else:
             raise ValueError(f"Method {method} to generate betas is not implemented.")
 
+        # 模型因子
         self.alphas = 1 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         self.alphas_cumprod_prev = torch.cat([torch.ones(1), self.alphas_cumprod[:-1]], dim=0)
@@ -135,8 +136,7 @@ class Diffusion(AlgorithmBase):
 
     def validate(self) -> float:
         """验证步骤"""
-        self._models["encoder"].eval()
-        self._models["decoder"].eval()
+        self._models["noise_predictor"].eval()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -144,38 +144,41 @@ class Diffusion(AlgorithmBase):
         with torch.no_grad():
             for data, _ in self.val_loader:
                 data = data.to(self.device, non_blocking=True)
+                noise = torch.randn_like(data)
+                time_step = torch.randint(1, self.time_steps)
+                noisey_data_t = self.noisey_data_t(data, time_step)
 
-                mu, log_var = self._models["encoder"](data)
-                std = torch.exp(0.5 * log_var)
-                z = mu + std * torch.randn_like(mu)
-                output = self._models["decoder"](z)
+                noise = self._models["noise_predictor"](noisey_data_t, time_step)
 
-                kl_d = 0.5 * torch.sum(
-                    mu.pow(2) + log_var.exp() - log_var - 1, dim=1
-                )  # 在处理损失时按照相同的损失处理方法，要么按照样本求和，要么按照样本平均，以保持两项在同一个量级上
-
-                total_loss += (criterion(output, data) + kl_d.mean() * self.cfg["training"]["beta"]).item()
+                loss = criterion(noise, noisey_data_t)
+                total_loss += loss
 
         avg_loss = total_loss / len(self.val_loader)
 
         return {"vae": avg_loss, "save_metric": avg_loss}
 
+    @torch.no_grad()
+    def sample(self, data: torch.Tensor, t: torch.Tensor, current_t: torch.Tensor):
+        beta_t = extract(self.betas, t, data.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+        sqrt_recip_alphas_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+
+        model_mean = sqrt_recip_alphas_t * (
+            data - beta_t * self.models["noise_predictor"](data, t) / sqrt_one_minus_alphas_cumprod_t
+        )
+
+        if current_t == 0:
+            return model_mean
+        else:
+            posterior_variance_t = extract(self.posterior_variance, t, data.shape)
+            noise = torch.randn_like(data)
+
+            return model_mean + torch.sqrt(posterior_variance_t) * noise
+
+    @torch.no_grad()
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self._models["encoder"].eval()
-        self._models["decoder"].eval()
-
-        data, _ = next(iter(self.val_loader))
-        sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
-        data = data[sample_indices].to(self.device)
-
-        with torch.no_grad():
-            mu, log_var = self._models["encoder"](data)
-            # std = torch.exp(0.5 * log_var)
-            # z = mu + std * torch.randn_like(mu)
-            recons = self._models["decoder"](mu)
-
-        plot_raw_recon_figures(data, recons)
+        self._models["noise_predictor"].eval()
 
 
 """
