@@ -3,28 +3,26 @@ algorithm: "gan"
 optimizer:
   type: "Adam"
   # 生成器参数
-  g_learning_rate: 1.0e-4
-  g_beta1: 0.9
+  g_learning_rate: 2.0e-4
+  g_beta1: 0.5
   g_beta2: 0.999
   g_eps: 1.0e-8
   g_weight_decay: 0
   # 判别器参数
-  d_learning_rate: 1.0e-4
-  d_beta1: 0.9
+  d_learning_rate: 2.0e-4
+  d_beta1: 0.5
   d_beta2: 0.999
   d_eps: 1.0e-8
   d_weight_decay: 0
   
 scheduler:
-  type: StepLR
-  step_size: 30
-  gamma: 0.1
+  
 
 model:
   initialize_weights: True
   
 training:
   grad_clip: 
-    generator: 5.0
-    discriminator: 5.0
+    generator: 5
+    discriminator: 5
   n_discriminator: 4

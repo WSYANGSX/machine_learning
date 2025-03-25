@@ -95,8 +95,12 @@ class VAE(AlgorithmBase):
             total_loss += loss.item()
 
             if batch_idx % log_interval == 0:
-                writer.add_scalar("loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
-                writer.add_scalar("kl/train_batch", kl_d.mean().item(), epoch * len(self.train_loader))  # batch kl
+                writer.add_scalar(
+                    "loss/train_batch", loss.item(), epoch * len(self.train_loader) + batch_idx
+                )  # batch loss
+                writer.add_scalar(
+                    "kl/train_batch", kl_d.mean().item(), epoch * len(self.train_loader) + batch_idx
+                )  # batch kl
 
         avg_loss = total_loss / len(self.train_loader)
 
