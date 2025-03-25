@@ -106,6 +106,9 @@ class GAN(AlgorithmBase):
             self._optimizers["discriminator"].step()
             total_d_loss += d_loss
 
+            real_accuracy = (real_preds > 0.5).float().mean()
+            fake_accuracy = (fake_preds < 0.5).float().mean()
+
             # 训练 generator
             if batch_idx % n_discriminator == 0:
                 self._optimizers["generator"].zero_grad()
@@ -127,6 +130,12 @@ class GAN(AlgorithmBase):
             if batch_idx % log_interval == 0:
                 writer.add_scalar("d_loss/train_batch", d_loss.item(), epoch * len(self.train_loader) + batch_idx)
                 writer.add_scalar("g_loss/train_batch", g_loss.item(), epoch * len(self.train_loader) + batch_idx)
+                writer.add_scalar(
+                    "real_accuracy/train_batch", real_accuracy.item(), epoch * len(self.train_loader) + batch_idx
+                )
+                writer.add_scalar(
+                    "fake_accuracy/train_batch", fake_accuracy.item(), epoch * len(self.train_loader) + batch_idx
+                )
 
         d_avg_loss = total_d_loss / len(self.train_loader)
         g_avg_loss = total_g_loss / g_count
