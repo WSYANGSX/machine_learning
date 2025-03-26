@@ -4,6 +4,7 @@ from typing import Literal, Mapping, Any
 from abc import ABC, abstractmethod
 
 import torch
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -106,7 +107,7 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    def _initialize_data_loader(self, train_data_loader, val_data_loader) -> None:
+    def _initialize_data_loader(self, train_data_loader: DataLoader, val_data_loader: DataLoader) -> None:
         """初始化算法训练和验证数据，需要在训练前调用
 
         Args:
@@ -115,6 +116,13 @@ class AlgorithmBase(ABC):
         """
         self.train_loader = train_data_loader
         self.val_loader = val_data_loader
+
+        data, labels = next(iter(self.train_loader))
+        self.batch_data_shape = data.shape
+        self.batch_label_shape = labels.shape
+        print(
+            "[INFO] Batch data shape: ", self.batch_data_shape, " " * 5, "Batch labels shape: ", self.batch_label_shape
+        )
 
     @abstractmethod
     def _configure_optimizers(self):

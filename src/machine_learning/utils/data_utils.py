@@ -55,8 +55,8 @@ def data_parse(file_path: str) -> tuple:
     file_path = os.path.abspath(file_path)
     train_data_path = os.path.join(file_path, "train")
     validate_data_path = os.path.join(file_path, "test")
-    print("train data path: ", train_data_path)
-    print("validate data path: ", validate_data_path)
+    print("[INFO] Train data path: ", train_data_path)
+    print("[INFO] Validate data path: ", validate_data_path)
 
     # 加载数据
     train_data, train_labels = (
@@ -67,7 +67,18 @@ def data_parse(file_path: str) -> tuple:
         load_idx3_ubyte(os.path.join(validate_data_path, "images_test.idx3-ubyte"))[0],
         load_idx1_ubyte(os.path.join(validate_data_path, "labels_test.idx1-ubyte"))[0],
     )
-    print("train data shape: ", train_data.shape, " " * 10, "train labels shape: ", train_labels.shape)
-    print("test data shape: ", validate_data.shape, " " * 10, "test labels shape: ", validate_labels.shape)
+    print(
+        "[INFO] train data shape: ",
+        train_data.shape,
+        " " * 5,
+        "train labels shape: ",
+        train_labels.shape,
+        " " * 5,
+        "test data shape: ",
+        validate_data.shape,
+        " " * 5,
+        "test labels shape: ",
+        validate_labels.shape,
+    )
 
     return train_data, train_labels, validate_data, validate_labels

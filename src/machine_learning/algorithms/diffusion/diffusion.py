@@ -1,11 +1,12 @@
 from typing import Literal, Mapping
-from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import plot_raw_recon_figures
+from tqdm import trange
 
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+
+from machine_learning.models import BaseNet
+from machine_learning.algorithms.base import AlgorithmBase
 
 
 class Diffusion(AlgorithmBase):
@@ -21,7 +22,7 @@ class Diffusion(AlgorithmBase):
 
         parameters:
         - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noisemaker":model}.
+        - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noise_predictor":model}.
         - name (str): 算法名称. Default to "diffusion".
         - device (str): 运行设备(auto自动选择).
         """
@@ -87,20 +88,26 @@ class Diffusion(AlgorithmBase):
         # 模型因子
         self.alphas = 1 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.alphas_cumprod_prev = torch.cat([torch.ones(1), self.alphas_cumprod[:-1]], dim=0)
+        self.alphas_cumprod_prev = torch.cat(
+            [torch.ones(1), self.alphas_cumprod[:-1]], dim=0
+        )  # 从x1倒推x0时，不再添加噪声，所以在首段添加1
+
         self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1 - self.alphas_cumprod)
+
         self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
 
-    def noisey_data_t(self, data: torch.Tensor, time_step: torch.Tensor, noise: torch.Tensor = None) -> torch.Tensor:
+    def noisey_data_t(
+        self, raw_data: torch.Tensor, time_step: torch.Tensor, noise: torch.Tensor = None
+    ) -> torch.Tensor:
         if noise is None:
-            noise = torch.randn_like(data)
+            noise = torch.randn_like(raw_data)
 
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, time_step, data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, time_step, data.shape)
+        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, time_step, raw_data.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, time_step, raw_data.shape)
 
-        return sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
+        return sqrt_alphas_cumprod_t * raw_data + sqrt_one_minus_alphas_cumprod_t * noise
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> float:
         """训练单个epoch"""
@@ -115,20 +122,21 @@ class Diffusion(AlgorithmBase):
             time_step = torch.randint(1, self.time_steps)
             noisey_data_t = self.noisey_data_t(data, time_step)
 
+            noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
+
+            loss = criterion(noise, noise_)
+
             self._optimizers["noise_predictor"].zero_grad()
-
-            noise = self._models["noise_predictor"](noisey_data_t, time_step)
-
-            loss = criterion(noise, noisey_data_t)
             loss.backward()  # 反向传播计算各权重的梯度
-
             torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
             self._optimizers["noise_predictor"].step()
 
             total_loss += loss.item()
 
             if batch_idx % log_interval == 0:
-                writer.add_scalar("loss/train_batch", loss.item(), epoch * len(self.train_loader))  # batch loss
+                writer.add_scalar(
+                    "loss/train_batch", loss.item(), epoch * len(self.train_loader) + batch_idx
+                )  # batch loss
 
         avg_loss = total_loss / len(self.train_loader)
 
@@ -148,9 +156,9 @@ class Diffusion(AlgorithmBase):
                 time_step = torch.randint(1, self.time_steps)
                 noisey_data_t = self.noisey_data_t(data, time_step)
 
-                noise = self._models["noise_predictor"](noisey_data_t, time_step)
+                noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
 
-                loss = criterion(noise, noisey_data_t)
+                loss = criterion(noise, noise_)
                 total_loss += loss
 
         avg_loss = total_loss / len(self.val_loader)
@@ -158,7 +166,16 @@ class Diffusion(AlgorithmBase):
         return {"vae": avg_loss, "save_metric": avg_loss}
 
     @torch.no_grad()
-    def sample(self, data: torch.Tensor, t: torch.Tensor, current_t: torch.Tensor):
+    def sample(self, data: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """基于当前时刻数据推断前一时刻的数据
+
+        Args:
+            data (torch.Tensor): 当前时刻输入的数据.
+            t (torch.Tensor): 当前时刻.
+
+        Returns:
+            torch.Tensor: 前一时刻的预测数据.
+        """
         beta_t = extract(self.betas, t, data.shape)
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
@@ -167,7 +184,7 @@ class Diffusion(AlgorithmBase):
             data - beta_t * self.models["noise_predictor"](data, t) / sqrt_one_minus_alphas_cumprod_t
         )
 
-        if current_t == 0:
+        if t == 1:
             return model_mean
         else:
             posterior_variance_t = extract(self.posterior_variance, t, data.shape)
@@ -179,6 +196,14 @@ class Diffusion(AlgorithmBase):
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
         self._models["noise_predictor"].eval()
+
+        data = torch.randn(num_samples, *self.batch_data_shape[1:])
+
+        print("[INFO] Start sampling...")
+        epoch = 0
+        for time_step in trange(start=self.time_steps, stop=0, step=-1, desc=f"Epoch {epoch + 1}/{self.time_steps}"):
+            data = self.sample(data, time_step)
+            epoch += 1
 
 
 """
@@ -201,10 +226,9 @@ def sigmoid_beta_schedule(start: float, end: float, time_steps: int) -> torch.Te
 
 def extract(a: torch.Tensor, t: torch.Tensor, data_shape: tuple) -> torch.Tensor:
     """
-    根据生成的时间序列 t 提取对应 data 的时间t时的a值, 然后将a值转换为与 data 相同的size, 用于后续数据广播
-    (batch_size,channels,1,1)->(batch_size,channels,height,width)
+    根据生成的时间序列 t 提取对应 data 的时间t时的a值, 然后将 a 值转换为与 data 相同的 size, 用于后续数据广播
+    (batch_size, channels, 1, 1) -> (batch_size, channels, height, width)
     """
-
     batch_size = data_shape[0]
     out = a.gather(-1, t)
     return out.reshape(batch_size, *((1,) * (len(data_shape) - 1)))

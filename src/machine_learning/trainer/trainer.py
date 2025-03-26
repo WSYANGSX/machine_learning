@@ -34,7 +34,7 @@ class Trainer:
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
-        self.best_loss = None
+        self.best_loss = torch.inf
 
     def _configure_writer(self):
         log_path = self.cfg.get(

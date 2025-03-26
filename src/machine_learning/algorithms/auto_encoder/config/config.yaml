@@ -17,5 +17,4 @@ model:
   initialize_weights: True
 
 training:
-  d_grad_clip: 5.0
-  g_grad_clip: 5.0
+  grad_clip: 5.0

@@ -8,7 +8,7 @@ class BaseNet(nn.Module, ABC):
         super().__init__()
 
     def _initialize_weights(self):
-        print(f"Initializing weights of {self.__class__.__name__} with Kaiming normal...")
+        print(f"[INFO] Initializing weights of {self.__class__.__name__} with Kaiming normal...")
 
         for module in self.modules():
             if isinstance(
