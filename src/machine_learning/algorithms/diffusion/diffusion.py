@@ -33,9 +33,8 @@ class Diffusion(AlgorithmBase):
         self._configure_schedulers()
 
         # -------------------- 配置权重项 --------------------
-        self._configure_factors(self.cfg["training"]["beta"]["method"])
-
         self.time_steps = self.cfg["training"].get("time_steps", 2000)
+        self._configure_factors(self.cfg["training"]["beta"]["method"])
 
     def _configure_optimizers(self) -> None:
         opt_config = self.cfg["optimizer"]
@@ -77,11 +76,11 @@ class Diffusion(AlgorithmBase):
         end = self.cfg["training"]["beta"].get("end", 0.002)
 
         if method == "linear":
-            self.betas = linear_beta_schedule(start, end, self.time_steps)
+            self.betas = linear_beta_schedule(start, end, self.time_steps).to(self.device)
         elif method == "quadratic":
-            self.betas = quadratic_beta_schedule(start, end, self.time_steps)
+            self.betas = quadratic_beta_schedule(start, end, self.time_steps).to(self.device)
         elif method == "sigmoid":
-            self.betas = sigmoid_beta_schedule(start, end, self.time_steps)
+            self.betas = sigmoid_beta_schedule(start, end, self.time_steps).to(self.device)
         else:
             raise ValueError(f"Method {method} to generate betas is not implemented.")
 
@@ -89,7 +88,7 @@ class Diffusion(AlgorithmBase):
         self.alphas = 1 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         self.alphas_cumprod_prev = torch.cat(
-            [torch.ones(1), self.alphas_cumprod[:-1]], dim=0
+            [torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0
         )  # 从x1倒推x0时，不再添加噪声，所以在首段添加1
 
         self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
@@ -119,7 +118,7 @@ class Diffusion(AlgorithmBase):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
             noise = torch.randn_like(data)
-            time_step = torch.randint(1, self.time_steps)
+            time_step = torch.randint(1, self.time_steps, (data.shape[0],), device=self.device)
             noisey_data_t = self.noisey_data_t(data, time_step)
 
             noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
