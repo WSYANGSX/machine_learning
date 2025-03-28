@@ -8,7 +8,7 @@ from machine_learning.utils import data_parse
 
 def main():
     input_size = (1, 28, 28)
-    noise_predictor = UNet(input_size, 2000, 1, 1, [64, 128, 256, 512], [256, 128, 64])
+    noise_predictor = UNet(input_size, 256, 1, 1, [64, 128, 256, 512], [512, 256, 128, 64])
     models = {"noise_predictor": noise_predictor}
 
     diffusion = Diffusion(

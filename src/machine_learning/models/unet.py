@@ -33,7 +33,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)  # 图像大小不变
         self.norm1 = nn.GroupNorm(32, out_channels)
-        self.time_proj = nn.Linear(time_dim, out_channels)
+        self.time_proj = nn.Linear(time_dim * 4, out_channels)
 
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)  # 图像大小不变
         self.norm2 = nn.GroupNorm(32, out_channels)
@@ -107,7 +107,7 @@ class UNet(BaseNet):
                 [
                     ResidualBlock(in_ch, out_ch, self.time_dim),
                     AttentionBlock(out_ch),
-                    nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=2, padding=1),
+                    nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=2, padding=1,),  # 下采样
                 ]
             )
             self.down_blocks.append(block)
@@ -123,7 +123,7 @@ class UNet(BaseNet):
         for idx, out_ch in enumerate(self.up_channels):
             block = nn.ModuleList(
                 [
-                    nn.ConvTranspose2d(in_ch, out_ch, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    nn.ConvTranspose2d(in_ch, out_ch, kernel_size=3, stride=2, padding=1, output_padding=0),
                     ResidualBlock(out_ch * 2, out_ch, self.time_dim),
                     AttentionBlock(out_ch),
                 ]
