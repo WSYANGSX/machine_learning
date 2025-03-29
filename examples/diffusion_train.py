@@ -36,8 +36,8 @@ def main():
 
     trainer = Trainer(train_cfg, data, transform, diffusion)
 
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")
-    trainer.train()
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/checkpoint_epoch_19.pth")
+    # trainer.train()
     trainer.eval(16)
 
 

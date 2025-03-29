@@ -7,6 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils import plot_figures
 
 
 class Diffusion(AlgorithmBase):
@@ -152,7 +153,7 @@ class Diffusion(AlgorithmBase):
             for data, _ in self.val_loader:
                 data = data.to(self.device, non_blocking=True)
                 noise = torch.randn_like(data)
-                time_step = torch.randint(1, self.time_steps)
+                time_step = torch.randint(1, self.time_steps, (data.shape[0],), device=self.device)
                 noisey_data_t = self.noisey_data_t(data, time_step)
 
                 noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
@@ -162,7 +163,7 @@ class Diffusion(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"vae": avg_loss, "save_metric": avg_loss}
+        return {"noise_predictor": avg_loss, "save_metric": avg_loss}
 
     @torch.no_grad()
     def sample(self, data: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -183,7 +184,7 @@ class Diffusion(AlgorithmBase):
             data - beta_t * self.models["noise_predictor"](data, t) / sqrt_one_minus_alphas_cumprod_t
         )
 
-        if t == 1:
+        if t[0] == 1:
             return model_mean
         else:
             posterior_variance_t = extract(self.posterior_variance, t, data.shape)
@@ -196,13 +197,17 @@ class Diffusion(AlgorithmBase):
         """可视化重构结果"""
         self._models["noise_predictor"].eval()
 
-        data = torch.randn(num_samples, *self.batch_data_shape[1:])
+        data = torch.randn(num_samples, *self.batch_data_shape[1:], device=self.device)
 
         print("[INFO] Start sampling...")
         epoch = 0
-        for time_step in trange(start=self.time_steps, stop=0, step=-1, desc=f"Epoch {epoch + 1}/{self.time_steps}"):
+        for time_step in trange(self.time_steps, 0, -1, desc=f"Epoch {epoch + 1}/{self.time_steps}"):
+            time_step = torch.tensor(time_step - 1, device=self.device).repeat(
+                num_samples,
+            )
             data = self.sample(data, time_step)
             epoch += 1
+        plot_figures(data, cmap="gray")
 
 
 """

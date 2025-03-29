@@ -1,9 +1,11 @@
+from typing import Sequence
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchinfo import summary
 
 from machine_learning.models import BaseNet
+from machine_learning.utils import cal_conv_output_size, cal_convtrans_output_size
 
 
 # 时间步嵌入层
@@ -13,7 +15,7 @@ class TimestepEmbedding(nn.Module):
         self.dim = dim
         self.linear1 = nn.Linear(dim, dim * 4)
         self.linear2 = nn.Linear(dim * 4, dim * 4)
-        self.activate = nn.SiLU()
+        self.act = nn.SiLU()
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         half_dim = self.dim // 2
@@ -22,7 +24,7 @@ class TimestepEmbedding(nn.Module):
         emb = t[:, None] * emb[None, :]
         emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
         emb = self.linear1(emb)
-        emb = self.activate(emb)
+        emb = self.act(emb)
         emb = self.linear2(emb)
         return emb
 
@@ -46,7 +48,7 @@ class ResidualBlock(nn.Module):
         else:
             self.shortcut = nn.Identity()
 
-    def forward(self, x, t_emb):
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         h = self.conv1(x)
         h = self.norm1(h)
 
@@ -63,7 +65,7 @@ class ResidualBlock(nn.Module):
 
 # 注意力模块
 class AttentionBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels: int):
         super().__init__()
         self.norm = nn.GroupNorm(32, channels)
         self.q = nn.Conv2d(channels, channels, 1)
@@ -71,7 +73,7 @@ class AttentionBlock(nn.Module):
         self.v = nn.Conv2d(channels, channels, 1)
         self.proj_out = nn.Conv2d(channels, channels, 1)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         B, C, H, W = x.shape
         h = self.norm(x)
         q = self.q(h).view(B, C, -1).permute(0, 2, 1)
@@ -87,33 +89,57 @@ class AttentionBlock(nn.Module):
 
 
 class UNet(BaseNet):
-    def __init__(self, input_size, time_dim, in_channels, out_channels, down_channels, up_channels):
+    def __init__(
+        self,
+        input_size: Sequence[int],
+        time_dim: int,
+        in_channels: int,
+        out_channels: int,
+        down_channels: Sequence[int],
+        up_channels: Sequence[int],
+    ):
         super().__init__()
 
         self.input_size = input_size
+        self.output_size = None
+
         self.time_dim = time_dim
         self.in_channels = in_channels
+        self.out_channels = out_channels
         self.down_channels = down_channels
         self.up_channels = up_channels
-        self.out_channels = out_channels
 
+        # 时间嵌入
         self.time_embed = TimestepEmbedding(time_dim)
+        self.act = nn.SiLU()
 
         # 下采样部分
         self.down_blocks = nn.ModuleList()
         in_ch = self.in_channels
+        in_size = self.input_size
+        self.down_size = [self.input_size[1:]]
         for out_ch in down_channels:
             block = nn.ModuleList(
                 [
-                    ResidualBlock(in_ch, out_ch, self.time_dim),
-                    AttentionBlock(out_ch),
-                    nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=2, padding=1,),  # 下采样
+                    ResidualBlock(in_ch, out_ch, self.time_dim),  # 不改变图像大小,改变通道数
+                    AttentionBlock(out_ch),  # 不改变图像大小
+                    nn.Conv2d(
+                        out_ch,
+                        out_ch,
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                    ),  # 下采样，改变图像大小
                 ]
             )
+            self.output_size = cal_conv_output_size((out_ch, *in_size[1:]), block[2])
+            self.down_size.append(self.output_size[1:])
             self.down_blocks.append(block)
-            in_ch = out_ch
 
-        # 中间部分
+            in_ch = out_ch
+            in_size = self.output_size
+
+        # 中间部分，不改变大小和通道数
         self.mid_block1 = ResidualBlock(in_ch, in_ch, self.time_dim)
         self.mid_attn = AttentionBlock(in_ch)
         self.mid_block2 = ResidualBlock(in_ch, in_ch, self.time_dim)
@@ -123,17 +149,37 @@ class UNet(BaseNet):
         for idx, out_ch in enumerate(self.up_channels):
             block = nn.ModuleList(
                 [
-                    nn.ConvTranspose2d(in_ch, out_ch, kernel_size=3, stride=2, padding=1, output_padding=0),
+                    nn.ConvTranspose2d(
+                        in_ch, out_ch, kernel_size=3, stride=2, padding=1, output_padding=1
+                    ),  # 上采样，改变图像大小和通道数
                     ResidualBlock(out_ch * 2, out_ch, self.time_dim),
                     AttentionBlock(out_ch),
                 ]
             )
+            self.output_size = cal_convtrans_output_size(in_size, block[0])
+
+            if self.output_size[1:] != self.down_size[-(2 + idx)]:
+                block = nn.ModuleList(
+                    [
+                        nn.ConvTranspose2d(
+                            in_ch, out_ch, kernel_size=3, stride=2, padding=1, output_padding=0
+                        ),  # 上采样，改变图像大小和通道数
+                        ResidualBlock(out_ch * 2, out_ch, self.time_dim),
+                        AttentionBlock(out_ch),
+                    ]
+                )
+                self.output_size = cal_convtrans_output_size(in_size, block[0])
+
             self.up_blocks.append(block)
+
             in_ch = out_ch
+            in_size = self.output_size
 
         # 输出层
         self.out_norm = nn.GroupNorm(32, in_ch)
         self.out_conv = nn.Conv2d(in_ch, self.out_channels, kernel_size=3, padding=1)
+
+        self.output_size = cal_conv_output_size(in_size, self.out_conv)
 
     def forward(self, x, t):
         # 时间嵌入
