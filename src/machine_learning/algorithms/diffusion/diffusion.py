@@ -22,10 +22,10 @@ class Diffusion(AlgorithmBase):
         扩散模型实现
 
         parameters:
-        - cfg (str): 配置文件路径(YAML格式).
+        - cfg (str): 配置文件路径 (YAML格式).
         - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noise_predictor":model}.
         - name (str): 算法名称. Default to "diffusion".
-        - device (str): 运行设备(auto自动选择).
+        - device (str): 运行设备 (auto自动选择).
         """
         super().__init__(cfg, models, name, device)
 
@@ -40,13 +40,11 @@ class Diffusion(AlgorithmBase):
     def _configure_optimizers(self) -> None:
         opt_config = self.cfg["optimizer"]
 
-        self.params = self.models["noise_predictor"].parameters()
-
         if opt_config["type"] == "Adam":
             self._optimizers.update(
                 {
                     "noise_predictor": torch.optim.Adam(
-                        params=self.params,
+                        params=self.models["noise_predictor"].parameters(),
                         lr=opt_config["learning_rate"],
                         betas=(opt_config["beta1"], opt_config["beta2"]),
                         eps=opt_config["eps"],
@@ -86,17 +84,17 @@ class Diffusion(AlgorithmBase):
             raise ValueError(f"Method {method} to generate betas is not implemented.")
 
         # 模型因子
-        self.alphas = 1 - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.alphas_cumprod_prev = torch.cat(
-            [torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0
-        )  # 从x1倒推x0时，不再添加噪声，所以在首段添加1
+        self.alphas = 1 - self.betas  # index 0:T-1
+        self.alphas_hat = torch.cumprod(self.alphas, dim=0)  # index 0:T-1
+        self.alphas_hat_prev = torch.cat(
+            [torch.ones(1, device=self.device), self.alphas_hat[:-1]], dim=0
+        )  # 从x1倒推x0时，不再添加噪声，所以在首段添加1, index 0:T-1
 
-        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1 - self.alphas_cumprod)
+        self.sqrt_alphas = torch.sqrt(self.alphas)  # index 0:T-1
+        self.sqrt_alphas_hat = torch.sqrt(self.alphas_hat)  # index 0:T-1
+        self.sqrt_one_minus_alphas_hat = torch.sqrt(1 - self.alphas_hat)  # index 0:T-1
 
-        self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        self.posterior_variance = self.betas * (1.0 - self.alphas_hat_prev) / (1.0 - self.alphas_hat)  # index 0:T-1
 
     def noisey_data_t(
         self, raw_data: torch.Tensor, time_step: torch.Tensor, noise: torch.Tensor = None
@@ -104,8 +102,8 @@ class Diffusion(AlgorithmBase):
         if noise is None:
             noise = torch.randn_like(raw_data)
 
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, time_step, raw_data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, time_step, raw_data.shape)
+        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_hat, time_step, raw_data.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_hat, time_step, raw_data.shape)
 
         return sqrt_alphas_cumprod_t * raw_data + sqrt_one_minus_alphas_cumprod_t * noise
 
@@ -119,7 +117,7 @@ class Diffusion(AlgorithmBase):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
             noise = torch.randn_like(data)
-            time_step = torch.randint(1, self.time_steps, (data.shape[0],), device=self.device)
+            time_step = torch.randint(0, self.time_steps, (data.shape[0],), device=self.device)
             noisey_data_t = self.noisey_data_t(data, time_step)
 
             noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
@@ -128,7 +126,9 @@ class Diffusion(AlgorithmBase):
 
             self._optimizers["noise_predictor"].zero_grad()
             loss.backward()  # 反向传播计算各权重的梯度
-            torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(
+                self.models["noise_predictor"].parameters(), self.cfg["training"]["grad_clip"]
+            )
             self._optimizers["noise_predictor"].step()
 
             total_loss += loss.item()
@@ -153,7 +153,7 @@ class Diffusion(AlgorithmBase):
             for data, _ in self.val_loader:
                 data = data.to(self.device, non_blocking=True)
                 noise = torch.randn_like(data)
-                time_step = torch.randint(1, self.time_steps, (data.shape[0],), device=self.device)
+                time_step = torch.randint(0, self.time_steps, (data.shape[0],), device=self.device)
                 noisey_data_t = self.noisey_data_t(data, time_step)
 
                 noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
@@ -177,14 +177,14 @@ class Diffusion(AlgorithmBase):
             torch.Tensor: 前一时刻的预测数据.
         """
         beta_t = extract(self.betas, t, data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
-        sqrt_recip_alphas_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+        sqrt_one_minus_alphas_hat_t = extract(self.sqrt_one_minus_alphas_hat, t, data.shape)
+        sqrt_alphas_t = extract(self.sqrt_alphas_hat, t, data.shape)
 
-        model_mean = sqrt_recip_alphas_t * (
-            data - beta_t * self.models["noise_predictor"](data, t) / sqrt_one_minus_alphas_cumprod_t
+        model_mean = (
+            1 / sqrt_alphas_t * (data - beta_t * self.models["noise_predictor"](data, t) / sqrt_one_minus_alphas_hat_t)
         )
 
-        if t[0] == 1:
+        if t[0] == 0:
             return model_mean
         else:
             posterior_variance_t = extract(self.posterior_variance, t, data.shape)
@@ -201,10 +201,8 @@ class Diffusion(AlgorithmBase):
 
         print("[INFO] Start sampling...")
         epoch = 0
-        for time_step in trange(self.time_steps, 0, -1, desc=f"Epoch {epoch + 1}/{self.time_steps}"):
-            time_step = torch.tensor(time_step - 1, device=self.device).repeat(
-                num_samples,
-            )
+        for time_step in trange(self.time_steps - 1, -1, -1, desc=f"Epoch {epoch + 1}/{self.time_steps}"):
+            time_step = torch.full((num_samples,), time_step, device=self.device)
             data = self.sample(data, time_step)
             epoch += 1
         plot_figures(data, cmap="gray")
@@ -225,7 +223,7 @@ def linear_beta_schedule(start: float, end: float, time_steps: int) -> torch.Ten
 
 def sigmoid_beta_schedule(start: float, end: float, time_steps: int) -> torch.Tensor:
     betas = torch.linspace(-6, 6, time_steps)
-    return torch.sigmoid(betas) * (end - start) * start
+    return torch.sigmoid(betas) * (end - start) + start
 
 
 def extract(a: torch.Tensor, t: torch.Tensor, data_shape: tuple) -> torch.Tensor:

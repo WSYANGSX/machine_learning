@@ -7,8 +7,8 @@ from machine_learning.utils import data_parse
 
 
 def main():
-    input_size = (1, 28, 28)
-    noise_predictor = UNet(input_size, 256, 1, 1, [64, 128, 256, 512], [512, 256, 128, 64])
+    image_size = (1, 28, 28)
+    noise_predictor = UNet(image_size, 256, 1, 1, [64, 128, 256, 512], [512, 256, 128, 64])
     models = {"noise_predictor": noise_predictor}
 
     diffusion = Diffusion(
@@ -25,18 +25,18 @@ def main():
     data = data_parse("./src/machine_learning/data/minist")
 
     train_cfg = {
-        "epochs": 50,
+        "epochs": 200,
         "log_dir": "./logs/diffusion/",
         "model_dir": "./checkpoints/diffusion/",
         "log_interval": 10,
         "save_interval": 10,
-        "batch_size": 512,
+        "batch_size": 256,
         "data_num_workers": 4,
     }
 
     trainer = Trainer(train_cfg, data, transform, diffusion)
 
-    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/checkpoint_epoch_19.pth")
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/checkpoint_epoch_9.pth")
     # trainer.train()
     trainer.eval(16)
 
