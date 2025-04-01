@@ -10,7 +10,7 @@ from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils import plot_figures
 
 
-class Diffusion(AlgorithmBase):
+class Flow(AlgorithmBase):
     def __init__(
         self,
         cfg: str,
@@ -23,7 +23,7 @@ class Diffusion(AlgorithmBase):
 
         parameters:
         - cfg (str): 配置文件路径 (YAML格式).
-        - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noise_predictor":model}.
+        - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noise_predictor": model}.
         - name (str): 算法名称. Default to "diffusion".
         - device (str): 运行设备 (auto自动选择).
         """

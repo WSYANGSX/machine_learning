@@ -30,15 +30,15 @@ def main():
         "model_dir": "./checkpoints/diffusion/",
         "log_interval": 10,
         "save_interval": 10,
-        "batch_size": 256,
+        "batch_size": 512,
         "data_num_workers": 4,
     }
 
     trainer = Trainer(train_cfg, data, transform, diffusion)
 
-    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/checkpoint_epoch_9.pth")
+    trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/best_model.pth")
     # trainer.train()
-    trainer.eval(16)
+    trainer.eval(5)
 
 
 if __name__ == "__main__":

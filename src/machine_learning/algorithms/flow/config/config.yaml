@@ -1,0 +1,26 @@
+algorithm: "diffusion"
+
+optimizer:
+  type: "Adam"
+  # 生成器参数
+  learning_rate: 0.001
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  weight_decay: 0
+
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 5
+
+training:
+  grad_clip: 5.0
+  time_steps: 2000
+  beta:
+    method: "linear"  # linear, quadratic, sigmoid
+    start: 0.0001
+    end: 0.02
+
+model:
+  initialize_weights: True
