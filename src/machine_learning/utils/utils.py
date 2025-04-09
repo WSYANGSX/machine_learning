@@ -73,7 +73,7 @@ def cal_conv_output_size(input_size: Sequence[int], conv_layer: nn.Module) -> tu
 
 def cal_convtrans_output_size(input_size: Sequence[int], convtrans_layer: nn.Module) -> tuple[int]:
     if not isinstance(convtrans_layer, (nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d)):
-        raise ValueError("pooling_layer 必须是 PyTorch 的转置卷积层实例")
+        raise ValueError("convtrans_layer 必须是 PyTorch 的转置卷积层实例")
 
     in_channels = input_size[0]
     spatial_dims = input_size[1:]

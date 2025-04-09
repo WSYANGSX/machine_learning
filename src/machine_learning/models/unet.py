@@ -2,9 +2,8 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from machine_learning.models import BaseNet
+from machine_learning.models.base import BaseNet, AttentionBlock
 from machine_learning.utils import cal_conv_output_size, cal_convtrans_output_size
 
 
@@ -61,31 +60,6 @@ class ResidualBlock(nn.Module):
         h = self.norm2(h)
 
         return h + self.shortcut(x)
-
-
-# 注意力模块
-class AttentionBlock(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.norm = nn.GroupNorm(32, channels)
-        self.q = nn.Conv2d(channels, channels, 1)
-        self.k = nn.Conv2d(channels, channels, 1)
-        self.v = nn.Conv2d(channels, channels, 1)
-        self.proj_out = nn.Conv2d(channels, channels, 1)
-
-    def forward(self, x: torch.Tensor):
-        B, C, H, W = x.shape
-        h = self.norm(x)
-        q = self.q(h).view(B, C, -1).permute(0, 2, 1)
-        k = self.k(h).view(B, C, -1)
-        v = self.v(h).view(B, C, -1)
-
-        attn = torch.bmm(q, k) * (C**-0.5)
-        attn = F.softmax(attn, dim=-1)
-
-        h = torch.bmm(v, attn.permute(0, 2, 1))
-        h = h.view(B, C, H, W)
-        return x + self.proj_out(h)  # 在数据传播过程中保留原始信息并增强全局依赖
 
 
 class UNet(BaseNet):

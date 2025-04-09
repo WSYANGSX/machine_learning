@@ -1,0 +1,23 @@
+algorithm: "vq-vae"
+
+optimizer:
+  type: "Adam"
+  learning_rate: 1.0e-3
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  weight_decay: 1.0e-5
+
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 5
+
+model:
+  initialize_weights: True
+  num_embeddings: 512
+  embedding_dim: 64
+
+training:
+  grad_clip: 0.5
+  beta: 0.25
