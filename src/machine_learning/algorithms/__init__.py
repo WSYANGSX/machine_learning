@@ -1,8 +1,4 @@
 from .base import AlgorithmBase
-from .auto_encoder import AutoEncoder
-from .vae import VAE
-from .gan import GAN
-from .diffusion import Diffusion
-from .vq_vae import VQ_VAE
+from .generative import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 
 __all__ = ["AlgorithmBase", "AutoEncoder", "VAE", "GAN", "Diffusion", "VQ_VAE"]
