@@ -5,7 +5,7 @@ from torchvision import transforms
 
 from machine_learning.trainer import Trainer
 from machine_learning.algorithms import VQ_VAE
-from machine_learning.models import BaseNet, ResidualBlock2D
+from machine_learning.models import BaseNet
 from machine_learning.utils import data_parse, cal_conv_output_size, cal_convtrans_output_size
 
 
@@ -20,21 +20,14 @@ class Encoder(BaseNet):
         self.out_channels = self.output_size[0]
 
         self.conv1 = nn.Conv2d(
-            in_channels=self.in_channels, out_channels=self.out_channels // 4, kernel_size=4, stride=2, padding=1
+            in_channels=self.in_channels, out_channels=self.out_channels // 2, kernel_size=4, stride=2, padding=1
         )
         output_size = cal_conv_output_size(self.input_size, self.conv1)
 
         self.conv2 = nn.Conv2d(
-            in_channels=self.out_channels // 4, out_channels=self.out_channels // 2, kernel_size=4, stride=2, padding=1
+            in_channels=self.out_channels // 2, out_channels=self.out_channels, kernel_size=4, stride=2, padding=1
         )
         output_size = cal_conv_output_size(output_size, self.conv2)
-
-        self.conv3 = nn.Conv2d(
-            in_channels=self.out_channels // 2, out_channels=self.out_channels, kernel_size=3, stride=2, padding=1
-        )
-        output_size = cal_conv_output_size(output_size, self.conv3)
-
-        self.residual1 = ResidualBlock2D(in_channels=self.out_channels, out_channels=self.out_channels, dropout=0)
 
         if output_size != self.output_size:
             raise ValueError("Encoder output size is not as excepted.")
@@ -45,10 +38,6 @@ class Encoder(BaseNet):
         x = self.conv1(inputs)
         x = self.act(x)
         x = self.conv2(x)
-        x = self.act(x)
-        x = self.conv3(x)
-        x = self.act(x)
-        x = self.residual1(x)
 
         return x
 
@@ -65,29 +54,15 @@ class Decoder(BaseNet):
         self.output_size = output_size
         self.out_channels = self.output_size[0]
 
-        self.conv1 = nn.Conv2d(
-            in_channels=self.in_channels, out_channels=self.in_channels // 2, kernel_size=3, stride=1, padding=1
-        )
-        output_size = cal_conv_output_size(self.input_size, self.conv1)
-
-        self.residual1 = ResidualBlock2D(
-            in_channels=self.in_channels // 2, out_channels=self.in_channels // 2, dropout=0
-        )
-
         self.conv_trans1 = nn.ConvTranspose2d(
-            in_channels=self.in_channels // 2, out_channels=self.in_channels // 4, kernel_size=4, stride=2, padding=1
+            in_channels=self.in_channels, out_channels=self.in_channels // 2, kernel_size=4, stride=2, padding=1
         )
-        output_size = cal_convtrans_output_size(output_size, self.conv_trans1)
+        output_size = cal_convtrans_output_size(input_size, self.conv_trans1)
 
         self.conv_trans2 = nn.ConvTranspose2d(
-            in_channels=self.in_channels // 4, out_channels=self.out_channels, kernel_size=2, stride=2, padding=1
+            in_channels=self.in_channels // 2, out_channels=self.out_channels, kernel_size=4, stride=2, padding=1
         )
         output_size = cal_convtrans_output_size(output_size, self.conv_trans2)
-
-        self.conv_trans3 = nn.ConvTranspose2d(
-            in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=4, stride=2, padding=1
-        )
-        output_size = cal_convtrans_output_size(output_size, self.conv_trans3)
 
         self.act = nn.SiLU()
 
@@ -95,19 +70,10 @@ class Decoder(BaseNet):
             raise ValueError("Decoder output size is not as excepted.")
 
     def forward(self, inputs: torch.Tensor):
-        x = self.conv1(inputs)
-        x = self.act(x)
-
-        x = self.residual1(x)
-        x = self.act(x)
-
-        x = self.conv_trans1(x)
+        x = self.conv_trans1(inputs)
         x = self.act(x)
 
         x = self.conv_trans2(x)
-        x = self.act(x)
-
-        x = self.conv_trans3(x)
 
         return x
 
@@ -117,7 +83,7 @@ class Decoder(BaseNet):
 
 def main():
     image_size = (1, 28, 28)
-    latent_size = (64, 4, 4)
+    latent_size = (64, 7, 7)
 
     encoder = Encoder(input_size=image_size, output_size=latent_size)
     decoder = Decoder(input_size=latent_size, output_size=image_size)
@@ -134,7 +100,7 @@ def main():
             transforms.Normalize(mean=0.1307, std=0.3081),
         ]
     )
-    data = data_parse("./src/machine_learning/data/minist")
+    data = data_parse("./data/minist")
 
     train_cfg = {
         "epochs": 100,

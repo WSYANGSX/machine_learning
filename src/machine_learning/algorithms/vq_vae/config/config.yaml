@@ -20,4 +20,4 @@ model:
 
 training:
   grad_clip: 0.5
-  beta: 0.25
+  beta: 0.5
