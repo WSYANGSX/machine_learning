@@ -6,7 +6,6 @@ from machine_learning.utils import data_parse
 from machine_learning.models import BaseNet
 
 import torch.nn as nn
-from torchinfo import summary
 
 
 class Encoder(BaseNet):
@@ -41,6 +40,8 @@ class Encoder(BaseNet):
         return output
 
     def view_structure(self):
+        from torchinfo import summary
+
         summary(self, input_size=(1, *self.input_size))
 
 
