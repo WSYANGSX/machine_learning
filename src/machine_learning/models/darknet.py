@@ -150,7 +150,7 @@ class FPN(BaseNet):
     def view_structure(self):
         from torchinfo import summary
 
-        # 创建符合输入结构的虚拟数据
+        # 当网络forward函数有多个参数输入时，创建符合输入结构的虚拟数据传递
         dummy_input = [
             torch.randn(1, 256, 52, 52),  # 对应浅层特征图
             torch.randn(1, 512, 26, 26),  # 中层特征图
