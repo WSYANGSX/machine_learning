@@ -1,15 +1,14 @@
-import torch.nn as nn
-from torchinfo import summary
 from torchvision import transforms
 
-from machine_learning.algorithms import VAE
+from machine_learning.models import BaseNet
 from machine_learning.trainer import Trainer
+from machine_learning.algorithms import AutoEncoder
 from machine_learning.utils import data_parse
 
-from machine_learning.models import BaseNet
+
+import torch.nn as nn
 
 
-# 模型定义
 class Encoder(BaseNet):
     def __init__(
         self,
@@ -28,22 +27,22 @@ class Encoder(BaseNet):
         self.input_size = input_size
         self.z_dim = z_dim
 
-        self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 3, 2, 1), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
-        self.layer2 = nn.Sequential(nn.Conv2d(3, 6, 3, 2, 1), nn.BatchNorm2d(6), nn.ReLU(), nn.Flatten())  # (6,7,7)
-
-        self.mu = nn.Linear(294, self.z_dim)
-        self.sigma = nn.Linear(294, self.z_dim)
+        self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 2, 2, 0), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
+        self.layer2 = nn.Sequential(nn.Conv2d(3, 10, 2, 2, 0), nn.BatchNorm2d(10), nn.ReLU())  # (10,7,7)
+        self.layer3 = nn.Sequential(nn.Conv2d(10, 15, 2, 2, 0), nn.BatchNorm2d(15), nn.ReLU(), nn.Flatten())  # (15,3,3)
+        self.layer4 = nn.Linear(135, self.z_dim)
 
     def forward(self, x):
         mid_val = self.layer1(x)
         mid_val = self.layer2(mid_val)
+        mid_val = self.layer3(mid_val)
+        output = self.layer4(mid_val)
 
-        mu = self.mu(mid_val)
-        log_var = self.sigma(mid_val)
-
-        return mu, log_var
+        return output
 
     def view_structure(self):
+        from torchinfo import summary
+
         summary(self, input_size=(1, *self.input_size))
 
 
@@ -53,7 +52,7 @@ class Decoder(BaseNet):
         Network for vae decoder.
 
         Args:
-            z_dim (int): 特征向量的维度.
+            z_dim (int): 多维高斯的维度.
         """
         super().__init__()
 
@@ -83,39 +82,39 @@ class Decoder(BaseNet):
 
 
 def main():
-    image_size = (1, 28, 28)
-    z_dim = 64
+    input_size = (1, 28, 28)
+    output_size = 128
 
-    encoder = Encoder(image_size, z_dim)
-    decoder = Decoder(z_dim)
-    models = {"encoder": encoder, "decoder": decoder}
+    encoder = Encoder(input_size, output_size)
+    decoder = Decoder(output_size)
 
-    vae = VAE(
-        "./src/machine_learning/algorithms/vae/config/config.yaml",
-        models,
+    auto_encoder = AutoEncoder(
+        "./src/machine_learning/algorithms/auto_encoder/config/config.yaml",
+        {"encoder": encoder, "decoder": decoder},
     )
 
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Normalize(mean=0.1307, std=0.3081),
+            transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
     data = data_parse("./src/machine_learning/data/minist")
 
     train_cfg = {
-        "epochs": 10,
-        "log_dir": "./logs/vae/",
-        "model_dir": "./checkpoints/vae/",
+        "epochs": 100,
+        "log_dir": "./logs/auto_encoder/",
+        "model_dir": "./checkpoints/auto_encoder/",
         "log_interval": 10,
         "save_interval": 10,
         "batch_size": 256,
         "data_num_workers": 4,
     }
 
-    trainer = Trainer(train_cfg, data, transform, vae)
+    trainer = Trainer(train_cfg, data, transform, auto_encoder)
 
     trainer.train()
+    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
     trainer.eval()
 
 

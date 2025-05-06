@@ -3,9 +3,9 @@ import torch.nn as nn
 from torchinfo import summary
 from torchvision import transforms
 
+from machine_learning.models import BaseNet
 from machine_learning.trainer import Trainer
 from machine_learning.algorithms import VQ_VAE
-from machine_learning.models import BaseNet
 from machine_learning.utils import data_parse, cal_conv_output_size, cal_convtrans_output_size
 
 

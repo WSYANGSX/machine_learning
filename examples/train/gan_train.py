@@ -3,9 +3,9 @@ import torch.nn as nn
 from torchvision import transforms
 from torchinfo import summary
 
+from machine_learning.models import BaseNet
 from machine_learning.algorithms import GAN
 from machine_learning.trainer import Trainer
-from machine_learning.models import BaseNet
 from machine_learning.utils import data_parse
 
 
