@@ -14,7 +14,7 @@ from machine_learning.utils import print_dict
 class AlgorithmBase(ABC):
     def __init__(
         self,
-        cfg: str,
+        cfg: str | dict,
         models: Mapping[str, BaseNet],
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -22,7 +22,7 @@ class AlgorithmBase(ABC):
         """算法抽象基类
 
         Args:
-            cfg (str): 算法配置, YAML文件路径.
+            cfg (str): 算法配置, YAML文件路径或者配置字典.
             models (Mapping[str, BaseNet]): 算法所需的网络模型.
             name (str | None, optional): 算法名称. Defaults to None.
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): 算法运行设备. Defaults to "auto".
@@ -77,16 +77,21 @@ class AlgorithmBase(ABC):
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
-    def _load_config(self, config_file: str) -> dict:
-        assert os.path.splitext(config_file)[1] == ".yaml" or os.path.splitext(config_file)[1] == ".yml", (
-            "Please ultilize a yaml configuration file."
-        )
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
-        print("Configuration parameters: ")
-        print_dict(config)
+    def _load_config(self, config: str | dict) -> dict:
+        if isinstance(config, dict):
+            print_dict(config)
 
-        return config
+            return config
+        else:
+            assert os.path.splitext(config)[1] == ".yaml" or os.path.splitext(config)[1] == ".yml", (
+                "Please ultilize a yaml configuration file."
+            )
+            with open(config, "r") as f:
+                config = yaml.safe_load(f)
+            print("Configuration parameters: ")
+            print_dict(config)
+
+            return config
 
     def _validate_config(self):
         """配置参数验证"""

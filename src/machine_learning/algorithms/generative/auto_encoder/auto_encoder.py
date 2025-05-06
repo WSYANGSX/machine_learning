@@ -89,7 +89,7 @@ class AutoEncoder(AlgorithmBase):
             loss = criterion(output, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
             self._optimizers["ae"].step()
 
             total_loss += loss.item()

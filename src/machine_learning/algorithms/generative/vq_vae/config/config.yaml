@@ -7,6 +7,7 @@ optimizer:
   beta2: 0.999
   eps: 1.0e-8
   weight_decay: 1.0e-5
+  grad_clip: 0.5
 
 scheduler:
   type: ReduceLROnPlateau
@@ -19,5 +20,4 @@ model:
   embedding_dim: 64
 
 training:
-  grad_clip: 0.5
   beta: 0.5

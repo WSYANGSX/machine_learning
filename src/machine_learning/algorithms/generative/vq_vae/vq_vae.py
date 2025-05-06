@@ -119,7 +119,7 @@ class VQ_VAE(AlgorithmBase):
 
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.params, self.cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.params, self.cfg["optimizer"]["grad_clip"])
             self._optimizers["vq_vae"].step()
 
             total_loss += loss.item()

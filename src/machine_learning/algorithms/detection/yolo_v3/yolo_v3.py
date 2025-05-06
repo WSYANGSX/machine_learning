@@ -12,7 +12,7 @@ from machine_learning.algorithms.base import AlgorithmBase
 class YoloV3(AlgorithmBase):
     def __init__(
         self,
-        cfg: str,
+        cfg: str | dict,
         models: dict[str, BaseNet],
         name: str = "yolo_v3",
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -86,7 +86,7 @@ class YoloV3(AlgorithmBase):
             loss = criterion(det1, det2, det3, data)
             loss.backward()  # 反向传播计算各权重的梯度
 
-            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["training"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
             self._optimizers["yolo"].step()
 
             total_loss += loss.item()

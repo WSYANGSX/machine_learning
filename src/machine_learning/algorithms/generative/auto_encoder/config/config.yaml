@@ -7,6 +7,7 @@ optimizer:
   beta2: 0.999
   eps: 1.0e-8
   weight_decay: 1.0e-5
+  grad_clip: 5.0
   
 scheduler:
   type: ReduceLROnPlateau
@@ -15,6 +16,3 @@ scheduler:
 
 model:
   initialize_weights: True
-
-training:
-  grad_clip: 5.0

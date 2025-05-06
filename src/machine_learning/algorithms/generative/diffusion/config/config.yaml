@@ -8,6 +8,7 @@ optimizer:
   beta2: 0.999
   eps: 1.0e-8
   weight_decay: 0
+  grad_clip: 5.0
 
 scheduler:
   type: ReduceLROnPlateau
@@ -15,7 +16,6 @@ scheduler:
   patience: 5
 
 training:
-  grad_clip: 5.0
   time_steps: 2000
   beta:
     method: "linear"  # linear, quadratic, sigmoid

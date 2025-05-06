@@ -101,7 +101,7 @@ class GAN(AlgorithmBase):
             d_loss.backward()
 
             torch.nn.utils.clip_grad_norm_(
-                self.models["discriminator"].parameters(), self.cfg["training"]["grad_clip"]["discriminator"]
+                self.models["discriminator"].parameters(), self.cfg["optimizer"]["grad_clip"]["discriminator"]
             )
             self._optimizers["discriminator"].step()
             total_d_loss += d_loss
@@ -120,7 +120,7 @@ class GAN(AlgorithmBase):
                 g_loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(
-                    self.models["generator"].parameters(), self.cfg["training"]["grad_clip"]["generator"]
+                    self.models["generator"].parameters(), self.cfg["optimizer"]["grad_clip"]["generator"]
                 )
                 self._optimizers["generator"].step()
 
