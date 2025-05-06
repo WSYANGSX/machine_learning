@@ -159,15 +159,3 @@ class FPN(BaseNet):
 
         # 正确调用方式
         summary(self, input_data=dummy_input)
-
-
-if __name__ == "__main__":
-    fpn = FPN(3, 80)
-    fpn.view_structure()
-    dummy_input = [
-        torch.randn(1, 256, 52, 52),  # 对应浅层特征图
-        torch.randn(1, 512, 26, 26),  # 中层特征图
-        torch.randn(1, 1024, 13, 13),  # 深层特征图
-    ]
-    det1, det2, det3 = fpn(*dummy_input)
-    print(det1.shape, det2.shape, det3.shape)
