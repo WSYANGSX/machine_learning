@@ -94,7 +94,7 @@ def main():
     )
     data = data_parse("./src/machine_learning/data/minist")
 
-    train_cfg = {
+    trainer_cfg = {
         "epochs": 50,
         "log_dir": "./logs/gan/",
         "model_dir": "./checkpoints/gan/",
@@ -104,7 +104,7 @@ def main():
         "data_num_workers": 4,
     }
 
-    trainer = Trainer(train_cfg, data, transform, gan)
+    trainer = Trainer(trainer_cfg, data, transform, gan)
 
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")
     trainer.train()

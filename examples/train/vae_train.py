@@ -102,7 +102,7 @@ def main():
     )
     data = data_parse("./src/machine_learning/data/minist")
 
-    train_cfg = {
+    trainer_cfg = {
         "epochs": 10,
         "log_dir": "./logs/vae/",
         "model_dir": "./checkpoints/vae/",
@@ -112,7 +112,7 @@ def main():
         "data_num_workers": 4,
     }
 
-    trainer = Trainer(train_cfg, data, transform, vae)
+    trainer = Trainer(trainer_cfg, data, transform, vae)
 
     trainer.train()
     trainer.eval()

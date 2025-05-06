@@ -28,7 +28,7 @@ def main():
     )
 
     # 配置训练参数
-    train_cfg = {
+    trainer_cfg = {
         "epochs": 100,
         "log_dir": "./logs/yolo_v3/",
         "model_dir": "./checkpoints/yolo_v3/",
@@ -37,7 +37,7 @@ def main():
         "batch_size": 256,
         "data_num_workers": 4,
     }
-    trainer = Trainer(train_cfg, data, transform, yolo_v3)
+    trainer = Trainer(trainer_cfg, data, transform, yolo_v3)
 
     # 模型训练
     trainer.train()

@@ -24,7 +24,7 @@ def main():
     )
     data = data_parse("./src/machine_learning/data/minist")
 
-    train_cfg = {
+    trainer_cfg = {
         "epochs": 200,
         "log_dir": "./logs/diffusion/",
         "model_dir": "./checkpoints/diffusion/",
@@ -34,7 +34,7 @@ def main():
         "data_num_workers": 4,
     }
 
-    trainer = Trainer(train_cfg, data, transform, diffusion)
+    trainer = Trainer(trainer_cfg, data, transform, diffusion)
 
     trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/best_model.pth")
     # trainer.train()

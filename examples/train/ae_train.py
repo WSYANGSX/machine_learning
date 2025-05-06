@@ -78,6 +78,8 @@ class Decoder(BaseNet):
         return output
 
     def view_structure(self):
+        from torchinfo import summary
+
         summary(self, input_size=(1, self.z_dim))
 
 
@@ -101,7 +103,7 @@ def main():
     )
     data = data_parse("./src/machine_learning/data/minist")
 
-    train_cfg = {
+    trainer_cfg = {
         "epochs": 100,
         "log_dir": "./logs/auto_encoder/",
         "model_dir": "./checkpoints/auto_encoder/",
@@ -111,7 +113,7 @@ def main():
         "data_num_workers": 4,
     }
 
-    trainer = Trainer(train_cfg, data, transform, auto_encoder)
+    trainer = Trainer(trainer_cfg, data, transform, auto_encoder)
 
     trainer.train()
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
