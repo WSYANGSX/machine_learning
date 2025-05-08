@@ -98,7 +98,7 @@ class YoloV3(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo": avg_loss}  # 统一接口
+        return {"yolo": avg_loss}
 
     def validate(self) -> dict[str, float]:
         """验证步骤"""
@@ -117,7 +117,7 @@ class YoloV3(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"yolo": avg_loss, "save_metric": avg_loss}  # 统一接口
+        return {"yolo": avg_loss, "save_metric": avg_loss}
 
     def eval(self, num_samples: int = 5) -> None:
         pass
