@@ -9,20 +9,25 @@ from machine_learning.models import Darknet, FPN
 from machine_learning.utils import load_config_from_path
 
 
+fo.config.default_ml_backend = "torch"
+
+
 def main():
     input_size = (3, 416, 416)
 
     # 配置模型和算法
     yolo_v3_cfg = load_config_from_path("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
-    num_classes = yolo_v3_cfg["num_classes"]
-    num_anchors = yolo_v3_cfg["num_anchors"]
+    num_classes = yolo_v3_cfg["algorithm"]["num_classes"]
+    num_anchors = yolo_v3_cfg["algorithm"]["num_anchors"]
 
     darknet = Darknet(input_size)
     fpn = FPN(num_anchors, num_classes)
-    yolo_v3 = YoloV3(yolo_v3_cfg, {"darknet": darknet, "fpn": fpn})
+    yolo_v3 = YoloV3(cfg=yolo_v3_cfg, models={"darknet": darknet, "fpn": fpn})
 
     # 加载数据
     dataset = foz.load_zoo_dataset("coco-2017")
+
+    # 配置transform
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -40,7 +45,7 @@ def main():
         "batch_size": 256,
         "data_num_workers": 4,
     }
-    trainer = Trainer(trainer_cfg, data, transform, yolo_v3)
+    trainer = Trainer(trainer_cfg, dataset, transform, yolo_v3)
 
     # 模型训练
     trainer.train()

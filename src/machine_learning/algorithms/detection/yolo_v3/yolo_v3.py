@@ -22,7 +22,7 @@ class YoloV3(AlgorithmBase):
 
         parameters:
         - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): Yolov3算法所需模型.{"darknet":model1, "fpn":model2}.
+        - models (Mapping[str, BaseNet]): Yolov3算法所需模型, {"darknet":model1, "fpn":model2}.
         - name (str): 算法名称. Default to "yolo_v3".
         - device (str): 运行设备(auto自动选择).
         """
@@ -73,9 +73,8 @@ class YoloV3(AlgorithmBase):
         self.models["fpn"].train()
 
         total_loss = 0.0
-        criterion = nn.MSELoss()
 
-        for batch_idx, (data, _) in enumerate(self.train_loader):
+        for batch_idx, (data, labels) in enumerate(self.train_loader):
             data = data.to(self._device, non_blocking=True)
 
             self._optimizers["yolo"].zero_grad()
@@ -83,7 +82,7 @@ class YoloV3(AlgorithmBase):
             skips = self.models["darknet"](data)
             det1, det2, det3 = self.models["fpn"](skips)
 
-            loss = criterion(det1, det2, det3, data)
+            loss = criterion(det1, det2, det3, labels)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -121,3 +120,12 @@ class YoloV3(AlgorithmBase):
 
     def eval(self, num_samples: int = 5) -> None:
         pass
+
+
+"""
+Helper function
+"""
+
+
+def criterion(det1: torch.Tensor, det2: torch.Tensor, det3: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    pass
