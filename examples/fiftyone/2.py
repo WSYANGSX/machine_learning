@@ -1,5 +1,6 @@
-import fiftyone.zoo as foz
 import cv2
+import fiftyone.zoo as foz
+
 
 # 加载验证集
 dataset = foz.load_zoo_dataset("coco-2017")
