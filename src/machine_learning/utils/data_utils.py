@@ -1,3 +1,5 @@
+from typing import Literal
+
 import os
 import struct
 import numpy as np
@@ -29,29 +31,27 @@ class CustomDataset(Dataset):
         return data_sample, labels_sample
 
 
-def load_idx3_ubyte(file_path):
-    with open(file_path, "rb") as f:
-        # 读取前16个字节的文件头信息
-        magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
+def minist_parse(file_path: str) -> tuple:
+    def load_idx3_ubyte(file_path):
+        with open(file_path, "rb") as f:
+            # 读取前16个字节的文件头信息
+            magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
 
-        # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
-        images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
+            # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
+            images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
 
-        return images, magic, num_images, rows, cols
+            return images, magic, num_images, rows, cols
 
+    def load_idx1_ubyte(file_path):
+        with open(file_path, "rb") as f:
+            # 读取前8个字节的文件头信息
+            magic, num_labels = struct.unpack(">II", f.read(8))
 
-def load_idx1_ubyte(file_path):
-    with open(file_path, "rb") as f:
-        # 读取前8个字节的文件头信息
-        magic, num_labels = struct.unpack(">II", f.read(8))
+            # 读取标签数据，并重新整形为(num_labels,)的一维数组
+            labels = np.fromfile(f, dtype=np.uint8)
 
-        # 读取标签数据，并重新整形为(num_labels,)的一维数组
-        labels = np.fromfile(f, dtype=np.uint8)
+            return labels, magic, num_labels
 
-        return labels, magic, num_labels
-
-
-def data_parse(file_path: str) -> tuple:
     file_path = os.path.abspath(file_path)
     train_data_path = os.path.join(file_path, "train")
     validate_data_path = os.path.join(file_path, "test")
@@ -82,3 +82,15 @@ def data_parse(file_path: str) -> tuple:
     )
 
     return train_data, train_labels, validate_data, validate_labels
+
+
+def yolo_parse(file_path: str) -> tuple:
+    pass
+
+
+def coco_parse(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> tuple:
+    pass
+
+
+def voc_parse(file_path: str) -> tuple:
+    pass

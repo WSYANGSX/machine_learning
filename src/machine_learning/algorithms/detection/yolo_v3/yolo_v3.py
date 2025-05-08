@@ -82,7 +82,7 @@ class YoloV3(AlgorithmBase):
             skips = self.models["darknet"](data)
             det1, det2, det3 = self.models["fpn"](skips)
 
-            loss = criterion(det1, det2, det3, labels)
+            loss = self.criterion(det1, det2, det3, labels)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -121,11 +121,10 @@ class YoloV3(AlgorithmBase):
     def eval(self, num_samples: int = 5) -> None:
         pass
 
+    def criterion(
+        self, det1: torch.Tensor, det2: torch.Tensor, det3: torch.Tensor, labels: torch.Tensor
+    ) -> torch.Tensor:
+        pass
 
-"""
-Helper function
-"""
-
-
-def criterion(det1: torch.Tensor, det2: torch.Tensor, det3: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    pass
+    def det_decode(self, det1, det2, det3) -> torch.Tensor:
+        pass

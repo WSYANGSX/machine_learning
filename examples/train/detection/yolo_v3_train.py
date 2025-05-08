@@ -25,7 +25,7 @@ def main():
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, models={"darknet": darknet, "fpn": fpn})
 
     # 加载数据
-    dataset = foz.load_zoo_dataset("coco-2017")
+    dataset = 
 
     # 配置transform
     transform = transforms.Compose(
