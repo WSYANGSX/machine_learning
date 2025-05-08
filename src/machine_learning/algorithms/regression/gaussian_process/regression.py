@@ -1,0 +1,208 @@
+import torch
+import gpytorch
+from matplotlib import pyplot as plt
+
+
+# training data
+train_x = torch.tensor(
+    [
+        1,
+        1.5,
+        2,
+        2.5,
+        3,
+        3.5,
+        4,
+        4.5,
+        5,
+        5.5,
+        6,
+        6.5,
+        7,
+        7.5,
+        8,
+        8.5,
+        9,
+    ]
+).repeat(1, 4).squeeze()
+y1 = torch.tensor(
+    [
+        8.9,
+        8.5,
+        8,
+        7.64,
+        4.5,
+        3.2,
+        3,
+        2.8,
+        4,
+        5.46,
+        7.1,
+        8.6,
+        9,
+        8.2,
+        6.4,
+        5.4,
+        3.2,
+    ]
+)
+y2 = torch.tensor(
+    [
+        7.1,
+        6.6,
+        6,
+        5.6,
+        4.5,
+        3.5,
+        2.9,
+        2.85,
+        3.8,
+        4.2,
+        4.5,
+        5.6,
+        5.8,
+        5.4,
+        4.5,
+        4,
+        3,
+    ]
+)
+y3 = torch.tensor(
+    [
+        3,
+        3.5,
+        3.8,
+        4,
+        3.7,
+        3.4,
+        3,
+        2.92,
+        3.68,
+        3.95,
+        4.2,
+        4.5,
+        4.65,
+        4.3,
+        3.9,
+        3.6,
+        3.1,
+    ]
+)
+y4 = torch.tensor(
+    [
+        1,
+        1.5,
+        1.7,
+        2,
+        2.5,
+        2.8,
+        3,
+        2.95,
+        3,
+        3.2,
+        2.9,
+        2.5,
+        2.2,
+        2,
+        2.7,
+        2.9,
+        3.3,
+    ]
+)
+train_y = torch.hstack([y1, y2, y3, y4])
+print("train x:", train_x)
+print("train y:", train_y)
+
+
+# setup the model
+# 1.GP Model
+# 2.Likelihood-gpytorch.likelihoods.GaussianLikelihood：同方差噪声模型
+# 3.Mean（the prior mean of the GP）
+# 4.Kernel（the prior covariance of the GP）
+# 5.MultivariateNormal
+class ExactGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_inputs, train_targets, likelihood):
+        super().__init__(train_inputs, train_targets, likelihood)
+
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+# initialize likelihood and model
+likelihood = gpytorch.likelihoods.GaussianLikelihood()
+model = ExactGPModel(train_x, train_y, likelihood)
+
+
+# train the model use MLE
+# 1.Zero all parameter gradients
+# 2.Call the model and compute the loss
+# 3.Call backward on the loss to fill in gradients
+# 4.Take a step on the optimizer
+
+import os
+
+smoke_test = "CI" in os.environ
+training_iter = 2 if smoke_test else 1000
+
+# 设置训练模式
+model.train()
+likelihood.train()
+
+# 设置优化器
+optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+
+# "Loss" for GPs - the marginal log likelihood
+mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+for i in range(training_iter):
+    # zero gradients from previous iteration
+    optimizer.zero_grad()
+    # Output from model
+    output = model(train_x)
+    # calc loss and backprop gradients
+    loss = -mll(output, train_y)
+    loss.backward()
+    print(
+        "Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f"
+        % (
+            i + 1,
+            training_iter,
+            loss.item(),
+            model.covar_module.base_kernel.lengthscale.item(),
+            model.likelihood.noise.item(),
+        )
+    )
+    optimizer.step()
+
+
+# Get into evaluation (predictive posterior) mode
+model.eval()
+likelihood.eval()
+
+# Test points are regularly spaced along [0,1]
+# Make predictions by feeding model through likelihood
+with torch.no_grad():
+    test_x = torch.linspace(1, 10, 100)
+    observed_pred = likelihood(model(test_x))
+
+
+with torch.no_grad():
+    # Initialize plot
+    f, ax = plt.subplots(1, 1, figsize=(10, 5))
+
+    # Get upper and lower confidence bounds
+    lower, upper = observed_pred.confidence_region()
+    # Plot training data as black stars
+    ax.plot(train_x.numpy(), train_y.numpy(), "k*")
+    # Plot predictive means as blue line
+    ax.plot(test_x.numpy(), observed_pred.mean.numpy(), "b")
+    # Shade between the lower and upper confidence bounds
+    ax.fill_between(test_x.numpy(), lower.numpy(), upper.numpy(), alpha=0.5)
+    ax.legend(["Observed Data", "Mean", "Confidence"])
+
+    plt.show()
