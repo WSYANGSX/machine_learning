@@ -86,7 +86,7 @@ class VAE(AlgorithmBase):
             output = self._models["decoder"](z)
 
             kl_d = 0.5 * torch.sum(mu.pow(2) + log_var.exp() - log_var - 1, dim=1)
-            loss = criterion(output, data) + kl_d.mean() * self.cfg["training"]["beta"]
+            loss = criterion(output, data) + kl_d.mean() * self.cfg["algorithm"]["beta"]
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self.cfg["optimizer"]["grad_clip"])

@@ -115,7 +115,7 @@ class VQ_VAE(AlgorithmBase):
             commitment_loss = criterion(quantized.detach(), z)
             embedding_loss = criterion(quantized, z.detach())
 
-            loss = recon_loss + commitment_loss + self.cfg["training"]["beta"] * embedding_loss
+            loss = recon_loss + commitment_loss + self.cfg["algorithm"]["beta"] * embedding_loss
 
             loss.backward()  # 反向传播计算各权重的梯度
 

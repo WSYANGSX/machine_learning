@@ -1,4 +1,6 @@
-algorithm: "gan"
+algorithm: 
+  name: "gan"
+  n_discriminator: 4
 
 optimizer:
   type: "Adam"
@@ -18,12 +20,10 @@ optimizer:
   grad_clip: 
     generator: 5
     discriminator: 5
-  
+
 scheduler:
-  
 
 model:
   initialize_weights: True
+
   
-training:
-  n_discriminator: 4

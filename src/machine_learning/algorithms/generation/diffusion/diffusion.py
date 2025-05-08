@@ -34,8 +34,8 @@ class Diffusion(AlgorithmBase):
         self._configure_schedulers()
 
         # -------------------- 配置权重项 --------------------
-        self.time_steps = self.cfg["training"].get("time_steps", 2000)
-        self._configure_factors(self.cfg["training"]["beta"]["method"])
+        self.time_steps = self.cfg["algorithm"].get("time_steps", 2000)
+        self._configure_factors(self.cfg["algorithm"]["beta"]["method"])
 
     def _configure_optimizers(self) -> None:
         opt_config = self.cfg["optimizer"]
@@ -71,8 +71,8 @@ class Diffusion(AlgorithmBase):
             )
 
     def _configure_factors(self, method: str) -> None:
-        start = self.cfg["training"]["beta"].get("start", 0.0001)
-        end = self.cfg["training"]["beta"].get("end", 0.002)
+        start = self.cfg["algorithm"]["beta"].get("start", 0.0001)
+        end = self.cfg["algorithm"]["beta"].get("end", 0.002)
 
         if method == "linear":
             self.betas = linear_beta_schedule(start, end, self.time_steps).to(self.device)

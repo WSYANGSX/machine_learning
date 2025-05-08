@@ -1,4 +1,5 @@
-algorithm: "auto_encoder"
+algorithm: 
+  name: "auto_encoder"
 
 optimizer:
   type: "Adam"

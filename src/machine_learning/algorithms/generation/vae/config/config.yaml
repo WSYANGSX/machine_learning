@@ -1,4 +1,6 @@
-algorithm: "vae"
+algorithm: 
+  name: "vae"
+  beta: 0.01
 
 optimizer:
   type: "Adam"
@@ -16,6 +18,3 @@ scheduler:
 
 model:
   initialize_weights: True
-
-training:
-  beta: 0.01

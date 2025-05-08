@@ -84,7 +84,7 @@ class GAN(AlgorithmBase):
         total_g_loss = 0.0
         g_count = 0
 
-        n_discriminator = self.cfg["training"].get("n_discriminator", 1)
+        n_discriminator = self.cfg["algorithm"].get("n_discriminator", 1)
 
         for batch_idx, (real_images, _) in enumerate(self.train_loader):
             real_images = real_images.to(self._device, non_blocking=True)

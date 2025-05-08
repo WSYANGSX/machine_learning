@@ -1,4 +1,6 @@
-algorithm: "vq-vae"
+algorithm: 
+  name: "vq-vae"
+  beta: 0.5
 
 optimizer:
   type: "Adam"
@@ -18,6 +20,3 @@ model:
   initialize_weights: True
   num_embeddings: 512
   embedding_dim: 64
-
-training:
-  beta: 0.5

@@ -1,4 +1,10 @@
-algorithm: "diffusion"
+algorithm: 
+  name: "diffusion"
+  time_steps: 2000
+  beta:
+    method: "linear"  # linear, quadratic, sigmoid
+    start: 0.0001
+    end: 0.02
 
 optimizer:
   type: "Adam"
@@ -14,13 +20,6 @@ scheduler:
   type: ReduceLROnPlateau
   factor: 0.5
   patience: 5
-
-training:
-  time_steps: 2000
-  beta:
-    method: "linear"  # linear, quadratic, sigmoid
-    start: 0.0001
-    end: 0.02
 
 model:
   initialize_weights: True
