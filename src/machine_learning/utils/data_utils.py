@@ -31,7 +31,17 @@ class CustomDataset(Dataset):
         return data_sample, labels_sample
 
 
-def minist_parse(file_path: str) -> tuple:
+def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
+    """minist手写数字集数据解析函数
+
+    Args:
+        file_path (str): minist手写数字集储存路径.
+        labels (bool): 是否加载标签数据.
+
+    Returns:
+        dict (str, np.ndarray): 训练集数据、训练集标签(可选)、验证集、验证集标签(可选).
+    """
+
     def load_idx3_ubyte(file_path):
         with open(file_path, "rb") as f:
             # 读取前16个字节的文件头信息
@@ -59,38 +69,40 @@ def minist_parse(file_path: str) -> tuple:
     print("[INFO] Validate data path: ", validate_data_path)
 
     # 加载数据
-    train_data, train_labels = (
-        load_idx3_ubyte(os.path.join(train_data_path, "images_train.idx3-ubyte"))[0],
-        load_idx1_ubyte(os.path.join(train_data_path, "labels_train.idx1-ubyte"))[0],
-    )
-    validate_data, validate_labels = (
-        load_idx3_ubyte(os.path.join(validate_data_path, "images_test.idx3-ubyte"))[0],
-        load_idx1_ubyte(os.path.join(validate_data_path, "labels_test.idx1-ubyte"))[0],
-    )
-    print(
-        "[INFO] train data shape: ",
-        train_data.shape,
-        " " * 5,
-        "train labels shape: ",
-        train_labels.shape,
-        " " * 5,
-        "test data shape: ",
-        validate_data.shape,
-        " " * 5,
-        "test labels shape: ",
-        validate_labels.shape,
-    )
+    train_data = load_idx3_ubyte(os.path.join(train_data_path, "images_train.idx3-ubyte"))[0]
+    validate_data = load_idx3_ubyte(os.path.join(validate_data_path, "images_test.idx3-ubyte"))[0]
 
-    return train_data, train_labels, validate_data, validate_labels
+    if labels:
+        train_labels = load_idx1_ubyte(os.path.join(train_data_path, "labels_train.idx1-ubyte"))[0]
+        validate_labels = load_idx1_ubyte(os.path.join(validate_data_path, "labels_test.idx1-ubyte"))[0]
+
+        return {
+            "train_data": train_data,
+            "train_labels": train_labels,
+            "validate_data": validate_data,
+            "validate_labels": validate_labels,
+        }
+
+    return {"train_data": train_data, "train_labels": train_labels}
 
 
-def yolo_parse(file_path: str) -> tuple:
+def yolo_parse(file_path: str) -> dict[str, np.ndarray]:
+    """yolo格式数据集加载函数
+
+    Args:
+        file_path (str): yolo类型数据集位置.
+
+    Returns:
+        dict (str, np.ndarray): 训练集数据、训练集标签、验证集、验证集标签.
+    """
     pass
 
 
-def coco_parse(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> tuple:
+def coco_parse(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
     pass
 
 
-def voc_parse(file_path: str) -> tuple:
+def voc_parse(
+    file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
+) -> dict[str, np.ndarray]:
     pass

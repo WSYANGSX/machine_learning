@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from typing import Sequence, Any
+from typing import Any
 from tqdm import trange
 
 from torchvision.transforms import Compose
@@ -15,7 +15,11 @@ from machine_learning.algorithms import AlgorithmBase
 
 class Trainer:
     def __init__(
-        self, cfg: dict, data: Sequence[torch.Tensor | np.ndarray], transform: transforms.Compose, algo: AlgorithmBase
+        self,
+        cfg: dict,
+        data: dict[str, np.ndarray | torch.Tensor],
+        transform: transforms.Compose,
+        algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
 
@@ -29,7 +33,7 @@ class Trainer:
         self._algorithm = algo
 
         # -------------------- 配置数据 --------------------
-        train_loader, val_loader = self._load_datasets(*data, transform)
+        train_loader, val_loader = self._load_datasets(data, transform)
         self._algorithm._initialize_data_loader(train_loader, val_loader)
 
         # -------------------- 配置记录器 --------------------
@@ -57,13 +61,15 @@ class Trainer:
 
     def _load_datasets(
         self,
-        train_data: torch.Tensor | np.ndarray,
-        train_labels: torch.Tensor | np.ndarray,
-        val_data: torch.Tensor | np.ndarray,
-        val_labels: torch.Tensor | np.ndarray,
+        data: dict[str, np.ndarray | torch.Tensor],
         transform: Compose,
     ):
         # 创建dataset和datasetloader
+        train_data = data["train_data"]
+        val_data = data["validation_data"]
+        train_labels = data.get("train_labels", None)
+        val_labels = data.get("validation_labels", None)
+
         train_dataset = CustomDataset(train_data, train_labels, transform)
         validate_dataset = CustomDataset(val_data, val_labels, transform)
 

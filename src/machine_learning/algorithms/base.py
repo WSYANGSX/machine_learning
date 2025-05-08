@@ -112,6 +112,7 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
+    # TODO:delete
     def _initialize_data_loader(self, train_data_loader: DataLoader, val_data_loader: DataLoader) -> None:
         """初始化算法训练和验证数据，需要在训练前调用
 
