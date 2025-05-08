@@ -41,7 +41,7 @@ class AlgorithmBase(ABC):
         self._validate_config()
 
         # -------------------- 设备配置 --------------------
-        self._name = name if name is not None else self._cfg.get("algorithm", __class__.__name__)
+        self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
         # -------------------- 配置模型 --------------------
         self._configure_models()

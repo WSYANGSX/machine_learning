@@ -1,3 +1,6 @@
+import fiftyone as fo
+import fiftyone.zoo as foz
+
 from torchvision import transforms
 
 from machine_learning.trainer import Trainer
@@ -19,7 +22,7 @@ def main():
     yolo_v3 = YoloV3(yolo_v3_cfg, {"darknet": darknet, "fpn": fpn})
 
     # 加载数据
-    data = data_parse("./src/machine_learning/data/minist")
+    dataset = foz.load_zoo_dataset("coco-2017")
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
