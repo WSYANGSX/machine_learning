@@ -33,8 +33,9 @@ class Trainer:
         self._algorithm = algo
 
         # -------------------- 配置数据 --------------------
-        train_loader, val_loader = self._load_datasets(data, transform)
-        self._algorithm._initialize_data_loader(train_loader, val_loader)
+        self.batch_size = self.cfg.get("batch_size", 64)
+        train_dataset, val_dataset = self._load_datasets(data, transform)
+        self._algorithm._initialize_data_loader(train_dataset, val_dataset)
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
@@ -75,16 +76,17 @@ class Trainer:
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=self.cfg["batch_size"],
+            batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.cfg["data_num_workers"],
         )
         val_loader = DataLoader(
             validate_dataset,
-            batch_size=self.cfg["batch_size"],
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.cfg["data_num_workers"],
         )
+
         return train_loader, val_loader
 
     def train(self, start_epoch: int = 0) -> None:

@@ -3,7 +3,7 @@ from torchvision import transforms
 from machine_learning.models import UNet
 from machine_learning.trainer import Trainer
 from machine_learning.algorithms import Diffusion
-from machine_learning.utils import data_parse
+from machine_learning.utils import minist_parse
 
 
 def main():
@@ -12,7 +12,7 @@ def main():
     models = {"noise_predictor": noise_predictor}
 
     diffusion = Diffusion(
-        "./src/machine_learning/algorithms/diffusion/config/config.yaml",
+        "./src/machine_learning/algorithms/generation/diffusion/config/config.yaml",
         models,
     )
 
@@ -22,7 +22,7 @@ def main():
             transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
-    data = data_parse("./src/machine_learning/data/minist")
+    data = minist_parse("./data/minist")
 
     trainer_cfg = {
         "epochs": 200,

@@ -204,6 +204,16 @@ class Diffusion(AlgorithmBase):
 
         plot_figures(data, cmap="gray")
 
+    def _initialize_data_loader(self, train_data_loader, val_data_loader):
+        super()._initialize_data_loader(train_data_loader, val_data_loader)
+
+        data, labels = next(iter(self.train_loader))
+        self.batch_data_shape = data.shape
+        self.batch_label_shape = labels.shape
+        print(
+            "[INFO] Batch data shape: ", self.batch_data_shape, " " * 5, "Batch labels shape: ", self.batch_label_shape
+        )
+
 
 """
 Helper functions

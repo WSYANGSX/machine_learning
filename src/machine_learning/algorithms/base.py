@@ -79,19 +79,20 @@ class AlgorithmBase(ABC):
 
     def _load_config(self, config: str | dict) -> dict:
         if isinstance(config, dict):
-            print_dict(config)
-
-            return config
+            cfg = config
         else:
             assert os.path.splitext(config)[1] == ".yaml" or os.path.splitext(config)[1] == ".yml", (
                 "Please ultilize a yaml configuration file."
             )
             with open(config, "r") as f:
-                config = yaml.safe_load(f)
-            print("Configuration parameters: ")
-            print_dict(config)
+                cfg = yaml.safe_load(f)
 
-            return config
+        print("=" * 90)
+        print("Configuration parameters: ")
+        print_dict(cfg)
+        print("=" * 90)
+
+        return cfg
 
     def _validate_config(self):
         """配置参数验证"""
@@ -112,7 +113,6 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    # TODO:delete
     def _initialize_data_loader(self, train_data_loader: DataLoader, val_data_loader: DataLoader) -> None:
         """初始化算法训练和验证数据，需要在训练前调用
 
@@ -122,13 +122,6 @@ class AlgorithmBase(ABC):
         """
         self.train_loader = train_data_loader
         self.val_loader = val_data_loader
-
-        data, labels = next(iter(self.train_loader))
-        self.batch_data_shape = data.shape
-        self.batch_label_shape = labels.shape
-        print(
-            "[INFO] Batch data shape: ", self.batch_data_shape, " " * 5, "Batch labels shape: ", self.batch_label_shape
-        )
 
     @abstractmethod
     def _configure_optimizers(self):
