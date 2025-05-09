@@ -28,6 +28,12 @@ class YoloV3(AlgorithmBase):
         """
         super().__init__(cfg=cfg, models=models, name=name, device=device)
 
+        # 配置主要参数
+        self.num_classes = self._cfg["algorithm"]["num_classes"]
+        self.num_anchors = self._cfg["algorithm"]["num_anchors"]
+        self.anchor_sizes = self._cfg["algorithm"]["anchor_sizes"]
+        self.image_size = self._cfg["algorithm"]["image_size"]
+
         # -------------------- 配置优化器 --------------------
         self._configure_optimizers()
         self._configure_schedulers()
@@ -80,9 +86,9 @@ class YoloV3(AlgorithmBase):
             self._optimizers["yolo"].zero_grad()
 
             skips = self.models["darknet"](data)
-            det1, det2, det3 = self.models["fpn"](skips)
+            fimg1, fimg2, fimg3 = self.models["fpn"](skips)
 
-            loss = self.criterion(det1, det2, det3, labels)
+            loss = self.criterion(fimg1, fimg2, fimg3, labels)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -121,10 +127,55 @@ class YoloV3(AlgorithmBase):
     def eval(self, num_samples: int = 5) -> None:
         pass
 
+    # 损失函数设计
     def criterion(
-        self, det1: torch.Tensor, det2: torch.Tensor, det3: torch.Tensor, labels: torch.Tensor
+        self,
+        feature_image1: torch.Tensor,
+        feature_image2: torch.Tensor,
+        feature_image3: torch.Tensor,
+        labels: torch.Tensor,
     ) -> torch.Tensor:
-        pass
+        prediction1 = self.feature_decode(feature_image1)
+        prediction2 = self.feature_decode(feature_image2)
+        prediction3 = self.feature_decode(feature_image3)
 
-    def det_decode(self, det1, det2, det3) -> torch.Tensor:
-        pass
+        return prediction1, prediction2, prediction3
+
+    # 特征图解码
+    @torch.jit.script
+    def feature_decode(self, feature_image: torch.Tensor) -> torch.Tensor:
+        # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
+        prediction = feature_image.permute(0, 2, 3, 1).contiguous()
+        B, H, W, _ = prediction.shape
+        stride = self.image_size // H  # 计算步长
+
+        # 根据特征图尺寸选择锚框
+        if H == 52:
+            anchor_sizes = self.anchor_sizes[:3] / stride
+        elif H == 26:
+            anchor_sizes = self.anchor_sizes[3:6] / stride
+        else:
+            anchor_sizes = self.anchor_sizes[6:9] / stride
+
+        # 构建偏移矩阵
+        grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
+        grid_xy = torch.stack((grid_x, grid_y), dim=-1).to(prediction.device)  # [H, W, 2]
+
+        # 扩展维度以支持广播 [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
+        grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
+
+        # 调整锚框形状 [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
+        anchor_wh = anchor_sizes.view(1, 1, 1, self.num_anchors, 2)
+
+        # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
+        prediction = prediction.view(B, H, W, self.num_anchors, -1)
+
+        # 解码坐标和尺寸 (向量化操作)
+        prediction[..., :2] = (torch.sigmoid(prediction[..., :2]) + grid_xy) * stride
+        prediction[..., 2:4] = anchor_wh * torch.exp(prediction[..., 2:4]) * stride
+        prediction[..., 4:] = torch.sigmoid(prediction[..., 4:])
+
+        # 重塑回原始维度 [B, H, W, C]
+        prediction = prediction.view(B, H, W, -1)
+
+        return prediction

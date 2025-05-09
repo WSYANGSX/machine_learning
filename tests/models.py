@@ -1,12 +1,8 @@
 import torch
 
-a = torch.tensor([[1, 2], [5, 5]])
-b = torch.tensor([[10, 0], [5, 8]])
+x = torch.randn(3, 4)  # shape [B, C, H]
+y = torch.randn(3, 4)
 
-a = torch.unsqueeze(a, dim=1)
-print(a - b)
-print((a - b) ** 2)
-c = torch.sqrt(torch.sum((a - b) ** 2, dim=-1))
-index = torch.argmin(c, dim=-1)
-print(index)
-print(b[index])
+print(torch.stack([x, y], dim=0))
+print(torch.stack([x, y], dim=1))
+print(torch.stack([x, y], dim=2))

@@ -1,6 +1,3 @@
-import fiftyone as fo
-import fiftyone.zoo as foz
-
 from torchvision import transforms
 
 from machine_learning.trainer import Trainer
@@ -9,18 +6,14 @@ from machine_learning.models import Darknet, FPN
 from machine_learning.utils import load_config_from_path, yolo_parse
 
 
-fo.config.default_ml_backend = "torch"
-
-
 def main():
-    input_size = (3, 416, 416)
-
     # 配置模型和算法
     yolo_v3_cfg = load_config_from_path("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
+    imgae_size = yolo_v3_cfg["algorithm"]["image_size"]
     num_classes = yolo_v3_cfg["algorithm"]["num_classes"]
     num_anchors = yolo_v3_cfg["algorithm"]["num_anchors"]
 
-    darknet = Darknet(input_size)
+    darknet = Darknet(imgae_size)
     fpn = FPN(num_anchors, num_classes)
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, models={"darknet": darknet, "fpn": fpn})
 

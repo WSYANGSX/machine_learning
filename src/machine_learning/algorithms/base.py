@@ -123,6 +123,8 @@ class AlgorithmBase(ABC):
         self.train_loader = train_data_loader
         self.val_loader = val_data_loader
 
+        self.batch_size = len(self.train_loader)
+
     @abstractmethod
     def _configure_optimizers(self):
         """
