@@ -3,7 +3,7 @@ from torchvision import transforms
 from machine_learning.models import BaseNet
 from machine_learning.trainer import Trainer
 from machine_learning.algorithms import AutoEncoder
-from machine_learning.utils import data_parse
+from machine_learning.utils import minist_parse
 
 
 import torch.nn as nn
@@ -91,17 +91,17 @@ def main():
     decoder = Decoder(output_size)
 
     auto_encoder = AutoEncoder(
-        "./src/machine_learning/algorithms/auto_encoder/config/config.yaml",
+        "./src/machine_learning/algorithms/generation/auto_encoder/config/config.yaml",
         {"encoder": encoder, "decoder": decoder},
     )
 
+    data = minist_parse("./data/minist")
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
-    data = data_parse("./src/machine_learning/data/minist")
 
     trainer_cfg = {
         "epochs": 100,

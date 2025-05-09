@@ -66,7 +66,7 @@ def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
     train_data_path = os.path.join(file_path, "train")
     validate_data_path = os.path.join(file_path, "test")
     print("[INFO] Train data path: ", train_data_path)
-    print("[INFO] Validate data path: ", validate_data_path)
+    print("[INFO] Validation data path: ", validate_data_path)
 
     # 加载数据
     train_data = load_idx3_ubyte(os.path.join(train_data_path, "images_train.idx3-ubyte"))[0]
@@ -79,8 +79,8 @@ def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
         return {
             "train_data": train_data,
             "train_labels": train_labels,
-            "validate_data": validate_data,
-            "validate_labels": validate_labels,
+            "validation_data": validate_data,
+            "validation_labels": validate_labels,
         }
 
     return {"train_data": train_data, "train_labels": train_labels}

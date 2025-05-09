@@ -95,7 +95,7 @@ class AlgorithmBase(ABC):
 
     def _validate_config(self):
         """配置参数验证"""
-        required_sections = ["algorithm", "model", "optimizer", "scheduler", "training"]
+        required_sections = ["algorithm", "model", "optimizer", "scheduler"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"配置文件中缺少必要部分: {section}")
