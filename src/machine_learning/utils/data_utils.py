@@ -3,12 +3,28 @@ from typing import Literal
 import os
 import struct
 import numpy as np
+import torch
 
 from torch.utils.data import Dataset
+from torchvision.transforms import Compose
 
 
-class CustomDataset(Dataset):
-    def __init__(self, data, labels=None, tansform=None) -> None:
+class FullLoadDataset(Dataset):
+    r"""完全加载数据集.
+
+    使用于小型数据集，占用内存空间小，加快数据读取速度.
+    """
+
+    def __init__(
+        self, data: np.ndarray | torch.Tensor, labels: np.ndarray | torch.Tensor = None, tansform: Compose = None
+    ) -> None:
+        """完全加载数据集初始化.
+
+        Args:
+            data (np.ndarray | torch.Tensor): 数据
+            labels (np.ndarray | torch.Tensor, optional): 标签. Defaults to None.
+            tansform (Compose, optional): 数据转换器. Defaults to None.
+        """
         super().__init__()
 
         self.data = data
@@ -29,6 +45,22 @@ class CustomDataset(Dataset):
             data_sample = self.transform(data_sample)
 
         return data_sample, labels_sample
+
+
+class LazyLoadDataset(Dataset):
+    r"""延迟加载数据集.
+
+    使用于大型数据集，减小内存空间占用，数据读取速度较慢.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, index):
+        return super().__getitem__(index)
 
 
 def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
