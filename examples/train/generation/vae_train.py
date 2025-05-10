@@ -4,8 +4,8 @@ from torchvision import transforms
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms import VAE
-from machine_learning.trainer import Trainer
-from machine_learning.utils import data_parse
+from machine_learning.trainer import Trainer, TrainCfg
+from machine_learning.utils import minist_parse
 
 
 # 模型定义
@@ -90,7 +90,7 @@ def main():
     models = {"encoder": encoder, "decoder": decoder}
 
     vae = VAE(
-        "./src/machine_learning/algorithms/vae/config/config.yaml",
+        "./src/machine_learning/algorithms/generation/vae/config/config.yaml",
         models,
     )
 
@@ -100,18 +100,13 @@ def main():
             transforms.Normalize(mean=0.1307, std=0.3081),
         ]
     )
-    data = data_parse("./src/machine_learning/data/minist")
+    data = minist_parse("./data/minist")
 
-    trainer_cfg = {
-        "epochs": 10,
-        "log_dir": "./logs/vae/",
-        "model_dir": "./checkpoints/vae/",
-        "log_interval": 10,
-        "save_interval": 10,
-        "batch_size": 256,
-        "data_num_workers": 4,
-    }
-
+    trainer_cfg = TrainCfg(
+        dataset="minist",
+        log_dir="./logs/vae/",
+        model_dir="./checkpoints/vae/",
+    )
     trainer = Trainer(trainer_cfg, data, transform, vae)
 
     trainer.train()

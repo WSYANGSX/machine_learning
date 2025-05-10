@@ -1,7 +1,7 @@
 from torchvision import transforms
 
 from machine_learning.models import UNet
-from machine_learning.trainer import Trainer
+from machine_learning.trainer import Trainer, TrainCfg
 from machine_learning.algorithms import Diffusion
 from machine_learning.utils import minist_parse
 
@@ -24,16 +24,11 @@ def main():
     )
     data = minist_parse("./data/minist")
 
-    trainer_cfg = {
-        "epochs": 200,
-        "log_dir": "./logs/diffusion/",
-        "model_dir": "./checkpoints/diffusion/",
-        "log_interval": 10,
-        "save_interval": 10,
-        "batch_size": 512,
-        "data_num_workers": 4,
-    }
-
+    trainer_cfg = TrainCfg(
+        dataset="minist",
+        log_dir="./logs/diffusion/",
+        model_dir="./checkpoints/diffusion/",
+    )
     trainer = Trainer(trainer_cfg, data, transform, diffusion)
 
     trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/best_model.pth")

@@ -5,7 +5,7 @@ import struct
 import numpy as np
 import torch
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Compose
 
 
@@ -61,6 +61,27 @@ class LazyLoadDataset(Dataset):
 
     def __getitem__(self, index):
         return super().__getitem__(index)
+
+
+def dataloader_create(
+    dataset: str,
+    labels: bool = True,
+    load_method: Literal["full", "lazy"] = "full",
+) -> dict[str, DataLoader]:
+    """The dataloader_create is a factory function used to dynamically create any dataLoader."""
+    _SUPPORT_DATASET = ["minist", "coco-2017"]
+
+    if dataset not in _SUPPORT_DATASET:
+        raise NameError(f"Dataset {dataset} is not supported now.")
+    elif dataset == "minist":
+        data_path = os.path.join(os.getcwd(), "data/minist")
+    elif dataset == "coco-2017":
+        data_path = os.path.join(os.getcwd(), "data/coco-2017")
+
+    if load_method == "full":
+        pass
+    else:
+        pass
 
 
 def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:

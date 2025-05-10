@@ -127,7 +127,7 @@ class VAE(AlgorithmBase):
                     mu.pow(2) + log_var.exp() - log_var - 1, dim=1
                 )  # 在处理损失时按照相同的损失处理方法，要么按照样本求和，要么按照样本平均，以保持两项在同一个量级上
 
-                total_loss += (criterion(output, data) + kl_d.mean() * self.cfg["training"]["beta"]).item()
+                total_loss += (criterion(output, data) + kl_d.mean() * self.cfg["algorithm"]["beta"]).item()
 
         avg_loss = total_loss / len(self.val_loader)
 

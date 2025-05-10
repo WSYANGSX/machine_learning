@@ -142,7 +142,6 @@ class YoloV3(AlgorithmBase):
         return prediction1, prediction2, prediction3
 
     # 特征图解码
-    @torch.jit.script
     def feature_decode(self, feature_image: torch.Tensor) -> torch.Tensor:
         # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
         prediction = feature_image.permute(0, 2, 3, 1).contiguous()

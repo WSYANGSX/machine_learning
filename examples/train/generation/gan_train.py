@@ -5,8 +5,8 @@ from torchinfo import summary
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms import GAN
-from machine_learning.trainer import Trainer
-from machine_learning.utils import data_parse
+from machine_learning.trainer import Trainer, TrainCfg
+from machine_learning.utils import minist_parse
 
 
 # 模型定义
@@ -82,7 +82,7 @@ def main():
     models = {"generator": generator, "discriminator": discriminator}
 
     gan = GAN(
-        "./src/machine_learning/algorithms/gan/config/config.yaml",
+        "./src/machine_learning/algorithms/generation/gan/config/config.yaml",
         models,
     )
 
@@ -92,18 +92,13 @@ def main():
             transforms.Normalize(mean=[0.5], std=[0.5]),
         ]
     )
-    data = data_parse("./src/machine_learning/data/minist")
+    data = minist_parse("./data/minist")
 
-    trainer_cfg = {
-        "epochs": 50,
-        "log_dir": "./logs/gan/",
-        "model_dir": "./checkpoints/gan/",
-        "log_interval": 10,
-        "save_interval": 10,
-        "batch_size": 128,
-        "data_num_workers": 4,
-    }
-
+    trainer_cfg = TrainCfg(
+        dataset="minist",
+        log_dir="./logs/gan/",
+        model_dir="./checkpoints/gan/",
+    )
     trainer = Trainer(trainer_cfg, data, transform, gan)
 
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")

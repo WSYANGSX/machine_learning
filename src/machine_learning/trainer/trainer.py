@@ -7,18 +7,17 @@ from tqdm import trange
 from torchvision.transforms import Compose
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchvision import transforms
 
-from machine_learning.utils import CustomDataset
+from machine_learning.utils import FullLoadDataset
 from machine_learning.algorithms import AlgorithmBase
+from .trainer_cfg import TrainCfg
 
 
 class Trainer:
     def __init__(
         self,
-        cfg: dict,
-        data: dict[str, np.ndarray | torch.Tensor],
-        transform: transforms.Compose,
+        cfg: TrainCfg,
+        data_loaders: dict[str, DataLoader],
         algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
@@ -33,23 +32,15 @@ class Trainer:
         self._algorithm = algo
 
         # -------------------- 配置数据 --------------------
-        self.batch_size = self.cfg.get("batch_size", 64)
-        train_dataset, val_dataset = self._load_datasets(data, transform)
-        self._algorithm._initialize_data_loader(train_dataset, val_dataset)
+        self.batch_size = self.cfg.batch_size
+        self._algorithm._initialize_data_loader(data_loaders["train"], data_loaders["validation"])
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
     def _configure_writer(self):
-        log_path = self.cfg.get(
-            "log_dir",
-            os.path.join(
-                os.getcwd(),
-                "logs",
-                self._algorithm.name,
-            ),
-        )
+        log_path = self.cfg.log_dir
 
         log_path = os.path.abspath(log_path)
 
@@ -60,6 +51,7 @@ class Trainer:
 
         self.writer = SummaryWriter(log_dir=log_path)
 
+    # TODO:fix
     def _load_datasets(
         self,
         data: dict[str, np.ndarray | torch.Tensor],
@@ -71,20 +63,14 @@ class Trainer:
         train_labels = data.get("train_labels", None)
         val_labels = data.get("validation_labels", None)
 
-        train_dataset = CustomDataset(train_data, train_labels, transform)
-        validate_dataset = CustomDataset(val_data, val_labels, transform)
+        train_dataset = FullLoadDataset(train_data, train_labels, transform)
+        validate_dataset = FullLoadDataset(val_data, val_labels, transform)
 
         train_loader = DataLoader(
-            train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.cfg["data_num_workers"],
+            train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.cfg.data_num_workers
         )
         val_loader = DataLoader(
-            validate_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.cfg["data_num_workers"],
+            validate_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.cfg.data_num_workers
         )
 
         return train_loader, val_loader
@@ -93,8 +79,8 @@ class Trainer:
         """完整训练"""
         print("[INFO] Start training...")
 
-        for epoch in trange(start_epoch, self.cfg.get("epochs", 100)):
-            train_loss = self._algorithm.train_epoch(epoch, self.writer, self.cfg.get("log_interval", 10))
+        for epoch in trange(start_epoch, self.cfg.epochs):
+            train_loss = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
             val_loss = self._algorithm.validate()
 
             # 学习率调整
@@ -122,7 +108,7 @@ class Trainer:
                 print("Val loss has no save metric, saving of the best loss model skipped.")
 
             # 定期保存
-            if (epoch + 1) % self.cfg.get("save_interval", 10) == 0:
+            if (epoch + 1) % self.cfg.save_interval == 0:
                 self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=False)
 
             # 打印日志
@@ -144,14 +130,7 @@ class Trainer:
         self._algorithm.eval(num_samples)
 
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
-        model_path = self.cfg.get(
-            "model_dir",
-            os.path.join(
-                os.getcwd(),
-                "checkpoints",
-                self._algorithm.name,
-            ),
-        )
+        model_path = self.cfg.model_dir
 
         model_path = os.path.abspath(model_path)
 

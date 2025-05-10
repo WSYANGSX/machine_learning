@@ -1,12 +1,9 @@
+import torch.nn as nn
 from torchvision import transforms
 
 from machine_learning.models import BaseNet
-from machine_learning.trainer import Trainer
+from machine_learning.trainer import Trainer, TrainCfg
 from machine_learning.algorithms import AutoEncoder
-from machine_learning.utils import minist_parse
-
-
-import torch.nn as nn
 
 
 class Encoder(BaseNet):
@@ -95,7 +92,6 @@ def main():
         {"encoder": encoder, "decoder": decoder},
     )
 
-    data = minist_parse("./data/minist")
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -103,17 +99,13 @@ def main():
         ]
     )
 
-    trainer_cfg = {
-        "epochs": 100,
-        "log_dir": "./logs/auto_encoder/",
-        "model_dir": "./checkpoints/auto_encoder/",
-        "log_interval": 10,
-        "save_interval": 10,
-        "batch_size": 256,
-        "data_num_workers": 4,
-    }
+    trainer_cfg = TrainCfg(
+        dataset="minist",
+        log_dir="./logs/auto_encoder/",
+        model_dir="./checkpoints/auto_encoder/",
+    )
 
-    trainer = Trainer(trainer_cfg, data, transform, auto_encoder)
+    trainer = Trainer(trainer_cfg, transform, auto_encoder)
 
     trainer.train()
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
