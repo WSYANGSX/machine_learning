@@ -1,14 +1,11 @@
 import os
 import torch
-import numpy as np
 from typing import Any
 from tqdm import trange
 
-from torchvision.transforms import Compose
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.utils import FullLoadDataset
 from machine_learning.algorithms import AlgorithmBase
 from .trainer_cfg import TrainCfg
 
@@ -50,30 +47,6 @@ class Trainer:
             raise RuntimeError(f"Failed to create log directory at {log_path}: {e}")
 
         self.writer = SummaryWriter(log_dir=log_path)
-
-    # TODO:fix
-    def _load_datasets(
-        self,
-        data: dict[str, np.ndarray | torch.Tensor],
-        transform: Compose,
-    ):
-        # 创建dataset和datasetloader
-        train_data = data["train_data"]
-        val_data = data["validation_data"]
-        train_labels = data.get("train_labels", None)
-        val_labels = data.get("validation_labels", None)
-
-        train_dataset = FullLoadDataset(train_data, train_labels, transform)
-        validate_dataset = FullLoadDataset(val_data, val_labels, transform)
-
-        train_loader = DataLoader(
-            train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.cfg.data_num_workers
-        )
-        val_loader = DataLoader(
-            validate_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.cfg.data_num_workers
-        )
-
-        return train_loader, val_loader
 
     def train(self, start_epoch: int = 0) -> None:
         """完整训练"""
