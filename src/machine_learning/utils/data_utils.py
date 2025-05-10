@@ -5,8 +5,8 @@ import struct
 import numpy as np
 import torch
 
-from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Compose
+from torch.utils.data import Dataset, DataLoader
 
 
 class FullLoadDataset(Dataset):
@@ -63,28 +63,19 @@ class LazyLoadDataset(Dataset):
         return super().__getitem__(index)
 
 
-def dataloader_create(
-    dataset: str,
-    labels: bool = True,
-    load_method: Literal["full", "lazy"] = "full",
-) -> dict[str, DataLoader]:
-    """The dataloader_create is a factory function used to dynamically create any dataLoader."""
-    _SUPPORT_DATASET = ["minist", "coco-2017"]
+class DataLoaderFactory:
+    def __init__(self):
+        self.support_dataset = ["minist", "coco-2017"]
+        self.data_dir_path = os.path.join(os.getcwd(), "data")
+        self.parsers = {"minist": minist_parser, "yolo": yolo_parser, "coco": coco_parser, "voc": voc_parser}
 
-    if dataset not in _SUPPORT_DATASET:
-        raise NameError(f"Dataset {dataset} is not supported now.")
-    elif dataset == "minist":
-        data_path = os.path.join(os.getcwd(), "data/minist")
-    elif dataset == "coco-2017":
-        data_path = os.path.join(os.getcwd(), "data/coco-2017")
-
-    if load_method == "full":
-        pass
-    else:
+    def create(
+        dataset: Literal["minist", "coco-2017"], load_method: Literal["full", "lazy"], labels: bool = True
+    ) -> dict[str, DataLoader]:
         pass
 
 
-def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
+def minist_parser(file_path: str, parse_method: Literal["full", "lazy"], labels: bool = True) -> dict[str, np.ndarray]:
     """minist手写数字集数据解析函数
 
     Args:
@@ -139,7 +130,7 @@ def minist_parse(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
     return {"train_data": train_data, "train_labels": train_labels}
 
 
-def yolo_parse(file_path: str) -> dict[str, np.ndarray]:
+def yolo_parser(file_path: str) -> dict[str, np.ndarray]:
     """yolo格式数据集加载函数
 
     Args:
@@ -151,11 +142,11 @@ def yolo_parse(file_path: str) -> dict[str, np.ndarray]:
     pass
 
 
-def coco_parse(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
+def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
     pass
 
 
-def voc_parse(
+def voc_parser(
     file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
 ) -> dict[str, np.ndarray]:
     pass

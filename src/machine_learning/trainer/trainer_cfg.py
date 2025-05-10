@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TrainCfg:
-    dataset: Literal["minist", "coco-2017"]
     log_dir: str
     model_dir: str
     data_load_method: Literal["full", "lazy"] = "full"
