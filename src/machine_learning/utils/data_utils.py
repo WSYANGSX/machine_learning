@@ -149,16 +149,16 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
             names.append(name)
 
     # 读取训练、验证图像列表
-    train_img_lt = list_from_txt(images_dir + "/images_train.txt")
-    val_img_lt = list_from_txt(images_dir + "/images_val.txt")
+    train_img_list = list_from_txt(images_dir + "/images_train.txt")
+    val_img_list = list_from_txt(images_dir + "/images_val.txt")
 
     # 生成标准信息
     train_labels =
     val_labels =
 
     return {
-        "train_images_list": train_img_lt,
-        "val_images_list": val_img_lt,
+        "train_images_list": train_img_list,
+        "val_images_list": val_img_list,
         "train_labels": train_labels,
         "val_labels": val_labels,
     }
