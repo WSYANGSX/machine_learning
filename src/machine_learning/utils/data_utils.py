@@ -63,7 +63,7 @@ class LazyLoadDataset(Dataset):
         return super().__getitem__(index)
 
 
-def minist_parser(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
+def minist_parser(dataset_dir: str, labels: bool = True) -> dict[str, np.ndarray]:
     """minist手写数字集数据解析函数
 
     Args:
@@ -73,9 +73,10 @@ def minist_parser(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
     Returns:
         dict (str, np.ndarray): 训练集数据、训练集标签(可选)、验证集、验证集标签(可选).
     """
+    returns = {}
 
-    def load_idx3_ubyte(file_path):
-        with open(file_path, "rb") as f:
+    def load_idx3_ubyte(dataset_dir):
+        with open(dataset_dir, "rb") as f:
             # 读取前16个字节的文件头信息
             magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
 
@@ -84,8 +85,8 @@ def minist_parser(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
 
             return images, magic, num_images, rows, cols
 
-    def load_idx1_ubyte(file_path):
-        with open(file_path, "rb") as f:
+    def load_idx1_ubyte(dataset_dir):
+        with open(dataset_dir, "rb") as f:
             # 读取前8个字节的文件头信息
             magic, num_labels = struct.unpack(">II", f.read(8))
 
@@ -94,32 +95,31 @@ def minist_parser(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
 
             return labels, magic, num_labels
 
-    file_path = os.path.abspath(file_path)
-    train_data_path = os.path.join(file_path, "train")
-    validate_data_path = os.path.join(file_path, "test")
-    print("[INFO] Train data path: ", train_data_path)
-    print("[INFO] Validation data path: ", validate_data_path)
+    dataset_dir = os.path.abspath(dataset_dir)
+    train_data_dir = os.path.join(dataset_dir, "train")
+    val_data_dir = os.path.join(dataset_dir, "test")
+    print("[INFO] Train data directory path: ", train_data_dir)
+    print("[INFO] Val data directory path: ", val_data_dir)
 
     # 加载数据
-    train_data = load_idx3_ubyte(os.path.join(train_data_path, "images_train.idx3-ubyte"))[0]
-    validate_data = load_idx3_ubyte(os.path.join(validate_data_path, "images_test.idx3-ubyte"))[0]
+    train_data = load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
+    val_data = load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
+
+    returns["train_data"] = train_data
+    returns["val_data"] = val_data
 
     if labels:
-        train_labels = load_idx1_ubyte(os.path.join(train_data_path, "labels_train.idx1-ubyte"))[0]
-        validate_labels = load_idx1_ubyte(os.path.join(validate_data_path, "labels_test.idx1-ubyte"))[0]
+        train_labels = load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
+        val_labels = load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
 
-        return {
-            "train_data": train_data,
-            "train_labels": train_labels,
-            "validation_data": validate_data,
-            "validation_labels": validate_labels,
-        }
+        returns["train_labels"] = train_labels
+        returns["val_labels"] = val_labels
 
-    return {"train_data": train_data, "train_labels": train_labels}
+    return returns
 
 
-def yolo_parser(file_path: str) -> dict[str, list | np.ndarray]:
-    """yolo格式数据集加载函数,由于yolo数据集体量大,因此返回image路径列表,但是标准信息作为ndarray一次性返回.
+def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
+    """yolo格式数据集加载函数,返回image路径列表,标注作为ndarray一次性返回.
 
     Args:
         file_path (str): yolo类型数据集位置.
@@ -127,7 +127,9 @@ def yolo_parser(file_path: str) -> dict[str, list | np.ndarray]:
     Returns:
         dict (str, np.ndarray): 训练集数据、训练集标签、验证集、验证集标签.
     """
-    file_path = os.path.abspath(file_path)
+    data_file_path = os.path.abspath(data_file_path)
+    images_file_path = os.path.join(data_file_path, "images")
+    labels_file_path = os.path.join(data_file_path, "labels")
 
 
 def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
