@@ -130,33 +130,33 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
     Returns:
         dict (str, list | np.ndarray): 返回数据.
     """
+    def labels_generator(labels_dir:str, img_list:list[str])->np.ndarray:
+        
+    
     dataset_dir = os.path.abspath(dataset_dir)
     images_dir = os.path.join(dataset_dir, "images")
     labels_dir = os.path.join(dataset_dir, "labels")
 
     metadata = yaml.safe_load(os.path.join(dataset_dir, "metadata.yaml"))
     dataset_name = metadata["dataset_name"]
-    names_file = os.path.join(dataset_dir, metadata["names_file"])
+    class_names_file = os.path.join(dataset_dir, metadata["names_file"])
 
     print(f"[INFO] Information of dataset {dataset_name}:")
     print_dict(metadata)
 
     # 读取种类名称
-    with open(names_file, "r") as f:
-        names = []
-        for line in f:
-            name = line.strip()
-            names.append(name)
+    class_names = list_from_txt(class_names_file)
 
     # 读取训练、验证图像列表
     train_img_list = list_from_txt(images_dir + "/images_train.txt")
     val_img_list = list_from_txt(images_dir + "/images_val.txt")
 
-    # 生成标准信息
-    train_labels =
-    val_labels =
+    # 生成信息
+    train_labels = 
+    val_labels = 
 
     return {
+        "class_names": class_names,
         "train_images_list": train_img_list,
         "val_images_list": val_img_list,
         "train_labels": train_labels,
@@ -182,7 +182,3 @@ def list_from_txt(file_path: str) -> list[str]:
             lines.append(cleaned_line)
 
     return lines
-
-
-def ndarray_from_txt(file_path: str) -> np.ndarray:
-    pass

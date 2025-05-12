@@ -25,5 +25,3 @@ def load_config_from_path(config: str) -> dict:
         config = yaml.safe_load(f)
 
     return config
-
-
