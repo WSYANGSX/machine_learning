@@ -1,12 +1,15 @@
 from typing import Literal
-
 import os
+import yaml
 import struct
-import numpy as np
+
 import torch
+import numpy as np
 
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
+
+from machine_learning.utils import print_dict
 
 
 class FullLoadDataset(Dataset):
@@ -119,7 +122,7 @@ def minist_parser(dataset_dir: str, labels: bool = True) -> dict[str, np.ndarray
 
 
 def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
-    """yolo格式数据集加载函数,返回image路径列表,标注作为ndarray一次性返回.
+    """yolo格式数据集加载函数,返回image路径列表,标注则一次性返回.
 
     Args:
         file_path (str): yolo类型数据集位置.
@@ -127,9 +130,16 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
     Returns:
         dict (str, np.ndarray): 训练集数据、训练集标签、验证集、验证集标签.
     """
-    data_file_path = os.path.abspath(data_file_path)
-    images_file_path = os.path.join(data_file_path, "images")
-    labels_file_path = os.path.join(data_file_path, "labels")
+    dataset_dir = os.path.abspath(dataset_dir)
+    images_dir = os.path.join(dataset_dir, "images")
+    labels_dir = os.path.join(dataset_dir, "labels")
+
+    metadata = yaml.safe_load(os.path.join(dataset_dir, "metadata.yaml"))
+    dataset_name = metadata["dataset_name"]
+    names_file = os.path.join(dataset_dir, metadata["names_file"])
+
+    print(f"[INFO] Information of dataset {dataset_name}:")
+    print_dict(metadata)
 
 
 def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
