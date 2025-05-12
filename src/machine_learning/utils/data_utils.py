@@ -128,7 +128,7 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
         file_path (str): yolo类型数据集位置.
 
     Returns:
-        dict (str, np.ndarray): 训练集数据、训练集标签、验证集、验证集标签.
+        dict (str, list | np.ndarray): 返回数据.
     """
     dataset_dir = os.path.abspath(dataset_dir)
     images_dir = os.path.join(dataset_dir, "images")
@@ -141,6 +141,28 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
     print(f"[INFO] Information of dataset {dataset_name}:")
     print_dict(metadata)
 
+    # 读取种类名称
+    with open(names_file, "r") as f:
+        names = []
+        for line in f:
+            name = line.strip()
+            names.append(name)
+
+    # 读取训练、验证图像列表
+    train_img_lt = list_from_txt(images_dir + "/images_train.txt")
+    val_img_lt = list_from_txt(images_dir + "/images_val.txt")
+
+    # 生成标准信息
+    train_labels =
+    val_labels =
+
+    return {
+        "train_images_list": train_img_lt,
+        "val_images_list": val_img_lt,
+        "train_labels": train_labels,
+        "val_labels": val_labels,
+    }
+
 
 def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
     pass
@@ -149,4 +171,18 @@ def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypo
 def voc_parser(
     file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
 ) -> dict[str, np.ndarray]:
+    pass
+
+
+def list_from_txt(file_path: str) -> list[str]:
+    lines = []
+    with open(file_path, "r") as f:
+        for line in f:
+            cleaned_line = line.split()
+            lines.append(cleaned_line)
+
+    return lines
+
+
+def ndarray_from_txt(file_path: str) -> np.ndarray:
     pass
