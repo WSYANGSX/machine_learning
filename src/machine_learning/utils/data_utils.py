@@ -119,7 +119,7 @@ def minist_parser(file_path: str, labels: bool = True) -> dict[str, np.ndarray]:
 
 
 def yolo_parser(file_path: str) -> dict[str, list | np.ndarray]:
-    """yolo格式数据集加载函数,由于yolo数据集体量大,因此返回image列表,标准信息作为ndarray一次性返回.
+    """yolo格式数据集加载函数,由于yolo数据集体量大,因此返回image路径列表,但是标准信息作为ndarray一次性返回.
 
     Args:
         file_path (str): yolo类型数据集位置.
@@ -128,7 +128,7 @@ def yolo_parser(file_path: str) -> dict[str, list | np.ndarray]:
         dict (str, np.ndarray): 训练集数据、训练集标签、验证集、验证集标签.
     """
     file_path = os.path.abspath(file_path)
-    
+
 
 def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
     pass
