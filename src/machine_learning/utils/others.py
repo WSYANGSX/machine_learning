@@ -18,7 +18,7 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
         else:
             print(key, ":", end="")
             print(f"\033[{len(key)}D", end="")  # 光标回退，控制对齐
-            print("\t" * 3, val)
+            print("\t" * 5, val)
 
 
 def load_config_from_path(config: str) -> dict:

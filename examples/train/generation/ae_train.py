@@ -98,10 +98,9 @@ def main():
             transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
-    train_data_loader = 
-    val_data_loader = 
-    
-    
+    # train_data_loader =
+    # val_data_loader =
+
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",
         model_dir="./checkpoints/auto_encoder/",

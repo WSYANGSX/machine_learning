@@ -205,3 +205,7 @@ def voc_parser(
     file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
 ) -> dict[str, np.ndarray]:
     pass
+
+
+if __name__ == "__main__":
+    coco = yolo_parser("./data/coco-2017")
