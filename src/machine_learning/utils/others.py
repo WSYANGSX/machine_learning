@@ -3,6 +3,9 @@ import yaml
 
 
 def print_dict(input_dict: dict, indent: int = 0) -> None:
+    if not input_dict:
+        return
+
     indent = indent
 
     for key, val in input_dict.items():
@@ -14,7 +17,8 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
             indent = 0
         else:
             print(key, ":", end="")
-            print("\t", val)
+            print(f"\033[{len(key)}D", end="")  # 光标回退，控制对齐
+            print("\t" * 3, val)
 
 
 def load_config_from_path(config: str) -> dict:
@@ -25,3 +29,17 @@ def load_config_from_path(config: str) -> dict:
         config = yaml.safe_load(f)
 
     return config
+
+
+def print_info_seg() -> None:
+    print("=" * 90)
+
+
+def list_from_txt(file_path: str) -> list[str]:
+    lines = []
+    with open(file_path, "r") as f:
+        for line in f:
+            cleaned_line = line.split()[0]
+            lines.append(cleaned_line)
+
+    return lines

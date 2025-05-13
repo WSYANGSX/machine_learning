@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.utils import print_dict
+from machine_learning.utils import print_dict, print_info_seg
 
 
 class AlgorithmBase(ABC):
@@ -87,10 +87,10 @@ class AlgorithmBase(ABC):
             with open(config, "r") as f:
                 cfg = yaml.safe_load(f)
 
-        print("=" * 90)
+        print_info_seg()
         print("Configuration parameters: ")
         print_dict(cfg)
-        print("=" * 90)
+        print_info_seg()
 
         return cfg
 

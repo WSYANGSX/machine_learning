@@ -1,6 +1,5 @@
-from typing import Literal
+from typing import Literal, Any
 import os
-import yaml
 import struct
 
 import torch
@@ -9,10 +8,10 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
-from .others import print_dict
+from machine_learning.utils.others import print_dict, load_config_from_path, print_info_seg, list_from_txt
 
 
-class FullLoadDataset(Dataset):
+class FullDataset(Dataset):
     r"""完全加载数据集.
 
     使用于小型数据集，占用内存空间小，加快数据读取速度.
@@ -50,13 +49,29 @@ class FullLoadDataset(Dataset):
         return data_sample, labels_sample
 
 
-class LazyLoadDataset(Dataset):
+class LazyDataset(Dataset):
     r"""延迟加载数据集.
 
     使用于大型数据集，减小内存空间占用，数据读取速度较慢.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        dataset_type: str,
+        data_info: dict[str, Any],
+        img_size: 416,
+        multiscale: bool = False,
+        tansform: Compose = None,
+    ):
+        """LazyLoadDataset初始化.
+
+        Args:
+            dataset_type (str): 使用数据集的标注类型，比如"coco","yolo","voc"等.
+            data_info (dict[str, Any]): 数据集的元信息.
+            img_size (416): 图片形状大小.
+            multiscale (bool, optional): 启用多尺度训练. Defaults to False.
+            tansform (Compose, optional): 图像转换器. Defaults to None.
+        """
         super().__init__()
 
     def __len__(self):
@@ -133,15 +148,18 @@ def yolo_parser(dataset_dir: str) -> dict[str, list]:
 
     dataset_dir = os.path.abspath(dataset_dir)
 
-    metadata = yaml.safe_load(os.path.join(dataset_dir, "metadata.yaml"))
+    metadata = load_config_from_path(os.path.join(dataset_dir, "metadata.yaml"))
+
     dataset_name = metadata["dataset_name"]
     if metadata["dataset_type"] != "yolo":
         raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
 
     class_names_file = os.path.join(dataset_dir, metadata["names_file"])
 
-    print(f"[INFO] Information of dataset {dataset_name}:")
+    print_info_seg()
+    print("Information of dataset:")
     print_dict(metadata)
+    print_info_seg()
 
     # 读取种类名称
     class_names = list_from_txt(class_names_file)
@@ -180,18 +198,3 @@ def voc_parser(
     file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
 ) -> dict[str, np.ndarray]:
     pass
-
-
-def list_from_txt(file_path: str) -> list[str]:
-    lines = []
-    with open(file_path, "r") as f:
-        for line in f:
-            cleaned_line = line.split()
-            lines.append(cleaned_line)
-
-    return lines
-
-
-if __name__ == "__main__":
-    info = yolo_parser("./data/coco-2017")
-    print(info["class_names"])
