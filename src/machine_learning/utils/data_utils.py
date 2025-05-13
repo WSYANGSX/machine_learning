@@ -70,7 +70,7 @@ class LazyDataset(Dataset):
             data_info (dict[str, Any]): 数据集的元信息.
             img_size (416): 图片形状大小.
             multiscale (bool, optional): 启用多尺度训练. Defaults to False.
-            tansform (Compose, optional): 图像转换器. Defaults to None.
+            tansform (Compose, optional): 数据转换器. Defaults to None.
         """
         super().__init__()
 
@@ -79,6 +79,13 @@ class LazyDataset(Dataset):
 
     def __getitem__(self, index):
         return super().__getitem__(index)
+
+
+class DataLoaderFactory:
+    r"""工厂类, 用于生成具体的DataLoader."""
+
+    def __init__(self):
+        pass
 
 
 def minist_parser(dataset_dir: str, labels: bool = True) -> dict[str, np.ndarray]:
