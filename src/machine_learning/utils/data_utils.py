@@ -9,7 +9,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
-from machine_learning.utils import print_dict
+from .others import print_dict
 
 
 class FullLoadDataset(Dataset):
@@ -121,8 +121,8 @@ def minist_parser(dataset_dir: str, labels: bool = True) -> dict[str, np.ndarray
     return returns
 
 
-def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
-    """yolo格式数据集加载函数,返回image路径列表,标注则一次性返回.
+def yolo_parser(dataset_dir: str) -> dict[str, list]:
+    """yolo格式数据集加载函数,返回image和labels列表.
 
     Args:
         file_path (str): yolo类型数据集位置.
@@ -130,15 +130,14 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
     Returns:
         dict (str, list | np.ndarray): 返回数据.
     """
-    def labels_generator(labels_dir:str, img_list:list[str])->np.ndarray:
-        
-    
+
     dataset_dir = os.path.abspath(dataset_dir)
-    images_dir = os.path.join(dataset_dir, "images")
-    labels_dir = os.path.join(dataset_dir, "labels")
 
     metadata = yaml.safe_load(os.path.join(dataset_dir, "metadata.yaml"))
     dataset_name = metadata["dataset_name"]
+    if metadata["dataset_type"] != "yolo":
+        raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
+
     class_names_file = os.path.join(dataset_dir, metadata["names_file"])
 
     print(f"[INFO] Information of dataset {dataset_name}:")
@@ -147,20 +146,29 @@ def yolo_parser(dataset_dir: str) -> dict[str, list | np.ndarray]:
     # 读取种类名称
     class_names = list_from_txt(class_names_file)
 
-    # 读取训练、验证图像列表
-    train_img_list = list_from_txt(images_dir + "/images_train.txt")
-    val_img_list = list_from_txt(images_dir + "/images_val.txt")
+    train_img_dir = os.path.join(dataset_dir, "images/trian")
+    val_img_dir = os.path.join(dataset_dir, "images/val")
+    train_labels_dir = os.path.join(dataset_dir, "labels/train")
+    val_labels_dir = os.path.join(dataset_dir, "labels/val")
 
-    # 生成信息
-    train_labels = 
-    val_labels = 
+    # 读取训练、验证图像列表
+    train_img_ls = list_from_txt(dataset_dir + "/images_train.txt")
+    val_img_ls = list_from_txt(dataset_dir + "/images_val.txt")
+    train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
+    val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
+
+    # 添加绝对路径
+    train_img_path_ls = [train_img_dir + img for img in train_img_ls]
+    val_img_path_ls = [val_img_dir + img for img in val_img_ls]
+    train_labels_path_ls = [train_labels_dir + label for label in train_labels_ls]
+    val_labels_path_ls = [val_labels_dir + label for label in val_labels_ls]
 
     return {
         "class_names": class_names,
-        "train_images_list": train_img_list,
-        "val_images_list": val_img_list,
-        "train_labels": train_labels,
-        "val_labels": val_labels,
+        "train_images_path_list": train_img_path_ls,
+        "val_images_path_list": val_img_path_ls,
+        "train_labels_path_list": train_labels_path_ls,
+        "val_labels_path_list": val_labels_path_ls,
     }
 
 
@@ -182,3 +190,8 @@ def list_from_txt(file_path: str) -> list[str]:
             lines.append(cleaned_line)
 
     return lines
+
+
+if __name__ == "__main__":
+    info = yolo_parser("./data/coco-2017")
+    print(info["class_names"])
