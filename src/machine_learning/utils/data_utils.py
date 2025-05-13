@@ -1,11 +1,13 @@
-from typing import Literal, Any
+from __future__ import annotations
 import os
 import struct
+from typing import Literal, Any
+from abc import ABC, abstractmethod
 
 import torch
 import numpy as np
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Compose
 
 from machine_learning.utils.others import print_dict, load_config_from_path, print_info_seg, list_from_txt
@@ -82,9 +84,53 @@ class LazyDataset(Dataset):
 
 
 class DataLoaderFactory:
-    r"""工厂类, 用于生成具体的DataLoader."""
+    r"""工厂类, 用于生成具体的DataLoader, 动态注册/管理数据集解析器，遵循开闭原则."""
+
+    _parser_registry: dict[str, DatasetParser]
 
     def __init__(self):
+        pass
+
+    @property
+    def parsers(self) -> list[str]:
+        return list(DataLoaderFactory._parser_registry.keys())
+
+    def register_parser(self, dataset_type: str, dataset_parser: DatasetParser) -> None:
+        self._parser_registry.update({dataset_type: dataset_parser})
+
+    def create(self, dataset_dir: str, load_method: Literal["full", "lazy"]) -> dict[str, DataLoader]:
+        dataset_dir = os.path.abspath(dataset_dir)
+        metadata = self._load_metadata(dataset_dir)
+
+        dataset_type: str = metadata["dataset_type"]
+
+        # 动态获取解析器
+        if dataset_type not in self._parser_registry:
+            raise ValueError(f"Unsupported dataset type: {dataset_type}")
+
+        parser_cls = self._parser_registry[dataset_type]
+        parser = parser_cls(dataset_dir, load_method)
+        return parser.create_dataloaders()
+
+    def _load_metadata(self, dataset_dir: str) -> dict:
+        """加载元数据文件"""
+        metadata_path = os.path.join(dataset_dir, "metadata.yaml")
+        return load_config_from_path(metadata_path)
+
+    def __repr__(self):
+        return f"DataLoaderFactory(parsers={self.parsers})"
+
+
+class DatasetParser(ABC):
+    """数据集解析器抽象基类."""
+
+    def __init__(self, dataset_dir: str, load_method: Literal["full", "lazy"]) -> None:
+        super().__init__()
+        self.dataset_dir = dataset_dir
+        self.load_method = load_method
+
+    @abstractmethod
+    def create_dataloaders(self) -> dict[str, DataLoader]:
         pass
 
 
@@ -189,6 +235,7 @@ def yolo_parser(dataset_dir: str) -> dict[str, list]:
     val_labels_path_ls = [val_labels_dir + label for label in val_labels_ls]
 
     return {
+        "metadata": metadata,
         "class_names": class_names,
         "train_images_path_list": train_img_path_ls,
         "val_images_path_list": val_img_path_ls,
@@ -205,7 +252,3 @@ def voc_parser(
     file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
 ) -> dict[str, np.ndarray]:
     pass
-
-
-if __name__ == "__main__":
-    coco = yolo_parser("./data/coco-2017")
