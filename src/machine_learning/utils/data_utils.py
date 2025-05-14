@@ -84,7 +84,7 @@ class LazyDataset(Dataset):
 
 
 class DataLoaderFactory:
-    r"""工厂类, 用于生成具体的DataLoader, 动态注册/管理数据集解析器，遵循开闭原则."""
+    r"""工厂类, 用于生成具体的DataLoader, 动态注册/管理数据集解析器，遵循开闭原则, 如果想永久保存注册信息，可以将注册信息写入本地注册文件实现."""
 
     _parser_registry: dict[str, DatasetParser]
 
@@ -95,6 +95,7 @@ class DataLoaderFactory:
     def parsers(self) -> list[str]:
         return list(DataLoaderFactory._parser_registry.keys())
 
+    
     def register_parser(self, dataset_type: str, dataset_parser: DatasetParser) -> None:
         self._parser_registry.update({dataset_type: dataset_parser})
 

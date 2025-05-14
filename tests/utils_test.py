@@ -1,7 +1,22 @@
-from machine_learning.utils import cal_conv_output_size
-import torch.nn as nn
+class Parent:
+    class_attr = "父类的类属性"
 
-input_size = (20, 3, 28, 28, 28)
-a = nn.Conv3d(in_channels=3, out_channels=5, kernel_size=(4, 2, 5), padding=(2, 1, 3), stride=(3, 4, 1))
-b = cal_conv_output_size(input_size, a)
-print(b)
+
+class Child(Parent):
+    def instance_method(self):
+        print(self.__class__.class_attr)  # 继承父类的类属性
+
+
+child = Child()
+child.instance_method()  # 输出: 父类的类属性
+
+
+class Child(Parent):
+    class_attr = "子类的类属性"  # 覆盖父类的类属性
+
+    def instance_method(self):
+        print(Parent.class_attr)  # 输出子类的类属性
+
+
+child = Child()
+child.instance_method()  # 输出: 子类的类属性
