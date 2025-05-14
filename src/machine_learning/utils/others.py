@@ -31,7 +31,7 @@ def load_config_from_path(config: str) -> dict:
     return config
 
 
-def print_info_seg() -> None:
+def print_segmentation() -> None:
     print("=" * 90)
 
 

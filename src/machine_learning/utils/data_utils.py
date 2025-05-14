@@ -1,16 +1,17 @@
 from __future__ import annotations
+
 import os
 import struct
-from typing import Literal, Any
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from typing import Literal, Any, Callable
 
 import torch
 import numpy as np
-
-from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Compose
+from torch.utils.data import Dataset, DataLoader
 
-from machine_learning.utils.others import print_dict, load_config_from_path, print_info_seg, list_from_txt
+from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
 
 class FullDataset(Dataset):
@@ -83,23 +84,27 @@ class LazyDataset(Dataset):
         return super().__getitem__(index)
 
 
-class DataLoaderFactory:
-    r"""工厂类, 用于生成具体的DataLoader, 动态注册/管理数据集解析器，遵循开闭原则, 如果想永久保存注册信息，可以将注册信息写入本地注册文件实现."""
+class DataSetFactory:
+    r"""工厂类, 用于生成具体的Dataset, 遵循开闭原则, 如果想永久保存注册信息，可以将注册信息写入本地注册文件实现."""
 
-    _parser_registry: dict[str, DatasetParser]
+    _parser_registry: dict[str, DatasetParser] = {}
 
     def __init__(self):
         pass
 
     @property
     def parsers(self) -> list[str]:
-        return list(DataLoaderFactory._parser_registry.keys())
+        return list(self._parser_registry.keys())
 
-    
-    def register_parser(self, dataset_type: str, dataset_parser: DatasetParser) -> None:
-        self._parser_registry.update({dataset_type: dataset_parser})
+    @classmethod
+    def register_parser(cls, dataset_type: str) -> Callable:
+        def wrapper(dataset_parser: DatasetParser) -> None:
+            cls._parser_registry[dataset_type] = dataset_parser
+            print(f"DataLoaderFactory has registred dataset_parser {dataset_parser}.")
 
-    def create(self, dataset_dir: str, load_method: Literal["full", "lazy"]) -> dict[str, DataLoader]:
+        return wrapper
+
+    def create(self, dataset_dir: str, transforms: Compose = None) -> dict[str, DataLoader]:
         dataset_dir = os.path.abspath(dataset_dir)
         metadata = self._load_metadata(dataset_dir)
 
@@ -110,84 +115,101 @@ class DataLoaderFactory:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
         parser_cls = self._parser_registry[dataset_type]
-        parser = parser_cls(dataset_dir, load_method)
-        return parser.create_dataloaders()
+        parser = parser_cls(dataset_dir)
+
+        return parser.create(transforms)
 
     def _load_metadata(self, dataset_dir: str) -> dict:
         """加载元数据文件"""
         metadata_path = os.path.join(dataset_dir, "metadata.yaml")
         return load_config_from_path(metadata_path)
 
-    def __repr__(self):
+    def __str__(self):
         return f"DataLoaderFactory(parsers={self.parsers})"
+
+
+@dataclass
+class DatasetParserCfg:
+    pass
 
 
 class DatasetParser(ABC):
     """数据集解析器抽象基类."""
 
-    def __init__(self, dataset_dir: str, load_method: Literal["full", "lazy"]) -> None:
+    def __init__(self, dataset_dir: str) -> None:
         super().__init__()
         self.dataset_dir = dataset_dir
-        self.load_method = load_method
+
+        self.train_data = None
+        self.val_data = None
+        self.train_labels = None
+        self.val_labels = None
 
     @abstractmethod
-    def create_dataloaders(self) -> dict[str, DataLoader]:
+    def parse_dataset(self):
+        pass
+
+    @abstractmethod
+    def create(self) -> dict[str, Dataset]:
+        pass
+
+    def __str__(self) -> str:
         pass
 
 
-def minist_parser(dataset_dir: str, labels: bool = True) -> dict[str, np.ndarray]:
-    """minist手写数字集数据解析函数
+@DataSetFactory.register_parser("minist")
+class MinistParser(DatasetParser):
+    r"""minist手写数字集数据解析器"""
 
-    Args:
-        file_path (str): minist手写数字集储存路径.
-        labels (bool): 是否加载标签数据.
+    def __init__(self, dataset_dir: str, labels: bool = True):
+        super().__init__(dataset_dir, labels)
+        self.labels = labels
 
-    Returns:
-        dict (str, np.ndarray): 训练集数据、训练集标签(可选)、验证集、验证集标签(可选).
-    """
-    returns = {}
-
-    def load_idx3_ubyte(dataset_dir):
+    @staticmethod
+    def load_idx3_ubyte(dataset_dir: str) -> tuple:
         with open(dataset_dir, "rb") as f:
             # 读取前16个字节的文件头信息
             magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
-
             # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
             images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
 
             return images, magic, num_images, rows, cols
 
-    def load_idx1_ubyte(dataset_dir):
+    @staticmethod
+    def load_idx1_ubyte(dataset_dir: str) -> tuple:
         with open(dataset_dir, "rb") as f:
             # 读取前8个字节的文件头信息
             magic, num_labels = struct.unpack(">II", f.read(8))
-
             # 读取标签数据，并重新整形为(num_labels,)的一维数组
             labels = np.fromfile(f, dtype=np.uint8)
 
             return labels, magic, num_labels
 
-    dataset_dir = os.path.abspath(dataset_dir)
-    train_data_dir = os.path.join(dataset_dir, "train")
-    val_data_dir = os.path.join(dataset_dir, "test")
-    print("[INFO] Train data directory path: ", train_data_dir)
-    print("[INFO] Val data directory path: ", val_data_dir)
+    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+        dataset_dir = os.path.abspath(self.dataset_dir)
+        train_data_dir = os.path.join(dataset_dir, "train")
+        val_data_dir = os.path.join(dataset_dir, "test")
+        print("[INFO] Train data directory path: ", train_data_dir)
+        print("[INFO] Val data directory path: ", val_data_dir)
 
-    # 加载数据
-    train_data = load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
-    val_data = load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
+        # 加载数据
+        train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
+        val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
 
-    returns["train_data"] = train_data
-    returns["val_data"] = val_data
+        self.train_data = train_data
+        self.val_data = val_data
 
-    if labels:
-        train_labels = load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
-        val_labels = load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
+        if self.labels:
+            train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
+            val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
 
-        returns["train_labels"] = train_labels
-        returns["val_labels"] = val_labels
+            self.train_labels = train_labels
+            self.val_labels = val_labels
 
-    return returns
+        self.trian_dataset = FullDataset(self.train_data, self.train_labels, transforms)
+        self.val_dataset = FullDataset(self.val_data, self.val_labels, transforms)
+
+        return {"train": self.trian_dataset, "val": self.val_dataset}
 
 
 def yolo_parser(dataset_dir: str) -> dict[str, list]:
@@ -210,10 +232,10 @@ def yolo_parser(dataset_dir: str) -> dict[str, list]:
 
     class_names_file = os.path.join(dataset_dir, metadata["names_file"])
 
-    print_info_seg()
+    print_segmentation()
     print("Information of dataset:")
     print_dict(metadata)
-    print_info_seg()
+    print_segmentation()
 
     # 读取种类名称
     class_names = list_from_txt(class_names_file)

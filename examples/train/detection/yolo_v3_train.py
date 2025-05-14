@@ -1,6 +1,6 @@
 from torchvision import transforms
 
-from machine_learning.trainer import Trainer
+from machine_learning.train import Trainer
 from machine_learning.algorithms import YoloV3
 from machine_learning.models import Darknet, FPN
 from machine_learning.utils import load_config_from_path, yolo_parse

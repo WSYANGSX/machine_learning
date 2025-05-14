@@ -2,8 +2,9 @@ import torch.nn as nn
 from torchvision import transforms
 
 from machine_learning.models import BaseNet
-from machine_learning.trainer import Trainer, TrainCfg
 from machine_learning.algorithms import AutoEncoder
+from machine_learning.train import Trainer, TrainCfg
+from machine_learning.utils import DataSetFactory
 
 
 class Encoder(BaseNet):
@@ -92,21 +93,20 @@ def main():
         {"encoder": encoder, "decoder": decoder},
     )
 
-    transform = transforms.Compose(
+    tfs = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
-    # train_data_loader =
-    # val_data_loader =
+    dataset = DataSetFactory.create("./data/minist", tfs)
 
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",
         model_dir="./checkpoints/auto_encoder/",
     )
 
-    trainer = Trainer(trainer_cfg, transform, auto_encoder)
+    trainer = Trainer(trainer_cfg, dataset, auto_encoder)
 
     trainer.train()
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")

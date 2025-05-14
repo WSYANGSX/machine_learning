@@ -4,7 +4,7 @@ from torchvision import transforms
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms import VAE
-from machine_learning.trainer import Trainer, TrainCfg
+from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils import minist_parse
 
 

@@ -6,15 +6,15 @@ from tqdm import trange
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.algorithms import AlgorithmBase
 from .trainer_cfg import TrainCfg
+from machine_learning.algorithms import AlgorithmBase
 
 
 class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
-        data_loaders: dict[str, DataLoader],
+        datasets: dict[str, DataLoader],
         algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
@@ -30,7 +30,9 @@ class Trainer:
 
         # -------------------- 配置数据 --------------------
         self.batch_size = self.cfg.batch_size
-        self._algorithm._initialize_data_loader(data_loaders["train"], data_loaders["validation"])
+        self._algorithm._initialize_data_loader(
+            train_dataset=datasets["train"], val_dataset=datasets["val"], train_cfg=self.cfg
+        )
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()

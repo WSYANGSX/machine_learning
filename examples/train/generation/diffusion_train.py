@@ -1,7 +1,7 @@
 from torchvision import transforms
 
 from machine_learning.models import UNet
-from machine_learning.trainer import Trainer, TrainCfg
+from machine_learning.train import Trainer, TrainCfg
 from machine_learning.algorithms import Diffusion
 from machine_learning.utils import minist_parse
 
