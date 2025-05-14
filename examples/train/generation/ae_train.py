@@ -99,7 +99,9 @@ def main():
             transforms.Normalize(mean=[0.1307], std=[0.3081]),
         ]
     )
-    dataset = DataSetFactory.create("./data/minist", tfs)
+
+    dataset_factory = DataSetFactory()
+    dataset = dataset_factory.create(dataset_dir="./data/minist", transforms=tfs)
 
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",

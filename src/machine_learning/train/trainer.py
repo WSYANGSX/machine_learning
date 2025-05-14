@@ -3,7 +3,7 @@ import torch
 from typing import Any
 from tqdm import trange
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
@@ -14,7 +14,7 @@ class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
-        datasets: dict[str, DataLoader],
+        datasets: dict[str, Dataset],
         algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
@@ -30,13 +30,30 @@ class Trainer:
 
         # -------------------- 配置数据 --------------------
         self.batch_size = self.cfg.batch_size
-        self._algorithm._initialize_data_loader(
-            train_dataset=datasets["train"], val_dataset=datasets["val"], train_cfg=self.cfg
-        )
+        self._configure_dataloader(train_dataset=datasets["train"], val_dataset=datasets["val"])
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
         self.best_loss = torch.inf
+
+    def _configure_dataloader(self, train_dataset: Dataset, val_dataset: Dataset):
+        train_loader = DataLoader(
+            dataset=train_dataset,
+            batch_size=self.batch_size,
+            shuffle=self.cfg.data_shuffle,
+            num_workers=self.cfg.data_num_workers,
+            collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
+        )
+        val_loader = DataLoader(
+            dataset=val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.cfg.data_num_workers,
+            collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
+        )
+        self._algorithm._initialize_data_loader(
+            train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size
+        )
 
     def _configure_writer(self):
         log_path = self.cfg.log_dir

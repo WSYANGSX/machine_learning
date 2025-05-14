@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import struct
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import Literal, Any, Callable
 
@@ -100,22 +99,22 @@ class DataSetFactory:
     def register_parser(cls, dataset_type: str) -> Callable:
         def wrapper(dataset_parser: DatasetParser) -> None:
             cls._parser_registry[dataset_type] = dataset_parser
-            print(f"DataLoaderFactory has registred dataset_parser {dataset_parser}.")
+            print(f"DataLoaderFactory has registred dataset_parser {dataset_parser.__name__}.")
 
         return wrapper
 
-    def create(self, dataset_dir: str, transforms: Compose = None) -> dict[str, DataLoader]:
+    def create(self, dataset_dir: str, transforms: Compose = None, *args, **kwargs) -> dict[str, DataLoader]:
         dataset_dir = os.path.abspath(dataset_dir)
         metadata = self._load_metadata(dataset_dir)
 
         dataset_type: str = metadata["dataset_type"]
-
+        print(f"[INFO] Dataset type: {dataset_type}")
         # 动态获取解析器
         if dataset_type not in self._parser_registry:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
         parser_cls = self._parser_registry[dataset_type]
-        parser = parser_cls(dataset_dir)
+        parser = parser_cls(dataset_dir, *args, **kwargs)
 
         return parser.create(transforms)
 
@@ -128,15 +127,13 @@ class DataSetFactory:
         return f"DataLoaderFactory(parsers={self.parsers})"
 
 
-@dataclass
-class DatasetParserCfg:
-    pass
-
-
 class DatasetParser(ABC):
     """数据集解析器抽象基类."""
 
-    def __init__(self, dataset_dir: str) -> None:
+    def __init__(
+        self,
+        dataset_dir: str,
+    ) -> None:
         super().__init__()
         self.dataset_dir = dataset_dir
 
@@ -144,10 +141,6 @@ class DatasetParser(ABC):
         self.val_data = None
         self.train_labels = None
         self.val_labels = None
-
-    @abstractmethod
-    def parse_dataset(self):
-        pass
 
     @abstractmethod
     def create(self) -> dict[str, Dataset]:
@@ -162,7 +155,62 @@ class MinistParser(DatasetParser):
     r"""minist手写数字集数据解析器"""
 
     def __init__(self, dataset_dir: str, labels: bool = True):
-        super().__init__(dataset_dir, labels)
+        super().__init__(dataset_dir)
+        self.labels = labels
+
+    @staticmethod
+    def load_idx3_ubyte(dataset_dir: str) -> tuple:
+        with open(dataset_dir, "rb") as f:
+            # 读取前16个字节的文件头信息
+            magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
+            # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
+            images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
+
+            return images, magic, num_images, rows, cols
+
+    @staticmethod
+    def load_idx1_ubyte(dataset_dir: str) -> tuple:
+        with open(dataset_dir, "rb") as f:
+            # 读取前8个字节的文件头信息
+            magic, num_labels = struct.unpack(">II", f.read(8))
+            # 读取标签数据，并重新整形为(num_labels,)的一维数组
+            labels = np.fromfile(f, dtype=np.uint8)
+
+            return labels, magic, num_labels
+
+    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+        dataset_dir = os.path.abspath(self.dataset_dir)
+        train_data_dir = os.path.join(dataset_dir, "train")
+        val_data_dir = os.path.join(dataset_dir, "test")
+        print("[INFO] Train data directory path: ", train_data_dir)
+        print("[INFO] Val data directory path: ", val_data_dir)
+
+        # 加载数据
+        train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
+        val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
+
+        self.train_data = train_data
+        self.val_data = val_data
+
+        if self.labels:
+            train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
+            val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
+
+            self.train_labels = train_labels
+            self.val_labels = val_labels
+
+        self.trian_dataset = FullDataset(self.train_data, self.train_labels, transforms)
+        self.val_dataset = FullDataset(self.val_data, self.val_labels, transforms)
+
+        return {"train": self.trian_dataset, "val": self.val_dataset}
+
+
+@DataSetFactory.register_parser("yolo")
+class YoloParser(DatasetParser):
+    r"""yolo格式数字集解析器"""
+
+    def __init__(self, dataset_dir: str, labels: bool = True):
+        super().__init__(dataset_dir)
         self.labels = labels
 
     @staticmethod

@@ -9,7 +9,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.utils import print_dict, print_segmentation
-from machine_learning.train.trainer_cfg import TrainCfg
 
 
 class AlgorithmBase(ABC):
@@ -114,27 +113,17 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    def _initialize_data_loader(self, train_dataset: Dataset, val_dataset: Dataset, train_cfg: TrainCfg) -> None:
+    def _initialize_data_loader(self, train_loader: DataLoader, val_loader: DataLoader, batch_size: int) -> None:
         """初始化算法训练和验证数据，需要在训练前调用
 
         Args:
             train_loader (_type_): 训练数据集加载器.
             val_loader (_type_): 验证数据集加载器.
         """
-        self.batch_size = train_cfg.batch_size
+        self.train_loader = train_loader
+        self.val_loader = val_loader
 
-        self.train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.batch_size,
-            shuffle=train_cfg.data_shuffle,
-            num_workers=train_cfg.data_num_workers,
-        )
-        self.val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=self.batch_size,
-            shuffle=train_cfg.data_shuffle,
-            num_workers=train_cfg.data_num_workers,
-        )
+        self.batch_size = batch_size
 
     @abstractmethod
     def _configure_optimizers(self):
