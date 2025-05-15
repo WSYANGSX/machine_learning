@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
-from typing import Literal, Any, Callable
+from typing import Literal, Any, Callable, Type
 
 import torch
 import numpy as np
 from torchvision.transforms import Compose
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
@@ -84,8 +84,8 @@ class LazyDataset(Dataset):
         return super().__getitem__(index)
 
 
-class DataSetFactory:
-    r"""工厂类, 用于生成具体的Dataset, 遵循开闭原则, 如果想永久保存注册信息，可以将注册信息写入本地注册文件实现."""
+class ParserFactory:
+    r"""工厂类, 用于生成具体的数据解析器, 遵循开闭原则."""
 
     _parser_registry: dict[str, DatasetParser] = {}
 
@@ -98,14 +98,15 @@ class DataSetFactory:
 
     @classmethod
     def register_parser(cls, dataset_type: str) -> Callable:
-        def wrapper(dataset_parser: DatasetParser) -> None:
-            cls._parser_registry[dataset_type] = dataset_parser
-            print(f"DataLoaderFactory has registred dataset_parser {dataset_parser.__name__}.")
+        def parser_wrapper(parser_cls: DatasetParser) -> None:
+            cls._parser_registry[dataset_type] = parser_cls
+            print(f"DataLoaderFactory has registred dataset_parser {parser_cls.__name__}.")
+            return parser_cls
 
-        return wrapper
+        return parser_wrapper
 
-    def create(self, dataset_dir: str, parser_cfg: ParserCfg, transforms: Compose = None) -> dict[str, DataLoader]:
-        dataset_dir = os.path.abspath(dataset_dir)
+    def parser_create(self, parser_cfg: ParserCfg) -> DatasetParser:
+        dataset_dir = os.path.abspath(parser_cfg.dataset_dir)
         metadata = self._load_metadata(dataset_dir)
 
         dataset_type: str = metadata["dataset_type"]
@@ -113,11 +114,9 @@ class DataSetFactory:
         # 动态获取解析器
         if dataset_type not in self._parser_registry:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
-
         parser_cls = self._parser_registry[dataset_type]
-        parser = parser_cls(dataset_dir, parser_cfg)
 
-        return parser.create(transforms)
+        return parser_cls(parser_cfg)
 
     def _load_metadata(self, dataset_dir: str) -> dict:
         """加载元数据文件"""
@@ -130,16 +129,20 @@ class DataSetFactory:
 
 @dataclass
 class ParserCfg:
-    pass
+    dataset_dir: str = MISSING
+    labels: bool = MISSING
+    data_load_method: Literal["full", "lazy"] = "full"
 
 
 class DatasetParser(ABC):
     """数据集解析器抽象基类."""
 
-    def __init__(self, dataset_dir: str, parser_cfg: ParserCfg) -> None:
+    def __init__(self, parser_cfg: ParserCfg) -> None:
         super().__init__()
-        self.dataset_dir = dataset_dir
-        self.parser_cfg = parser_cfg
+        self.cfg = parser_cfg
+        self.data_load_method = parser_cfg.data_load_method
+        self.labels = parser_cfg.labels
+        self.dataset_dir = parser_cfg.dataset_dir
 
         self.train_data = None
         self.val_data = None
@@ -147,20 +150,19 @@ class DatasetParser(ABC):
         self.val_labels = None
 
     @abstractmethod
-    def create(self) -> dict[str, Dataset]:
+    def parser(self) -> dict[str, Dataset]:
         pass
 
     def __str__(self) -> str:
         pass
 
 
-@DataSetFactory.register_parser("minist")
+@ParserFactory.register_parser("minist")
 class MinistParser(DatasetParser):
-    r"""minist手写数字集数据解析器"""
+    r"""minist手写数字集数据解析器, 由于misit数据集体量小, 只实现了完全解析."""
 
-    def __init__(self, dataset_dir: str, labels: bool = True):
-        super().__init__(dataset_dir)
-        self.labels = labels
+    def __init__(self, parser_cfg: ParserCfg):
+        super().__init__(parser_cfg)
 
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
@@ -182,7 +184,7 @@ class MinistParser(DatasetParser):
 
             return labels, magic, num_labels
 
-    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+    def create(self, dataset_dir: str, transforms: Compose = None) -> dict[str, Dataset]:
         dataset_dir = os.path.abspath(self.dataset_dir)
         train_data_dir = os.path.join(dataset_dir, "train")
         val_data_dir = os.path.join(dataset_dir, "test")
@@ -196,7 +198,7 @@ class MinistParser(DatasetParser):
         self.train_data = train_data
         self.val_data = val_data
 
-        if self.labels:
+        if self.cfg.labels:
             train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
             val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
 
@@ -209,7 +211,7 @@ class MinistParser(DatasetParser):
         return {"train": self.trian_dataset, "val": self.val_dataset}
 
 
-@DataSetFactory.register_parser("yolo")
+@ParserFactory.register_parser("yolo")
 class YoloParser(DatasetParser):
     r"""yolo格式数字集解析器"""
 

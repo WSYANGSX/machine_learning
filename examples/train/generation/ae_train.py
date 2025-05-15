@@ -4,7 +4,7 @@ from torchvision import transforms
 from machine_learning.models import BaseNet
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils import DataSetFactory
+from machine_learning.utils import ParserFactory, ParserCfg, FullDataset
 
 
 class Encoder(BaseNet):
@@ -100,8 +100,11 @@ def main():
         ]
     )
 
-    dataset_factory = DataSetFactory()
-    dataset = dataset_factory.create(dataset_dir="./data/minist", transforms=tfs)
+    dataset_dir = "./data/minist"
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, data_load_method="full")
+    parser = ParserFactory().parser_create(parser_cfg)
+    data = parser.parser()
+    train_dataset = FullDataset()
 
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",
