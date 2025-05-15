@@ -103,8 +103,6 @@ def main():
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, data_load_method="full")
     parser = ParserFactory().parser_create(parser_cfg)
-    data = parser.parser()
-    train_dataset = FullDataset()
 
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",

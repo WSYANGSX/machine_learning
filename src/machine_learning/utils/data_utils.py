@@ -184,7 +184,7 @@ class MinistParser(DatasetParser):
 
             return labels, magic, num_labels
 
-    def create(self, dataset_dir: str, transforms: Compose = None) -> dict[str, Dataset]:
+    def create_dataset(self, dataset_dir: str, transforms: Compose = None) -> dict[str, Dataset]:
         dataset_dir = os.path.abspath(self.dataset_dir)
         train_data_dir = os.path.join(dataset_dir, "train")
         val_data_dir = os.path.join(dataset_dir, "test")
