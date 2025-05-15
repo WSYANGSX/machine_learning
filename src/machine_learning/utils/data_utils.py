@@ -4,7 +4,7 @@ import os
 import struct
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
-from typing import Literal, Any, Callable, Type
+from typing import Literal, Any, Callable
 
 import torch
 import numpy as np
