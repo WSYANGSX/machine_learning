@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import struct
+from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from typing import Literal, Any, Callable
 
@@ -103,7 +104,7 @@ class DataSetFactory:
 
         return wrapper
 
-    def create(self, dataset_dir: str, transforms: Compose = None, *args, **kwargs) -> dict[str, DataLoader]:
+    def create(self, dataset_dir: str, parser_cfg: ParserCfg, transforms: Compose = None) -> dict[str, DataLoader]:
         dataset_dir = os.path.abspath(dataset_dir)
         metadata = self._load_metadata(dataset_dir)
 
@@ -114,7 +115,7 @@ class DataSetFactory:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
         parser_cls = self._parser_registry[dataset_type]
-        parser = parser_cls(dataset_dir, *args, **kwargs)
+        parser = parser_cls(dataset_dir, parser_cfg)
 
         return parser.create(transforms)
 
@@ -127,15 +128,18 @@ class DataSetFactory:
         return f"DataLoaderFactory(parsers={self.parsers})"
 
 
+@dataclass
+class ParserCfg:
+    pass
+
+
 class DatasetParser(ABC):
     """数据集解析器抽象基类."""
 
-    def __init__(
-        self,
-        dataset_dir: str,
-    ) -> None:
+    def __init__(self, dataset_dir: str, parser_cfg: ParserCfg) -> None:
         super().__init__()
         self.dataset_dir = dataset_dir
+        self.parser_cfg = parser_cfg
 
         self.train_data = None
         self.val_data = None
