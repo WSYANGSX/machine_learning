@@ -69,7 +69,7 @@ class LazyDataset(Dataset):
         """LazyLoadDataset初始化.
 
         Args:
-            dataset_type (str): 使用数据集的标注类型，比如"coco","yolo","voc"等.
+            dataset_type (str): 使用数据集的标注类型, 比如"coco", "yolo", "voc"等.
             data_info (dict[str, Any]): 数据集的元信息.
             img_size (416): 图片形状大小.
             multiscale (bool, optional): 启用多尺度训练. Defaults to False.
@@ -100,7 +100,7 @@ class ParserFactory:
     def register_parser(cls, dataset_type: str) -> Callable:
         def parser_wrapper(parser_cls: DatasetParser) -> None:
             cls._parser_registry[dataset_type] = parser_cls
-            print(f"DataLoaderFactory has registred dataset_parser {parser_cls.__name__}.")
+            print(f"DataLoaderFactory has registred dataset_parser '{parser_cls.__name__}'.")
             return parser_cls
 
         return parser_wrapper
@@ -132,6 +132,7 @@ class ParserCfg:
     dataset_dir: str = MISSING
     labels: bool = MISSING
     data_load_method: Literal["full", "lazy"] = "full"
+    transforms: Compose | None = None
 
 
 class DatasetParser(ABC):
@@ -140,21 +141,23 @@ class DatasetParser(ABC):
     def __init__(self, parser_cfg: ParserCfg) -> None:
         super().__init__()
         self.cfg = parser_cfg
-        self.data_load_method = parser_cfg.data_load_method
-        self.labels = parser_cfg.labels
-        self.dataset_dir = parser_cfg.dataset_dir
 
-        self.train_data = None
-        self.val_data = None
-        self.train_labels = None
-        self.val_labels = None
+        self.dataset_dir = parser_cfg.dataset_dir
+        self.labels = parser_cfg.labels
+        self.data_load_method = parser_cfg.data_load_method
+        self.transforms = self.cfg.transforms
 
     @abstractmethod
-    def parser(self) -> dict[str, Dataset]:
+    def create(self) -> dict[str, Dataset]:
+        """根据Parser的配置信息创建数据集.
+
+        Returns:
+            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+        """
         pass
 
     def __str__(self) -> str:
-        pass
+        return f"{self.__name__}(dataset_dir={self.dataset_dir},labels={self.labels},data_load_method={self.data_load_method},transforms={self.transforms})"
 
 
 @ParserFactory.register_parser("minist")
@@ -184,7 +187,12 @@ class MinistParser(DatasetParser):
 
             return labels, magic, num_labels
 
-    def create_dataset(self, dataset_dir: str, transforms: Compose = None) -> dict[str, Dataset]:
+    def create(self) -> dict[str, Dataset]:
+        """根据MinistParser的配置信息创建数据集.
+
+        Returns:
+            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+        """
         dataset_dir = os.path.abspath(self.dataset_dir)
         train_data_dir = os.path.join(dataset_dir, "train")
         val_data_dir = os.path.join(dataset_dir, "test")
@@ -195,51 +203,31 @@ class MinistParser(DatasetParser):
         train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
         val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
 
-        self.train_data = train_data
-        self.val_data = val_data
-
         if self.cfg.labels:
             train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
             val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
+        else:
+            train_labels, val_labels = None, None
 
-            self.train_labels = train_labels
-            self.val_labels = val_labels
+        trian_dataset = FullDataset(train_data, train_labels, self.transforms)
+        val_dataset = FullDataset(val_data, val_labels, self.transforms)
 
-        self.trian_dataset = FullDataset(self.train_data, self.train_labels, transforms)
-        self.val_dataset = FullDataset(self.val_data, self.val_labels, transforms)
-
-        return {"train": self.trian_dataset, "val": self.val_dataset}
+        return {"train": trian_dataset, "val": val_dataset}
 
 
 @ParserFactory.register_parser("yolo")
 class YoloParser(DatasetParser):
     r"""yolo格式数字集解析器"""
 
-    def __init__(self, dataset_dir: str, labels: bool = True):
-        super().__init__(dataset_dir)
-        self.labels = labels
-
-    @staticmethod
-    def load_idx3_ubyte(dataset_dir: str) -> tuple:
-        with open(dataset_dir, "rb") as f:
-            # 读取前16个字节的文件头信息
-            magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
-            # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
-            images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
-
-            return images, magic, num_images, rows, cols
-
-    @staticmethod
-    def load_idx1_ubyte(dataset_dir: str) -> tuple:
-        with open(dataset_dir, "rb") as f:
-            # 读取前8个字节的文件头信息
-            magic, num_labels = struct.unpack(">II", f.read(8))
-            # 读取标签数据，并重新整形为(num_labels,)的一维数组
-            labels = np.fromfile(f, dtype=np.uint8)
-
-            return labels, magic, num_labels
+    def __init__(self, parser_cfg: ParserCfg):
+        super().__init__(parser_cfg)
 
     def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+        """根据YoloParser的配置信息创建数据集.
+
+        Returns:
+            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+        """
         dataset_dir = os.path.abspath(self.dataset_dir)
         train_data_dir = os.path.join(dataset_dir, "train")
         val_data_dir = os.path.join(dataset_dir, "test")
