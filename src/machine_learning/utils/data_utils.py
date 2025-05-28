@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import struct
+from PIL import Image, ImageFile
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
-from typing import Literal, Any, Callable
+from typing import Literal, Callable
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torchvision.transforms import Compose
 from torch.utils.data import Dataset
@@ -21,7 +23,10 @@ class FullDataset(Dataset):
     """
 
     def __init__(
-        self, data: np.ndarray | torch.Tensor, labels: np.ndarray | torch.Tensor = None, tansform: Compose = None
+        self,
+        data: np.ndarray | torch.Tensor,
+        labels: np.ndarray | torch.Tensor = None,
+        tansform: Compose = None,
     ) -> None:
         """完全加载数据集初始化.
 
@@ -60,9 +65,7 @@ class LazyDataset(Dataset):
 
     def __init__(
         self,
-        dataset_type: str,
-        data_info: dict[str, Any],
-        img_size: 416,
+        img_size: int = 416,
         multiscale: bool = False,
         tansform: Compose = None,
     ):
@@ -157,7 +160,7 @@ class DatasetParser(ABC):
         pass
 
     def __str__(self) -> str:
-        return f"{self.__name__}(dataset_dir={self.dataset_dir},labels={self.labels},data_load_method={self.data_load_method},transforms={self.transforms})"
+        return f"{self.__class__.__name__}(dataset_dir={self.dataset_dir},labels={self.labels},data_load_method={self.data_load_method},transforms={self.transforms})"
 
 
 @ParserFactory.register_parser("minist")
@@ -222,98 +225,139 @@ class YoloParser(DatasetParser):
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
+    @staticmethod
+    def parse(dataset_dir) -> tuple:
+        dataset_dir = os.path.abspath(dataset_dir)
+
+        metadata = load_config_from_path(os.path.join(dataset_dir, "metadata.yaml"))
+
+        dataset_name = metadata["dataset_name"]
+        if metadata["dataset_type"] != "yolo":
+            raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
+
+        class_names_file = os.path.join(dataset_dir, metadata["names_file"])
+
+        print_segmentation()
+        print("Information of dataset:")
+        print_dict(metadata)
+        print_segmentation()
+
+        # 读取种类名称
+        classes = list_from_txt(class_names_file)
+
+        train_img_dir = os.path.join(dataset_dir, "images/trian")
+        val_img_dir = os.path.join(dataset_dir, "images/val")
+        train_labels_dir = os.path.join(dataset_dir, "labels/train")
+        val_labels_dir = os.path.join(dataset_dir, "labels/val")
+
+        # 读取训练、验证图像列表
+        train_img_ls = list_from_txt(dataset_dir + "/images_train.txt")
+        val_img_ls = list_from_txt(dataset_dir + "/images_val.txt")
+        train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
+        val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
+
+        # 添加绝对路径
+        train_img_paths = [train_img_dir + img for img in train_img_ls]
+        val_img_paths = [val_img_dir + img for img in val_img_ls]
+        train_labels_paths = [train_labels_dir + label for label in train_labels_ls]
+        val_labels_paths = [val_labels_dir + label for label in val_labels_ls]
+
+        return classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths
+
     def create(self, transforms: Compose = None) -> dict[str, Dataset]:
         """根据YoloParser的配置信息创建数据集.
 
         Returns:
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
         """
-        dataset_dir = os.path.abspath(self.dataset_dir)
-        train_data_dir = os.path.join(dataset_dir, "train")
-        val_data_dir = os.path.join(dataset_dir, "test")
-        print("[INFO] Train data directory path: ", train_data_dir)
-        print("[INFO] Val data directory path: ", val_data_dir)
-
-        # 加载数据
-        train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
-        val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
-
-        self.train_data = train_data
-        self.val_data = val_data
-
-        if self.labels:
-            train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
-            val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
-
-            self.train_labels = train_labels
-            self.val_labels = val_labels
-
-        self.trian_dataset = FullDataset(self.train_data, self.train_labels, transforms)
-        self.val_dataset = FullDataset(self.val_data, self.val_labels, transforms)
-
-        return {"train": self.trian_dataset, "val": self.val_dataset}
+        # 解析
+        classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse(self.dataset_dir)
 
 
-def yolo_parser(dataset_dir: str) -> dict[str, list]:
-    """yolo格式数据集加载函数,返回image和labels列表.
+@ParserFactory.register_parser("coco")
+class CocoParser(DatasetParser):
+    r"""coco格式数字集解析器"""
 
-    Args:
-        file_path (str): yolo类型数据集位置.
+    def __init__(self, parser_cfg: ParserCfg):
+        super().__init__(parser_cfg)
 
-    Returns:
-        dict (str, list | np.ndarray): 返回数据.
+    @staticmethod
+    def parse(dataset_dir) -> tuple:
+        pass
+
+    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+        pass
+
+
+@ParserFactory.register_parser("voc")
+class VocParser(DatasetParser):
+    r"""voc格式数字集解析器"""
+
+    def __init__(self, parser_cfg: ParserCfg):
+        super().__init__(parser_cfg)
+
+    @staticmethod
+    def parse(dataset_dir) -> tuple:
+        pass
+
+    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+        pass
+
+
+"""
+Helper function
+"""
+
+
+def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> tuple:
+    c, h, w = img.shape
+    dim_diff = np.abs(h - w)
+    # 填充数值
+    pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
+    # 填充数 (左， 右， 上， 下， 前， 后)
+    pad = (0, 0, pad1, pad2) if h <= w else (pad1, pad2, 0, 0)
+
+    img = F.pad(img, pad, "constant", value=pad_value)
+
+    return img, pad
+
+
+def rescale_boxes(boxes: torch.Tensor, current_dim: int, original_shape: tuple[int]) -> torch.Tensor:
     """
+    将目标检测模型输出的边界框坐标从调整后的正方形图像尺寸转换回原始图像尺寸
+    """
+    orig_h, orig_w = original_shape
 
-    dataset_dir = os.path.abspath(dataset_dir)
+    # 计算增加的pad
+    pad_x = max(orig_h - orig_w, 0) * (current_dim / max(original_shape))
+    pad_y = max(orig_w - orig_h, 0) * (current_dim / max(original_shape))
 
-    metadata = load_config_from_path(os.path.join(dataset_dir, "metadata.yaml"))
+    # 移除pad后的尺寸
+    unpad_h = current_dim - pad_y
+    unpad_w = current_dim - pad_x
 
-    dataset_name = metadata["dataset_name"]
-    if metadata["dataset_type"] != "yolo":
-        raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
+    # 重新映射边界框
+    boxes[:, 0] = ((boxes[:, 0] - pad_x // 2) / unpad_w) * orig_w
+    boxes[:, 1] = ((boxes[:, 1] - pad_y // 2) / unpad_h) * orig_h
+    boxes[:, 2] = ((boxes[:, 2] - pad_x // 2) / unpad_w) * orig_w
+    boxes[:, 3] = ((boxes[:, 3] - pad_y // 2) / unpad_h) * orig_h
 
-    class_names_file = os.path.join(dataset_dir, metadata["names_file"])
-
-    print_segmentation()
-    print("Information of dataset:")
-    print_dict(metadata)
-    print_segmentation()
-
-    # 读取种类名称
-    class_names = list_from_txt(class_names_file)
-
-    train_img_dir = os.path.join(dataset_dir, "images/trian")
-    val_img_dir = os.path.join(dataset_dir, "images/val")
-    train_labels_dir = os.path.join(dataset_dir, "labels/train")
-    val_labels_dir = os.path.join(dataset_dir, "labels/val")
-
-    # 读取训练、验证图像列表
-    train_img_ls = list_from_txt(dataset_dir + "/images_train.txt")
-    val_img_ls = list_from_txt(dataset_dir + "/images_val.txt")
-    train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
-    val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
-
-    # 添加绝对路径
-    train_img_path_ls = [train_img_dir + img for img in train_img_ls]
-    val_img_path_ls = [val_img_dir + img for img in val_img_ls]
-    train_labels_path_ls = [train_labels_dir + label for label in train_labels_ls]
-    val_labels_path_ls = [val_labels_dir + label for label in val_labels_ls]
-
-    return {
-        "metadata": metadata,
-        "class_names": class_names,
-        "train_images_path_list": train_img_path_ls,
-        "val_images_path_list": val_img_path_ls,
-        "train_labels_path_list": train_labels_path_ls,
-        "val_labels_path_list": val_labels_path_ls,
-    }
+    return boxes
 
 
-def coco_parser(file_path: str, purpose: Literal["captions", "instances", "keypoints"]) -> dict[str, np.ndarray]:
-    pass
+def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
+    y = x.new(x.shape)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2
+    y[..., 1] = x[..., 1] - x[..., 3] / 2
+    y[..., 2] = x[..., 0] + x[..., 2] / 2
+    y[..., 3] = x[..., 1] + x[..., 3] / 2
+    return y
 
 
-def voc_parser(
-    file_path: str, purpose: Literal["detections", "segmentation_classes", "segmentation_objects"]
-) -> dict[str, np.ndarray]:
-    pass
+def xywh2xyxy_np(x: np.ndarray) -> np.ndarray:
+    y = np.zeros_like(x)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2
+    y[..., 1] = x[..., 1] - x[..., 3] / 2
+    y[..., 2] = x[..., 0] + x[..., 2] / 2
+    y[..., 3] = x[..., 1] + x[..., 3] / 2
+    return y

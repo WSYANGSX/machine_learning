@@ -4,7 +4,7 @@ from typing import Literal, Mapping, Any
 from abc import ABC, abstractmethod
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet

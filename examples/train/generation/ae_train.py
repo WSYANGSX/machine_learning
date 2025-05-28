@@ -103,6 +103,7 @@ def main():
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, data_load_method="full", transforms=tfs)
     parser = ParserFactory().parser_create(parser_cfg)
+    print(parser)
     dataset = parser.create()
 
     trainer_cfg = TrainCfg(
@@ -112,9 +113,9 @@ def main():
 
     trainer = Trainer(trainer_cfg, dataset, auto_encoder)
 
-    trainer.train()
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
-    trainer.eval()
+    # trainer.train()
+    # # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+    # trainer.eval()
 
 
 if __name__ == "__main__":
