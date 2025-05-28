@@ -4,7 +4,7 @@ from torchvision import transforms
 from machine_learning.models import BaseNet
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils import ParserFactory, ParserCfg, FullDataset
+from machine_learning.utils import ParserFactory, ParserCfg
 
 
 class Encoder(BaseNet):
@@ -113,9 +113,9 @@ def main():
 
     trainer = Trainer(trainer_cfg, dataset, auto_encoder)
 
-    # trainer.train()
-    # # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
-    # trainer.eval()
+    trainer.train()
+    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+    trainer.eval()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import struct
 from PIL import Image, ImageFile
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
-from typing import Literal, Callable
+from typing import Literal, Callable, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -33,7 +33,7 @@ class FullDataset(Dataset):
         Args:
             data (np.ndarray | torch.Tensor): 数据
             labels (np.ndarray | torch.Tensor, optional): 标签. Defaults to None.
-            tansform (Compose, optional): 数据转换器. Defaults to None.
+            tansforms (Compose, optional): 数据转换器. Defaults to None.
         """
         super().__init__()
 
@@ -65,26 +65,70 @@ class LazyDataset(Dataset):
 
     def __init__(
         self,
+        img_paths: Sequence[str],
+        label_paths: Sequence[int],
         img_size: int = 416,
         multiscale: bool = False,
-        tansform: Compose = None,
+        transform: Compose = None,
     ):
         """LazyLoadDataset初始化.
 
         Args:
-            dataset_type (str): 使用数据集的标注类型, 比如"coco", "yolo", "voc"等.
-            data_info (dict[str, Any]): 数据集的元信息.
+            img_paths (Sequence[str]): 图片地址列表.
+            label_paths: (Sequence[int]): 标签地址列表.
             img_size (416): 图片形状大小.
             multiscale (bool, optional): 启用多尺度训练. Defaults to False.
-            tansform (Compose, optional): 数据转换器. Defaults to None.
+            transform (Compose, optional): 数据转换器. Defaults to None.
         """
         super().__init__()
 
+        self.img_paths = img_paths
+        self.label_paths = label_paths
+        self.img_size = img_size
+        self.multiscale = multiscale
+        self.transform = transform
+
     def __len__(self):
-        pass
+        return len(self.img_paths)
 
     def __getitem__(self, index):
-        return super().__getitem__(index)
+        # ---------
+        #  Image
+        # ---------
+        try:
+            img_path = self.img_paths[index % len(self.img_paths)].rstrip()
+            img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
+
+        except Exception:
+            print(f"Could not read image '{img_path}'.")
+            return
+
+        # ---------
+        #  Label
+        # ---------
+        try:
+            label_path = self.label_paths[index % len(self.img_paths)].rstrip()
+
+            # Ignore warning if file is empty
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                boxes = np.loadtxt(label_path).reshape(-1, 5)
+
+        except Exception:
+            print(f"Could not read label '{label_path}'.")
+            return
+
+        # -----------
+        #  Transform
+        # -----------
+        if self.transform:
+            try:
+                img, bb_targets = self.transform((img, boxes))
+            except Exception:
+                print("Could not apply transform.")
+                return
+
+        return img_path, img, bb_targets
 
 
 class ParserFactory:
@@ -322,13 +366,19 @@ def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> tuple:
     return img, pad
 
 
+def resize(image: torch.Tensor, size) -> torch.Tensor:
+    image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
+    return image
+
+
 def rescale_boxes(boxes: torch.Tensor, current_dim: int, original_shape: tuple[int]) -> torch.Tensor:
     """
-    将目标检测模型输出的边界框坐标从调整后的正方形图像尺寸转换回原始图像尺寸
+    将目标检测模型输出的边界框坐标从调整后的正方形图像尺寸转换回原始图像尺寸,
+    [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
     orig_h, orig_w = original_shape
 
-    # 计算增加的pad
+    # 计算增加的pad, 应对pad后放缩的情况
     pad_x = max(orig_h - orig_w, 0) * (current_dim / max(original_shape))
     pad_y = max(orig_w - orig_h, 0) * (current_dim / max(original_shape))
 
@@ -351,13 +401,19 @@ def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
     y[..., 1] = x[..., 1] - x[..., 3] / 2
     y[..., 2] = x[..., 0] + x[..., 2] / 2
     y[..., 3] = x[..., 1] + x[..., 3] / 2
+
     return y
 
 
-def xywh2xyxy_np(x: np.ndarray) -> np.ndarray:
-    y = np.zeros_like(x)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2
-    y[..., 1] = x[..., 1] - x[..., 3] / 2
-    y[..., 2] = x[..., 0] + x[..., 2] / 2
-    y[..., 3] = x[..., 1] + x[..., 3] / 2
+def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
+    y = x.new(x.shape)
+    y[..., 0] = (x[..., 0] + x[..., 2]) / 2
+    y[..., 1] = (x[..., 1] + x[..., 3]) / 2
+    y[..., 2] = x[..., 2] - x[..., 0]
+    y[..., 3] = x[..., 3] - x[..., 1]
+
     return y
+
+
+if __name__=="__main__":
+    YoloParser.parse()
