@@ -405,6 +405,15 @@ def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
     return y
 
 
+def xywh2xyxy_np(x):
+    y = np.zeros_like(x)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2
+    y[..., 1] = x[..., 1] - x[..., 3] / 2
+    y[..., 2] = x[..., 0] + x[..., 2] / 2
+    y[..., 3] = x[..., 1] + x[..., 3] / 2
+    return y
+
+
 def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
     y = x.new(x.shape)
     y[..., 0] = (x[..., 0] + x[..., 2]) / 2
@@ -413,7 +422,3 @@ def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
     y[..., 3] = x[..., 3] - x[..., 1]
 
     return y
-
-
-if __name__=="__main__":
-    YoloParser.parse()

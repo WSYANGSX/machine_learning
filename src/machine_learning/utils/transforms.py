@@ -1,104 +1,110 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-
-import imgaug.augmenters as iaa
-from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
-
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from .data_utils import xywh2xyxy_np
 import torchvision.transforms as transforms
 
 
 class ImgAug(object):
-    def __init__(self, augmentations=[]):
-        self.augmentations = augmentations
+    def __init__(self, augmentations=None):
+        # Albumentations 使用 Compose 替代 iaa.Sequential
+        self.augmentations = augmentations if augmentations else A.Compose([])
 
     def __call__(self, data):
-        # Unpack data
         img, boxes = data
-
-        # Convert xywh to xyxy
         boxes = np.array(boxes)
+
+        # Convert xywh to xyxy (Albumentations 需要 Pascal VOC 格式 [x_min, y_min, x_max, y_max])
         boxes[:, 1:] = xywh2xyxy_np(boxes[:, 1:])
 
-        # Convert bounding boxes to imgaug
-        bounding_boxes = BoundingBoxesOnImage([BoundingBox(*box[1:], label=box[0]) for box in boxes], shape=img.shape)
+        # Albumentations 的 bboxes 格式: [[x1, y1, x2, y2, label], ...]
+        albumentations_boxes = [np.concatenate([box[1:], [box[0]]]) for box in boxes]
 
-        # Apply augmentations
-        img, bounding_boxes = self.augmentations(image=img, bounding_boxes=bounding_boxes)
+        # 应用增强 (Albumentations 需要明确指定 bbox_params)
+        augmented = self.augmentations(
+            image=img,
+            bboxes=albumentations_boxes,
+        )
 
-        # Clip out of image boxes
-        bounding_boxes = bounding_boxes.clip_out_of_image()
+        img = augmented["image"]
+        augmented_boxes = augmented["bboxes"]
 
-        # Convert bounding boxes back to numpy
-        boxes = np.zeros((len(bounding_boxes), 5))
-        for box_idx, box in enumerate(bounding_boxes):
-            # Extract coordinates for unpadded + unscaled image
-            x1 = box.x1
-            y1 = box.y1
-            x2 = box.x2
-            y2 = box.y2
+        # 转换回 [label, x_center, y_center, w, h] 格式
+        new_boxes = np.zeros((len(augmented_boxes), 5))
+        for i, box in enumerate(augmented_boxes):
+            x1, y1, x2, y2, label = box
+            new_boxes[i, 0] = label
+            new_boxes[i, 1] = (x1 + x2) / 2  # x_center
+            new_boxes[i, 2] = (y1 + y2) / 2  # y_center
+            new_boxes[i, 3] = x2 - x1  # width
+            new_boxes[i, 4] = y2 - y1  # height
 
-            # Returns (x, y, w, h)
-            boxes[box_idx, 0] = box.label
-            boxes[box_idx, 1] = (x1 + x2) / 2
-            boxes[box_idx, 2] = (y1 + y2) / 2
-            boxes[box_idx, 3] = x2 - x1
-            boxes[box_idx, 4] = y2 - y1
-
-        return img, boxes
+        return img, new_boxes
 
 
 class RelativeLabels(object):
-    def __init__(
-        self,
-    ):
-        pass
-
     def __call__(self, data):
         img, boxes = data
-        h, w, _ = img.shape
-        boxes[:, [1, 3]] /= w
-        boxes[:, [2, 4]] /= h
+        h, w = img.shape[:2]
+        boxes[:, [1, 3]] /= w  # x_center and width
+        boxes[:, [2, 4]] /= h  # y_center and height
         return img, boxes
 
 
 class AbsoluteLabels(object):
-    def __init__(
-        self,
-    ):
-        pass
-
     def __call__(self, data):
         img, boxes = data
-        h, w, _ = img.shape
-        boxes[:, [1, 3]] *= w
-        boxes[:, [2, 4]] *= h
+        h, w = img.shape[:2]
+        boxes[:, [1, 3]] *= w  # x_center and width
+        boxes[:, [2, 4]] *= h  # y_center and height
         return img, boxes
 
 
-class PadSquare(ImgAug):
-    def __init__(
-        self,
-    ):
-        self.augmentations = iaa.Sequential([iaa.PadToAspectRatio(1.0, position="center-center").to_deterministic()])
+class PadSquare(object):
+    def __call__(self, data):
+        img, boxes = data
+        h, w = img.shape[:2]
+
+        # 计算需要的 padding
+        if h > w:
+            pad_left = (h - w) // 2
+            pad_right = h - w - pad_left
+            padding = ((0, 0), (pad_left, pad_right), (0, 0))
+        else:
+            pad_top = (w - h) // 2
+            pad_bottom = w - h - pad_top
+            padding = ((pad_top, pad_bottom), (0, 0), (0, 0))
+
+        # 应用 padding
+        padded_img = np.pad(img, padding, mode="constant", constant_values=127.5)
+
+        # 调整 boxes 坐标
+        if h > w:
+            boxes[:, 1] = (boxes[:, 1] * w + pad_left) / h
+            boxes[:, 3] = boxes[:, 3] * w / h
+        else:
+            boxes[:, 2] = (boxes[:, 2] * h + pad_top) / w
+            boxes[:, 4] = boxes[:, 4] * h / w
+
+        return padded_img, boxes
 
 
 class ToTensor(object):
-    def __init__(
-        self,
-    ):
-        pass
-
     def __call__(self, data):
         img, boxes = data
-        # Extract image as PyTorch tensor
-        img = transforms.ToTensor()(img)
+        # 使用 Albumentations 的 ToTensorV2 (会自动归一化到 [0,1] 并转换 C,H,W)
+        transform = A.Compose([ToTensorV2()], bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"]))
 
-        bb_targets = torch.zeros((len(boxes), 6))
-        bb_targets[:, 1:] = transforms.ToTensor()(boxes)
+        # 需要将 boxes 转换为 Albumentations 的 yolo 格式 [x_center, y_center, w, h]
+        transformed = transform(image=img, bboxes=boxes[:, 1:5], class_labels=boxes[:, 0])
 
-        return img, bb_targets
+        img_tensor = transformed["image"]
+        boxes_tensor = torch.zeros((len(boxes), 6))
+        boxes_tensor[:, 1:] = torch.tensor(np.column_stack([transformed["class_labels"], transformed["bboxes"]]))
+
+        return img_tensor, boxes_tensor
 
 
 class Resize(object):
@@ -111,6 +117,7 @@ class Resize(object):
         return img, boxes
 
 
+# 默认转换 (使用 Albumentations 风格)
 DEFAULT_TRANSFORMS = transforms.Compose(
     [
         AbsoluteLabels(),
