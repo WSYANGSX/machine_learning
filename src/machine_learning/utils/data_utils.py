@@ -314,7 +314,7 @@ class YoloParser(DatasetParser):
         Returns:
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
         """
-        # 解析
+        # 解析类别和路径信息
         classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse(self.dataset_dir)
 
 
