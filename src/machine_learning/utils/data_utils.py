@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import struct
 import warnings
-from PIL import Image, ImageFile
+from PIL import Image
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
 from typing import Literal, Callable, Sequence, Any
@@ -89,10 +89,10 @@ class LazyDataset(Dataset):
         self.multiscale = multiscale
         self.transform = transform
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.img_paths)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> tuple:
         #  Image
         try:
             img_path = self.img_paths[index % len(self.img_paths)]
@@ -104,13 +104,12 @@ class LazyDataset(Dataset):
 
         #  Label
         try:
-            # 有些image没有对应的label
             label_path = self.label_paths[index % len(self.img_paths)]
 
             # Ignore warning if file is empty
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                boxes = np.loadtxt(label_path).reshape(-1, 5)
+                bbs = np.loadtxt(label_path).reshape(-1, 5)
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
@@ -119,12 +118,12 @@ class LazyDataset(Dataset):
         #  Transform
         if self.transform:
             try:
-                img, bb_targets = self.transform((img, boxes))
+                img, bbs = self.transform((img, bbs))
             except Exception:
                 print("Could not apply transform.")
                 return
 
-        return img_path, img, bb_targets
+        return img, bbs
 
 
 class ParserFactory:
@@ -304,18 +303,16 @@ class YoloParser(DatasetParser):
         # 读取种类名称
         classes = list_from_txt(class_names_file)
 
-        train_img_dir = os.path.join(self.dataset_dir, "images/trian")
-        val_img_dir = os.path.join(self.dataset_dir, "images/val")
-        train_labels_dir = os.path.join(self.dataset_dir, "labels/train")
-        val_labels_dir = os.path.join(self.dataset_dir, "labels/val")
+        train_img_dir = os.path.join(self.dataset_dir, "images/train/")
+        val_img_dir = os.path.join(self.dataset_dir, "images/val/")
+        train_labels_dir = os.path.join(self.dataset_dir, "labels/train/")
+        val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
         # 读取训练、验证图像列表
         train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
-        print(len(train_img_ls), len(train_labels_ls))
-        print(len(val_img_ls), len(val_labels_ls))
 
         # 添加绝对路径
         train_img_paths = [train_img_dir + img for img in train_img_ls]

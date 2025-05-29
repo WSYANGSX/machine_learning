@@ -1,13 +1,16 @@
+import numpy as np
+
 import torch
 import torch.nn.functional as F
-import numpy as np
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-from .data_utils import xywh2xyxy_np
 import torchvision.transforms as transforms
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
-class ImgAug(object):
+from .data_utils import xywh2xyxy_np
+
+
+class ImgAug:
     def __init__(self, augmentations=None):
         # Albumentations 使用 Compose 替代 iaa.Sequential
         self.augmentations = augmentations if augmentations else A.Compose([])
@@ -44,7 +47,7 @@ class ImgAug(object):
         return img, new_boxes
 
 
-class RelativeLabels(object):
+class RelativeLabels:
     def __call__(self, data):
         img, boxes = data
         h, w = img.shape[:2]
@@ -53,7 +56,7 @@ class RelativeLabels(object):
         return img, boxes
 
 
-class AbsoluteLabels(object):
+class AbsoluteLabels:
     def __call__(self, data):
         img, boxes = data
         h, w = img.shape[:2]
@@ -62,7 +65,7 @@ class AbsoluteLabels(object):
         return img, boxes
 
 
-class PadSquare(object):
+class PadSquare:
     def __call__(self, data):
         img, boxes = data
         h, w = img.shape[:2]
@@ -91,7 +94,7 @@ class PadSquare(object):
         return padded_img, boxes
 
 
-class ToTensor(object):
+class ToTensor:
     def __call__(self, data):
         img, boxes = data
         # 使用 Albumentations 的 ToTensorV2 (会自动归一化到 [0,1] 并转换 C,H,W)
@@ -107,7 +110,7 @@ class ToTensor(object):
         return img_tensor, boxes_tensor
 
 
-class Resize(object):
+class Resize:
     def __init__(self, size):
         self.size = size
 
