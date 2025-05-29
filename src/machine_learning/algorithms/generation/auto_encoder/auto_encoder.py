@@ -120,7 +120,7 @@ class AutoEncoder(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"ae": avg_loss, "save_metric": avg_loss}  # 统一接口
+        return {"ae": avg_loss, "save_loss": avg_loss}  # 统一接口
 
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""

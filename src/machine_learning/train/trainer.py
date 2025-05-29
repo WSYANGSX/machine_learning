@@ -92,12 +92,12 @@ class Trainer:
                 self.writer.add_scalar(f"{key} loss/val", val, epoch)
 
             # 保存最佳模型
-            if "save_metric" in val_loss:
-                if val_loss["save_metric"] < self.best_loss:
-                    self.best_loss = val_loss["save_metric"]
+            if self.cfg.save_best and "save_loss" in val_loss:
+                if val_loss["save_loss"] < self.best_loss:
+                    self.best_loss = val_loss["save_loss"]
                     self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
             else:
-                print("Val loss has no save metric, saving of the best loss model skipped.")
+                print("Saving of the best loss model skipped.")
 
             # 定期保存
             if (epoch + 1) % self.cfg.save_interval == 0:

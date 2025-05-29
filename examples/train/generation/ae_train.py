@@ -103,7 +103,6 @@ def main():
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, data_load_method="full", transforms=tfs)
     parser = ParserFactory().parser_create(parser_cfg)
-    print(parser)
     dataset = parser.create()
 
     trainer_cfg = TrainCfg(

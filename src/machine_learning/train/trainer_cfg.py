@@ -11,3 +11,4 @@ class TrainCfg:
     epochs: int = field(default=100)
     log_interval: int = field(default=10)
     save_interval: int = field(default=10)
+    save_best: bool = field(default=True)

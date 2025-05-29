@@ -5,7 +5,7 @@ import struct
 from PIL import Image, ImageFile
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
-from typing import Literal, Callable, Sequence
+from typing import Literal, Callable, Sequence, Any
 
 import torch
 import torch.nn.functional as F
@@ -96,7 +96,7 @@ class LazyDataset(Dataset):
         #  Image
         # ---------
         try:
-            img_path = self.img_paths[index % len(self.img_paths)].rstrip()
+            img_path = self.img_paths[index % len(self.img_paths)]
             img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
         except Exception:
@@ -107,7 +107,8 @@ class LazyDataset(Dataset):
         #  Label
         # ---------
         try:
-            label_path = self.label_paths[index % len(self.img_paths)].rstrip()
+            # 有些image没有对应的label
+            label_path = self.label_paths[index % len(self.img_paths)]
 
             # Ignore warning if file is empty
             with warnings.catch_warnings():
@@ -157,7 +158,6 @@ class ParserFactory:
         metadata = self._load_metadata(dataset_dir)
 
         dataset_type: str = metadata["dataset_type"]
-        print(f"[INFO] Dataset type: {dataset_type}")
         # 动态获取解析器
         if dataset_type not in self._parser_registry:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
@@ -195,8 +195,12 @@ class DatasetParser(ABC):
         self.transforms = self.cfg.transforms
 
     @abstractmethod
+    def parse(self) -> Any:
+        pass
+
+    @abstractmethod
     def create(self) -> dict[str, Dataset]:
-        """根据Parser的配置信息创建数据集.
+        """根据数据集的解析数据信息创建数据集.
 
         Returns:
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
@@ -204,7 +208,13 @@ class DatasetParser(ABC):
         pass
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}(dataset_dir={self.dataset_dir},labels={self.labels},data_load_method={self.data_load_method},transforms={self.transforms})"
+        return (
+            f"{self.__class__.__name__}("
+            f"dataset_dir={self.dataset_dir}, "
+            f"labels={self.labels}, "
+            f"data_load_method={self.data_load_method}, "
+            f"transforms={self.transforms})"
+        )
 
 
 @ParserFactory.register_parser("minist")
@@ -213,6 +223,18 @@ class MinistParser(DatasetParser):
 
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
+
+    def parse(self) -> None:
+        metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
+
+        dataset_name = metadata["dataset_name"]
+        if metadata["dataset_type"] != "minist":
+            raise TypeError(f"Dataset {dataset_name} is not the type of minist.")
+
+        print_segmentation()
+        print("Information of dataset:")
+        print_dict(metadata)
+        print_segmentation()
 
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
@@ -240,9 +262,10 @@ class MinistParser(DatasetParser):
         Returns:
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
         """
-        dataset_dir = os.path.abspath(self.dataset_dir)
-        train_data_dir = os.path.join(dataset_dir, "train")
-        val_data_dir = os.path.join(dataset_dir, "test")
+        self.parse()
+
+        train_data_dir = os.path.join(self.dataset_dir, "train")
+        val_data_dir = os.path.join(self.dataset_dir, "test")
         print("[INFO] Train data directory path: ", train_data_dir)
         print("[INFO] Val data directory path: ", val_data_dir)
 
@@ -269,17 +292,14 @@ class YoloParser(DatasetParser):
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
-    @staticmethod
-    def parse(dataset_dir) -> tuple:
-        dataset_dir = os.path.abspath(dataset_dir)
-
-        metadata = load_config_from_path(os.path.join(dataset_dir, "metadata.yaml"))
+    def parse(self) -> tuple:
+        metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         dataset_name = metadata["dataset_name"]
         if metadata["dataset_type"] != "yolo":
             raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
 
-        class_names_file = os.path.join(dataset_dir, metadata["names_file"])
+        class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])
 
         print_segmentation()
         print("Information of dataset:")
@@ -289,17 +309,19 @@ class YoloParser(DatasetParser):
         # 读取种类名称
         classes = list_from_txt(class_names_file)
 
-        train_img_dir = os.path.join(dataset_dir, "images/trian")
-        val_img_dir = os.path.join(dataset_dir, "images/val")
-        train_labels_dir = os.path.join(dataset_dir, "labels/train")
-        val_labels_dir = os.path.join(dataset_dir, "labels/val")
+        train_img_dir = os.path.join(self.dataset_dir, "images/trian")
+        val_img_dir = os.path.join(self.dataset_dir, "images/val")
+        train_labels_dir = os.path.join(self.dataset_dir, "labels/train")
+        val_labels_dir = os.path.join(self.dataset_dir, "labels/val")
 
         # 读取训练、验证图像列表
-        train_img_ls = list_from_txt(dataset_dir + "/images_train.txt")
-        val_img_ls = list_from_txt(dataset_dir + "/images_val.txt")
+        train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
+        val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
-
+        print(len(train_img_ls), len(train_labels_ls))
+        print(len(val_img_ls), len(val_labels_ls))
+        
         # 添加绝对路径
         train_img_paths = [train_img_dir + img for img in train_img_ls]
         val_img_paths = [val_img_dir + img for img in val_img_ls]
@@ -315,7 +337,7 @@ class YoloParser(DatasetParser):
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
         """
         # 解析类别和路径信息
-        classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse(self.dataset_dir)
+        classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse()
 
 
 @ParserFactory.register_parser("coco")
