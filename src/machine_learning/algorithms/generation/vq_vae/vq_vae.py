@@ -156,7 +156,7 @@ class VQ_VAE(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"vq_vae": avg_loss, "save_metric": avg_loss}
+        return {"vq_vae": avg_loss, "save": avg_loss}
 
     @torch.no_grad()
     def eval(self, num_samples: int = 5) -> None:

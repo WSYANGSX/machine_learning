@@ -92,9 +92,11 @@ class Trainer:
                 self.writer.add_scalar(f"{key} loss/val", val, epoch)
 
             # 保存最佳模型
-            if self.cfg.save_best and "save_loss" in val_loss:
-                if val_loss["save_loss"] < self.best_loss:
-                    self.best_loss = val_loss["save_loss"]
+            if (
+                self.cfg.save_best and "save" in val_loss
+            ):  # 必须在train_cfg中配置保存best_model选项，同时在val_loss中返回“save_loss”
+                if val_loss["save"] < self.best_loss:
+                    self.best_loss = val_loss["save"]
                     self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
             else:
                 print("Saving of the best loss model skipped.")
@@ -108,7 +110,10 @@ class Trainer:
             for key, val in train_loss.items():
                 print(f"{key} train loss {val:.4f} | ", end="")
             for key, val in val_loss.items():
-                print(f"{key} val loss {val:.4f} | ", end="")
+                if key != "save":
+                    print(f"{key} val loss {val:.4f} | ", end="")
+                else:
+                    print(f"{key} loss {val:.4f} | ", end="")
             for key, opt in self._algorithm._optimizers.items():
                 print(f"{key} lr: {opt.param_groups[0]['lr']:.2e} | ")
 

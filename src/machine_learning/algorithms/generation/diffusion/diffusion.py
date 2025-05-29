@@ -158,7 +158,7 @@ class Diffusion(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"noise_predictor": avg_loss, "save_metric": avg_loss}
+        return {"noise_predictor": avg_loss, "save": avg_loss}
 
     @torch.no_grad()
     def sample(self, data: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

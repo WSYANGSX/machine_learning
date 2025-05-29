@@ -92,9 +92,7 @@ class LazyDataset(Dataset):
         return len(self.img_paths)
 
     def __getitem__(self, index):
-        # ---------
         #  Image
-        # ---------
         try:
             img_path = self.img_paths[index % len(self.img_paths)]
             img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
@@ -103,9 +101,7 @@ class LazyDataset(Dataset):
             print(f"Could not read image '{img_path}'.")
             return
 
-        # ---------
         #  Label
-        # ---------
         try:
             # 有些image没有对应的label
             label_path = self.label_paths[index % len(self.img_paths)]
@@ -119,9 +115,7 @@ class LazyDataset(Dataset):
             print(f"Could not read label '{label_path}'.")
             return
 
-        # -----------
         #  Transform
-        # -----------
         if self.transform:
             try:
                 img, bb_targets = self.transform((img, boxes))
@@ -321,7 +315,7 @@ class YoloParser(DatasetParser):
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
         print(len(train_img_ls), len(train_labels_ls))
         print(len(val_img_ls), len(val_labels_ls))
-        
+
         # 添加绝对路径
         train_img_paths = [train_img_dir + img for img in train_img_ls]
         val_img_paths = [val_img_dir + img for img in val_img_ls]
