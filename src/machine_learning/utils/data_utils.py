@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import struct
+import random
 import warnings
 from PIL import Image
-from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, MISSING
 from typing import Literal, Callable, Sequence, Any
 
 import torch
@@ -57,6 +58,9 @@ class FullDataset(Dataset):
 
         return data_sample, labels_sample
 
+    def collate_fn(self) -> Any:
+        pass
+
 
 class LazyDataset(Dataset):
     r"""延迟加载数据集.
@@ -66,36 +70,71 @@ class LazyDataset(Dataset):
 
     def __init__(
         self,
-        img_paths: Sequence[str],
+        data_paths: Sequence[str],
         label_paths: Sequence[int],
-        img_size: int = 416,
-        multiscale: bool = False,
         transform: Compose = None,
     ):
         """LazyLoadDataset初始化.
 
         Args:
-            img_paths (Sequence[str]): 图片地址列表.
+            data_paths (Sequence[str]): 数据地址列表.
             label_paths: (Sequence[int]): 标签地址列表.
-            img_size (416): 图片形状大小.
-            multiscale (bool, optional): 启用多尺度训练. Defaults to False.
             transform (Compose, optional): 数据转换器. Defaults to None.
         """
         super().__init__()
 
-        self.img_paths = img_paths
+        self.data_paths = data_paths
         self.label_paths = label_paths
-        self.img_size = img_size
-        self.multiscale = multiscale
         self.transform = transform
 
     def __len__(self) -> int:
-        return len(self.img_paths)
+        return len(self.data_paths)
+
+    def __getitem__(self, index) -> Any:
+        pass
+
+    def collate_fn(self) -> Any:
+        pass
+
+
+class DetectionDataset(LazyDataset):
+    r"""延迟加载数据集.
+
+    使用于大型数据集，减小内存空间占用，数据读取速度较慢.
+    """
+
+    def __init__(
+        self,
+        img_paths: Sequence[str],
+        label_paths: Sequence[int],
+        transform: Compose = None,
+        img_size: int = 416,
+        multiscale: bool = False,
+    ):
+        """LazyLoadDataset初始化.
+
+        Args:
+            data_paths (Sequence[str]): 数据地址列表.
+            label_paths: (Sequence[int]): 标签地址列表.
+            transform (Compose, optional): 数据转换器. Defaults to None.
+        """
+        super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
+
+        self.img_size = img_size
+        self.multiscale = multiscale
+
+        self.max_objects = 100
+        self.min_size = self.img_size - 3 * 32
+        self.max_size = self.img_size + 3 * 32
+        self.batch_count = 0
+
+    def __len__(self) -> int:
+        return len(self.data_paths)
 
     def __getitem__(self, index) -> tuple:
         #  Image
         try:
-            img_path = self.img_paths[index % len(self.img_paths)]
+            img_path = self.data_paths[index % len(self.data_paths)]
             img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
         except Exception:
@@ -104,12 +143,12 @@ class LazyDataset(Dataset):
 
         #  Label
         try:
-            label_path = self.label_paths[index % len(self.img_paths)]
+            label_path = self.label_paths[index % len(self.data_paths)]
 
             # Ignore warning if file is empty
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                bbs = np.loadtxt(label_path).reshape(-1, 5)
+                bboxes = np.loadtxt(label_path).reshape(-1, 5)
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
@@ -118,12 +157,34 @@ class LazyDataset(Dataset):
         #  Transform
         if self.transform:
             try:
-                img, bbs = self.transform((img, bbs))
+                img, bboxes = self.transform((img, bboxes))
             except Exception:
                 print("Could not apply transform.")
                 return
 
-        return img, bbs
+        return img, bboxes
+
+    def collate_fn(self, batch) -> tuple:
+        self.batch_count += 1
+
+        # Drop invalid images
+        batch = [data for data in batch if data is not None]
+
+        imgs, bboxes = list(zip(*batch))
+
+        # Selects new image size every tenth batch
+        if self.multiscale and self.batch_count % 10 == 0:
+            self.img_size = random.choice(range(self.min_size, self.max_size + 1, 32))
+
+        # Resize images to input shape
+        imgs = torch.stack([resize(img, self.img_size) for img in imgs])
+
+        # Add sample index to targets
+        for i, boxes in enumerate(bboxes):
+            boxes[:, 0] = i
+        bboxes = torch.cat(bboxes, 0)
+
+        return imgs, bboxes
 
 
 class ParserFactory:

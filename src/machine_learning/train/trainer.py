@@ -1,20 +1,21 @@
 import os
 import torch
-from typing import Any
+from typing import Any, Union
 from tqdm import trange
 
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
+from machine_learning.utils.data_utils import FullDataset, LazyDataset
 
 
 class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
-        datasets: dict[str, Dataset],
+        datasets: dict[str, Union[FullDataset, LazyDataset]],
         algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
@@ -36,7 +37,9 @@ class Trainer:
         self._configure_writer()
         self.best_loss = torch.inf
 
-    def _configure_dataloader(self, train_dataset: Dataset, val_dataset: Dataset):
+    def _configure_dataloader(
+        self, train_dataset: Union[FullDataset, LazyDataset], val_dataset: Union[FullDataset, LazyDataset]
+    ):
         train_loader = DataLoader(
             dataset=train_dataset,
             batch_size=self.batch_size,
