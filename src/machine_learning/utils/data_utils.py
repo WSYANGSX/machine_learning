@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import struct
+import warnings
 from PIL import Image, ImageFile
 from dataclasses import dataclass, MISSING
 from abc import ABC, abstractmethod
