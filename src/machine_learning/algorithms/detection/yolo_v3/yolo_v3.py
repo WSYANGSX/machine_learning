@@ -22,7 +22,7 @@ class YoloV3(AlgorithmBase):
 
         parameters:
         - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): Yolov3算法所需模型, {"darknet":model1, "fpn":model2}.
+        - models (Mapping[str, BaseNet]): yolov3算法所需模型, {"darknet":model1, "fpn":model2}.
         - name (str): 算法名称. Default to "yolo_v3".
         - device (str): 运行设备(auto自动选择).
         """
@@ -122,7 +122,7 @@ class YoloV3(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"yolo": avg_loss, "save_metric": avg_loss}
+        return {"yolo": avg_loss, "save": avg_loss}
 
     def eval(self, num_samples: int = 5) -> None:
         pass

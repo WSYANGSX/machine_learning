@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils.data_utils import FullDataset, LazyDataset
+from machine_learning.utils.others import set_seed
 
 
 class Trainer:
@@ -28,6 +29,10 @@ class Trainer:
         """
         self.cfg = cfg
         self._algorithm = algo
+
+        # ------------------ 配置随机种子 --------------------
+        set_seed(self.cfg.seed)
+        print(f"[INFO] Current seed: {self.cfg.seed}")
 
         # -------------------- 配置数据 --------------------
         self.batch_size = self.cfg.batch_size

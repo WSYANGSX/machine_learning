@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 class TrainCfg:
     log_dir: str
     model_dir: str
+    seed: int = field(default=23)
     batch_size: int = field(default=256)
     data_num_workers: int = field(default=4)
     data_shuffle: bool = field(default=True)

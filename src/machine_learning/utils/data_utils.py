@@ -4,7 +4,7 @@ import os
 import struct
 import random
 import warnings
-from PIL import Image
+from PIL import Image, ImageFile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, MISSING
 from typing import Literal, Callable, Sequence, Any
@@ -16,6 +16,9 @@ from torchvision.transforms import Compose
 from torch.utils.data import Dataset
 
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
+
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class FullDataset(Dataset):
@@ -58,9 +61,6 @@ class FullDataset(Dataset):
 
         return data_sample, labels_sample
 
-    def collate_fn(self) -> Any:
-        pass
-
 
 class LazyDataset(Dataset):
     r"""延迟加载数据集.
@@ -93,9 +93,6 @@ class LazyDataset(Dataset):
     def __getitem__(self, index) -> Any:
         pass
 
-    def collate_fn(self) -> Any:
-        pass
-
 
 class ODDataset(LazyDataset):
     r"""目标检测数据集.
@@ -123,7 +120,6 @@ class ODDataset(LazyDataset):
         self.img_size = img_size
         self.multiscale = multiscale
 
-        self.max_objects = 100
         self.min_size = self.img_size - 3 * 32
         self.max_size = self.img_size + 3 * 32
         self.batch_count = 0

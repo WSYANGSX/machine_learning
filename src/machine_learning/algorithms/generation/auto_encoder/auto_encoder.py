@@ -79,7 +79,7 @@ class AutoEncoder(AlgorithmBase):
         criterion = nn.MSELoss()
 
         for batch_idx, (data, _) in enumerate(self.train_loader):
-            data = data.to(self._device, non_blocking=True)
+            data = data.to(self.device, non_blocking=True)
 
             self._optimizers["ae"].zero_grad()
 
@@ -113,7 +113,7 @@ class AutoEncoder(AlgorithmBase):
 
         with torch.no_grad():
             for data, _ in self.val_loader:
-                data = data.to(self._device, non_blocking=True)
+                data = data.to(self.device, non_blocking=True)
                 z = self._models["encoder"](data)
                 recon = self._models["decoder"](z)
                 total_loss += criterion(recon, data).item()
