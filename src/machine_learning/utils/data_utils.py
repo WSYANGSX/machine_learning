@@ -97,10 +97,10 @@ class LazyDataset(Dataset):
         pass
 
 
-class DetectionDataset(LazyDataset):
-    r"""延迟加载数据集.
+class ODDataset(LazyDataset):
+    r"""目标检测数据集.
 
-    使用于大型数据集，减小内存空间占用，数据读取速度较慢.
+    目标检测数据集一般较大，继承延迟加载数据集，减小内存空间占用，数据读取速度较慢.
     """
 
     def __init__(
