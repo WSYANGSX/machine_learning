@@ -1,31 +1,59 @@
 import numpy as np
+from typing import Sequence
 
 import albumentations as A
 from albumentations import DualTransform
 
 
 class PadShortEdge(DualTransform):
-    def __init__(self, p=0.5):
+    def __init__(self, pad_values: int | Sequence[tuple[int]], p: float = 0.5):
         super().__init__(p)
+        self.pad_values = pad_values
 
     def get_params_dependent_on_data(self, params, data):
-        height, width = data["image"].shape[:2]
-        return {"height": height, "width": width}
+        img_shape = data["image"].shape
+
+        if len(img_shape) == 2:
+            height, width = data["image"].shape[:2]
+            return {"height": height, "width": width}
+        elif len(img_shape) == 3:
+            height, width, channels = data["image"].shape[:3]
+            return {"height": height, "width": width, "channels": channels}
+        else:
+            raise ValueError("Image shape is not right.")
 
     def apply(self, img, *args, **params):
-        h, w = params["channels"], params["height"], params["width"]
+        h, w, c = params["height"], params["width"], params.get("channels", None)
         dim_diff = np.abs(h - w)
+
         # 填充数值
         pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
-        # 填充数 (左， 右， 上， 下， 前， 后)
-        pad = (0, 0, pad1, pad2) if h <= w else (pad1, pad2, 0, 0)
 
-        img = np.pad(img, pad, "constant", value=pad_value)
+        # 灰度图
+        if not c:
+            pad = ((pad1, pad2), (0, 0)) if h <= w else ((0, 0), (pad1, pad2))
+        # RGB图
+        else:
+            pad = ((pad1, pad2), (0, 0), (0, 0)) if h <= w else ((0, 0), (pad1, pad2), (0, 0))
+
+        img = np.pad(img, pad, "constant", constant_values=self.pad_values)
 
         return img
 
     def apply_to_bboxes(self, bboxes, *args, **params):
-        pass
+        # compse会先将不同bboxes数据类型转换为albumentations，经过个transforms后再转换回去
+        h, w = params["height"], params["width"]
+        dim_diff = np.abs(h - w)
+
+        # 填充数值
+        pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
+
+        if h <= w:
+            bboxes[:, [2, 4]] = (bboxes[:, [2, 4]] * h + pad1) / (h + pad1 + pad2)
+        else:
+            bboxes[:, [1, 3]] = (bboxes[:, [1, 3]] * w + pad1) / (w + pad1 + pad2)
+
+        return bboxes
 
 
 # 基础增强

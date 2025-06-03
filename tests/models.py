@@ -1,4 +1,6 @@
-import random
+import numpy as np
 
-random.seed(23)
-print(random.seed())
+a = np.arange(95, 99).reshape(2, 2, 1)
+print(a)
+b = np.pad(a, ((1, 2), (2, 3), (2, 3)), "constant", constant_values=0)
+print(b)
