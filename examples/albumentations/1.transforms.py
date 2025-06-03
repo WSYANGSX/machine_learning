@@ -47,7 +47,17 @@ Image.fromarray(img).show()
 # transformed_img = coarse_dropout(image=img)
 # Image.fromarray(transformed_img["image"]).show()
 
-# 旋转和放缩
-affine = A.Affine(rotate=(-50, 50), scale=0.5, p=1)
+# # 旋转和放缩
+# affine = A.Affine(rotate=(-50, 50), scale=0.5, p=1)
+# transformed_img = affine(image=img)
+# Image.fromarray(transformed_img["image"]).show()
+
+# # 图像锐化
+# sharpening = A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1), p=1)
+# sharpened_img = sharpening(image=img)
+# Image.fromarray(sharpened_img["image"]).show()
+
+# 移动和放缩
+affine = A.Affine(rotate=0, translate_percent=(-0.1, 0.1), scale=(0.8, 1.5), p=1)
 transformed_img = affine(image=img)
 Image.fromarray(transformed_img["image"]).show()

@@ -379,7 +379,7 @@ class YoloParser(DatasetParser):
 
         return classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths
 
-    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
+    def create(self) -> dict[str, Dataset]:
         """根据YoloParser的配置信息创建数据集.
 
         Returns:
