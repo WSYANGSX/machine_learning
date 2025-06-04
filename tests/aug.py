@@ -1,21 +1,27 @@
+import cv2
 from machine_learning.utils.augmentation import DEFAULT_AUG
+from machine_learning.utils.draw_utils import visualize_bboxes
+from machine_learning.utils.detection import yolo2voc
 
 if __name__ == "__main__":
-    from PIL import Image
     import numpy as np
 
     img_path = "/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/train/000000000009.jpg"
-    img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-    print(img.shape)
+    image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
 
-    class_bboxes = np.loadtxt(
-        "/home/yangxf/WorkSpace/machine_learning/data/coco-2017/labels/train/000000000009.txt"
-    ).reshape(-1, 5)
-    class_labels = class_bboxes[:, 1]
-    bboxes = class_bboxes[:, 1:5]
-    print(bboxes)
+    bboxes = np.loadtxt("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/labels/train/000000000009.txt").reshape(
+        -1, 5
+    )[:, 1:5]
+    bboxes_voc = yolo2voc(image, bboxes)
+    category_ids = [17, 18, 17, 17, 17, 18, 18, 17]
+    # We will use the mapping from category_id to the class name
+    # to visualize the class label for the bounding box on the image
+    category_id_to_name = {17: "cat", 18: "dog"}
+    visualize_bboxes(image, bboxes_voc, category_ids, category_id_to_name)
 
     aug = DEFAULT_AUG
-    transformed_img = aug(image=img, bboxes=bboxes, class_labels=class_labels)
-    Image.fromarray(transformed_img["image"]).show()
-    print(transformed_img["bboxes"])
+    transformed = aug(image=image, bboxes=bboxes, category_ids=category_ids)
+    transformed_img = transformed["image"]
+    transformed_bboxes = transformed["bboxes"]
+    transformed_bboxes_voc = yolo2voc(transformed_img, transformed_bboxes)
+    visualize_bboxes(transformed_img, transformed_bboxes_voc, transformed["category_ids"], category_id_to_name)
