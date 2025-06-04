@@ -7,6 +7,12 @@ from albumentations import DualTransform
 
 class PadShortEdge(DualTransform):
     def __init__(self, pad_values: int | Sequence[tuple[int]], p: float = 0.5):
+        """Pad the image to square along short side.
+
+        Args:
+            pad_values (int | Sequence[tuple[int]]): sequence or scalar. The values to set the padded values for each axis. ((before_1, after_1), ... (before_N, after_N)) unique pad constants for each axis. (before, after) or ((before, after),) yields same before and after constants for each axis. (constant,) or constant is a shortcut for before = after = constant for all axes. Default is 0.
+            p (float, optional): probability to use this transform. Defaults to 0.5.
+        """
         super().__init__(p)
         self.pad_values = pad_values
 
@@ -36,9 +42,7 @@ class PadShortEdge(DualTransform):
         else:
             pad = ((pad1, pad2), (0, 0), (0, 0)) if h <= w else ((0, 0), (pad1, pad2), (0, 0))
 
-        img = np.pad(img, pad, "constant", constant_values=self.pad_values)
-
-        return img
+        return np.pad(img, pad, "constant", constant_values=self.pad_values)
 
     def apply_to_bboxes(self, bboxes, *args, **params):
         # compse会先将不同bboxes数据类型转换为albumentations，经过个transforms后再转换回去
@@ -49,9 +53,9 @@ class PadShortEdge(DualTransform):
         pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
 
         if h <= w:
-            bboxes[:, [2, 4]] = (bboxes[:, [2, 4]] * h + pad1) / (h + pad1 + pad2)
+            bboxes[:, [1, 3]] = (bboxes[:, [1, 3]] * h + pad1) / (h + pad1 + pad2)
         else:
-            bboxes[:, [1, 3]] = (bboxes[:, [1, 3]] * w + pad1) / (w + pad1 + pad2)
+            bboxes[:, [0, 2]] = (bboxes[:, [0, 2]] * w + pad1) / (w + pad1 + pad2)
 
         return bboxes
 
@@ -69,6 +73,7 @@ DEFAULT_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-20, 20), sat_shift_limit=(-20, 20), val_shift_limit=(-20, 20), p=0.5),
         # 水平翻转
         A.HorizontalFlip(p=0.5),
+        PadShortEdge(pad_values=0, p=1),
     ],
     bbox_params=A.BboxParams(format="yolo", min_visibility=0.4),
 )
@@ -89,6 +94,7 @@ ENHANCED_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-30, 30), sat_shift_limit=(-30, 30), val_shift_limit=(-30, 30), p=0.8),
         # 强制水平翻转（100%概率）
         A.HorizontalFlip(p=1.0),
+        PadShortEdge(pad_values=0, p=1),
     ],
     bbox_params=A.BboxParams(format="yolo", min_visibility=0.3),  # 允许更小的bbox可见比例
 )
