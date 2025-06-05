@@ -10,11 +10,11 @@ from dataclasses import dataclass, MISSING
 from typing import Literal, Callable, Sequence, Any
 
 import torch
-import torch.nn.functional as F
 import numpy as np
-from torchvision.transforms import Compose
+from torchvision import transforms
 from torch.utils.data import Dataset
 
+from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
 
@@ -31,7 +31,7 @@ class FullDataset(Dataset):
         self,
         data: np.ndarray | torch.Tensor,
         labels: np.ndarray | torch.Tensor = None,
-        tansform: Compose = None,
+        tansform: transforms.Compose = None,
     ) -> None:
         """完全加载数据集初始化.
 
@@ -72,14 +72,14 @@ class LazyDataset(Dataset):
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: Compose = None,
+        transform: transforms.Compose = None,
     ):
         """LazyLoadDataset初始化.
 
         Args:
             data_paths (Sequence[str]): 数据地址列表.
             label_paths: (Sequence[int]): 标签地址列表.
-            transform (Compose, optional): 数据转换器. Defaults to None.
+            transform (Compose, optional): 数据增强转换器. Defaults to None.
         """
         super().__init__()
 
@@ -94,8 +94,8 @@ class LazyDataset(Dataset):
         pass
 
 
-class ODDataset(LazyDataset):
-    r"""目标检测数据集.
+class YoloDataset(LazyDataset):
+    r"""yolo目标检测类数据集.
 
     目标检测数据集一般较大，继承延迟加载数据集，减小内存空间占用，数据读取速度较慢.
     """
@@ -104,7 +104,7 @@ class ODDataset(LazyDataset):
         self,
         img_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: Compose = None,
+        transform: transforms.Compose = None,
         img_size: int = 416,
         multiscale: bool = False,
     ):
@@ -113,7 +113,7 @@ class ODDataset(LazyDataset):
         Args:
             data_paths (Sequence[str]): 数据地址列表.
             label_paths: (Sequence[int]): 标签地址列表.
-            transform (Compose, optional): 数据转换器. Defaults to None.
+            transform (Compose, optional): 数据增强转换器. Defaults to None.
         """
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
@@ -144,7 +144,9 @@ class ODDataset(LazyDataset):
             # Ignore warning if file is empty
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                bboxes = np.loadtxt(label_path).reshape(-1, 5)
+                labels = np.loadtxt(label_path).reshape(-1, 5)
+                bboxes = labels[:, 1:5]
+                category_ids = np.array(labels[:, 1], dtype=np.uint8)
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
@@ -153,12 +155,12 @@ class ODDataset(LazyDataset):
         #  Transform
         if self.transform:
             try:
-                img, bboxes = self.transform((img, bboxes))
+                img, bboxes, category_ids = self.transform((img, bboxes, category_ids))
             except Exception:
                 print("Could not apply transform.")
                 return
 
-        return img, bboxes
+        return img, bboxes, category_ids
 
     def collate_fn(self, batch) -> tuple:
         self.batch_count += 1
@@ -166,7 +168,7 @@ class ODDataset(LazyDataset):
         # Drop invalid images
         batch = [data for data in batch if data is not None]
 
-        imgs, bboxes = list(zip(*batch))
+        imgs, bboxes, category_ids = list(zip(*batch))
 
         # Selects new image size every tenth batch
         if self.multiscale and self.batch_count % 10 == 0:
@@ -230,7 +232,7 @@ class ParserCfg:
     dataset_dir: str = MISSING
     labels: bool = MISSING
     data_load_method: Literal["full", "lazy"] = "full"
-    transforms: Compose | None = None
+    transforms: transforms.Compose | None = None
 
 
 class DatasetParser(ABC):
@@ -387,56 +389,3 @@ class YoloParser(DatasetParser):
         """
         # 解析类别和路径信息
         classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse()
-
-
-@ParserFactory.register_parser("coco")
-class CocoParser(DatasetParser):
-    r"""coco格式数字集解析器"""
-
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
-
-    @staticmethod
-    def parse(dataset_dir) -> tuple:
-        pass
-
-    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
-        pass
-
-
-@ParserFactory.register_parser("voc")
-class VocParser(DatasetParser):
-    r"""voc格式数字集解析器"""
-
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
-
-    @staticmethod
-    def parse(dataset_dir) -> tuple:
-        pass
-
-    def create(self, transforms: Compose = None) -> dict[str, Dataset]:
-        pass
-
-
-"""
-Helper function
-"""
-
-
-def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> tuple:
-    c, h, w = img.shape
-    dim_diff = np.abs(h - w)
-    # 填充数值
-    pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
-    # 填充数 (左， 右， 上， 下， 前， 后)
-    pad = (0, 0, pad1, pad2) if h <= w else (pad1, pad2, 0, 0)
-
-    img = F.pad(img, pad, "constant", value=pad_value)
-
-    return img, pad
-
-
-def resize(image: torch.Tensor, size) -> torch.Tensor:
-    image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
-    return image

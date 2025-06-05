@@ -3,7 +3,6 @@ from typing import Sequence
 
 import albumentations as A
 from albumentations import DualTransform
-from albumentations.pytorch import ToTensorV2
 
 
 class PadShortEdge(DualTransform):
@@ -11,7 +10,10 @@ class PadShortEdge(DualTransform):
         """Pad the image to square along short side.
 
         Args:
-            pad_values (int | Sequence[tuple[int]]): sequence or scalar. The values to set the padded values for each axis. ((before_1, after_1), ... (before_N, after_N)) unique pad constants for each axis. (before, after) or ((before, after),) yields same before and after constants for each axis. (constant,) or constant is a shortcut for before = after = constant for all axes. Default is 0.
+            pad_values (int | Sequence[tuple[int]]): sequence or scalar. The values to set the padded values for each
+            axis. ((before_1, after_1), ... (before_N, after_N)) unique pad constants for each axis. (before, after) or
+            ((before, after),) yields same before and after constants for each axis. (constant,) or constant is a
+            shortcut for before = after = constant for all axes. Default is 0.
             p (float, optional): probability to use this transform. Defaults to 0.5.
         """
         super().__init__(p)
