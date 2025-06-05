@@ -6,17 +6,16 @@ from machine_learning.utils.detection import yolo2voc
 if __name__ == "__main__":
     import numpy as np
 
-    img_path = "/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/train/000000000009.jpg"
+    img_path = "./data/coco-2017/images/train/000000581683.jpg"
     image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
 
-    bboxes = np.loadtxt("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/labels/train/000000000009.txt").reshape(
-        -1, 5
-    )[:, 1:5]
+    labels = np.loadtxt("./data/coco-2017/labels/train/000000581683.txt").reshape(-1, 5)
+    bboxes = labels[:, 1:5]
     bboxes_voc = yolo2voc(image, bboxes)
-    category_ids = [17, 18, 17, 17, 17, 18, 18, 17]
+    category_ids = np.array(labels[:, 1], dtype=np.uint8)
     # We will use the mapping from category_id to the class name
     # to visualize the class label for the bounding box on the image
-    category_id_to_name = {17: "cat", 18: "dog"}
+    category_id_to_name = ["cat", "dog"]
     visualize_bboxes(image, bboxes_voc, category_ids, category_id_to_name)
 
     aug = DEFAULT_AUG
