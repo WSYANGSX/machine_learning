@@ -14,6 +14,7 @@ import numpy as np
 from torchvision import transforms
 from torch.utils.data import Dataset
 
+from machine_learning.utils.augmentation import CustomTransform
 from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
@@ -31,7 +32,7 @@ class FullDataset(Dataset):
         self,
         data: np.ndarray | torch.Tensor,
         labels: np.ndarray | torch.Tensor = None,
-        tansform: transforms.Compose = None,
+        tansform: transforms.Compose | CustomTransform = None,
     ) -> None:
         """完全加载数据集初始化.
 
@@ -72,7 +73,7 @@ class LazyDataset(Dataset):
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: transforms.Compose = None,
+        transform: transforms.Compose | CustomTransform = None,
     ):
         """LazyLoadDataset初始化.
 
@@ -104,7 +105,7 @@ class YoloDataset(LazyDataset):
         self,
         img_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: transforms.Compose = None,
+        transform: CustomTransform = None,
         img_size: int = 416,
         multiscale: bool = False,
     ):
