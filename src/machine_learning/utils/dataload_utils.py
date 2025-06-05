@@ -148,7 +148,7 @@ class YoloDataset(LazyDataset):
                 warnings.simplefilter("ignore")
                 labels = np.loadtxt(label_path).reshape(-1, 5)
                 bboxes = labels[:, 1:5]
-                category_ids = np.array(labels[:, 1], dtype=np.uint8)
+                category_ids = np.array(labels[:, 0], dtype=np.uint8)
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
@@ -237,7 +237,6 @@ class ParserFactory:
 class ParserCfg:
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    data_load_method: Literal["full", "lazy"] = "full"
     transforms: transforms.Compose | None = None
 
 
@@ -254,7 +253,12 @@ class DatasetParser(ABC):
         self.transforms = self.cfg.transforms
 
     @abstractmethod
-    def parse(self) -> Any:
+    def parse(self) -> dict[str, Any]:
+        """解析数据集元信息
+
+        Returns:
+            dict[str, Any]: 元信息返回值.
+        """
         pass
 
     @abstractmethod
@@ -283,7 +287,8 @@ class MinistParser(DatasetParser):
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
-    def parse(self) -> None:
+    def parse(self) -> dict[str, Any]:
+        """ """
         metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         dataset_name = metadata["dataset_name"]
@@ -294,6 +299,8 @@ class MinistParser(DatasetParser):
         print("Information of dataset:")
         print_dict(metadata)
         print_segmentation()
+
+        return metadata
 
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
@@ -351,7 +358,7 @@ class YoloParser(DatasetParser):
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
-    def parse(self) -> tuple:
+    def parse(self) -> dict[str, Any]:
         metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         dataset_name = metadata["dataset_name"]
@@ -385,7 +392,13 @@ class YoloParser(DatasetParser):
         train_labels_paths = [train_labels_dir + label for label in train_labels_ls]
         val_labels_paths = [val_labels_dir + label for label in val_labels_ls]
 
-        return classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths
+        return {
+            "class_names": classes,
+            "train_img_paths": train_img_paths,
+            "val_img_paths": val_img_paths,
+            "train_labels_paths": train_labels_paths,
+            "val_labels_paths": val_labels_paths,
+        }
 
     def create(self) -> dict[str, Dataset]:
         """根据YoloParser的配置信息创建数据集.
@@ -394,4 +407,9 @@ class YoloParser(DatasetParser):
             dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
         """
         # 解析类别和路径信息
-        classes, train_img_paths, val_img_paths, train_labels_paths, val_labels_paths = self.parse()
+        metadata = self.parse()
+
+        trian_dataset = YoloDataset(metadata["train_img_paths"], metadata["train_labels_paths"], self.transforms)
+        val_dataset = YoloDataset(metadata["val_img_paths"], metadata["val_labels_paths"], self.transforms)
+
+        return {"train": trian_dataset, "val": val_dataset}

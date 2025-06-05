@@ -94,7 +94,7 @@ def main():
 
     # 步骤4：解析数据
     dataset_dir = "./data/minist"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, data_load_method="full", transforms=tfs)
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
     parser = ParserFactory().parser_create(parser_cfg)
     dataset = parser.create()
 
