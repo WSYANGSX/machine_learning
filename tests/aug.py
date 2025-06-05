@@ -11,9 +11,7 @@ if __name__ == "__main__":
 
     labels = np.loadtxt("./data/coco-2017/labels/train/000000001997.txt").reshape(-1, 5)
     bboxes = labels[:, 1:5]
-    print(bboxes)
     bboxes_voc = yolo2voc(image, bboxes)
-    print(bboxes_voc)
     category_ids = np.array(labels[:, 0], dtype=np.uint8)
     # We will use the mapping from category_id to the class name
     # to visualize the class label for the bounding box on the image

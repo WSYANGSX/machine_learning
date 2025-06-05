@@ -4,6 +4,7 @@ import os
 import struct
 import random
 import warnings
+from copy import deepcopy
 from PIL import Image, ImageFile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, MISSING
@@ -170,6 +171,7 @@ class YoloDataset(LazyDataset):
         batch = [data for data in batch if data is not None]
 
         imgs, bboxes, category_ids = list(zip(*batch))
+        indices = deepcopy(category_ids)
 
         # Selects new image size every tenth batch
         if self.multiscale and self.batch_count % 10 == 0:
@@ -178,12 +180,15 @@ class YoloDataset(LazyDataset):
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs])
 
-        # Add sample index to targets
-        for i, boxes in enumerate(bboxes):
-            boxes[:, 0] = i
+        # Bboxes and category_ids may exist empty tensors.
         bboxes = torch.cat(bboxes, 0)
+        category_ids = torch.cat(category_ids, 0)
 
-        return imgs, bboxes
+        for i, index in enumerate(indices):
+            index[:] = i
+        indices = torch.cat(indices, 0)
+
+        return imgs, bboxes, category_ids, indices
 
 
 class ParserFactory:
