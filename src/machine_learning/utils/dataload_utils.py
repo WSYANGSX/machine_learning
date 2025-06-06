@@ -8,14 +8,14 @@ from copy import deepcopy
 from PIL import Image, ImageFile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, MISSING
-from typing import Literal, Callable, Sequence, Any
+from typing import Callable, Sequence, Any
 
 import torch
 import numpy as np
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-from machine_learning.utils.augmentation import CustomTransform
+from machine_learning.utils.transform import CustomTransform, YoloTransform
 from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
@@ -106,7 +106,7 @@ class YoloDataset(LazyDataset):
         self,
         img_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: CustomTransform = None,
+        transform: YoloTransform = None,
         img_size: int = 416,
         multiscale: bool = False,
     ):
@@ -237,7 +237,7 @@ class ParserFactory:
 class ParserCfg:
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    transforms: transforms.Compose | None = None
+    transforms: transforms.Compose | CustomTransform | None = None
 
 
 class DatasetParser(ABC):
@@ -249,7 +249,6 @@ class DatasetParser(ABC):
 
         self.dataset_dir = parser_cfg.dataset_dir
         self.labels = parser_cfg.labels
-        self.data_load_method = parser_cfg.data_load_method
         self.transforms = self.cfg.transforms
 
     @abstractmethod
@@ -275,7 +274,6 @@ class DatasetParser(ABC):
             f"{self.__class__.__name__}("
             f"dataset_dir={self.dataset_dir}, "
             f"labels={self.labels}, "
-            f"data_load_method={self.data_load_method}, "
             f"transforms={self.transforms})"
         )
 

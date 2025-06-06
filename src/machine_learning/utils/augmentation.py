@@ -1,10 +1,8 @@
-import torch
 import numpy as np
-from typing import Sequence, Literal
+from typing import Sequence
 
 import albumentations as A
 from albumentations import DualTransform
-from torchvision import transforms
 
 
 class PadShortEdge(DualTransform):
@@ -103,46 +101,3 @@ ENHANCED_AUG = A.Compose(
     ],
     bbox_params=A.BboxParams(format="yolo", min_visibility=0.3, label_fields=["category_ids"]),
 )
-
-
-class CustomTransform:
-    r"""自定义 transform, 实现 albumentations.Compose 到 transforms.Compose 接口的转换."""
-
-    def __init__(
-        self,
-        augmentation: Literal["default", "enhanced"] | A.Compose,
-        mean: Sequence[float],
-        std: Sequence[float],
-    ):
-        if isinstance(augmentation, str):
-            self.augmentation = DEFAULT_AUG if augmentation == "default" else ENHANCED_AUG
-        else:
-            self.augmentation = augmentation
-
-        self.to_tensor = transforms.ToTensor()
-        self.normalize = transforms.Normalize(mean=mean, std=std)
-
-    def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
-        """应用数据增强
-
-        Args:
-            data: 包含 (image, bboxes, category_ids) 的元组
-
-        Returns:
-            转换成 Tensor 后的 (image_tensor, bboxes_tensor, category_ids)
-        """
-        img, bboxes, category_ids = data
-        aug_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
-
-        img = aug_data["image"]
-        bboxes = aug_data["bboxes"]
-        category_ids = aug_data["category_ids"]
-
-        # 转化为Tensor
-        img = self.to_tensor(img)
-        bboxes = self.to_tensor(bboxes)
-
-        # 归一化
-        img = self.normalize(img)
-
-        return img, bboxes, category_ids

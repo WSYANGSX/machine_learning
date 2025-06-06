@@ -23,5 +23,6 @@ if __name__ == "__main__":
     transformed_img = transformed["image"]
     transformed_bboxes = transformed["bboxes"]
     transformed_category_ids = transformed["category_ids"]
+    print(transformed_category_ids)
     transformed_bboxes_voc = yolo2voc(transformed_img, transformed_bboxes)
     visualize_bboxes(transformed_img, transformed_bboxes_voc, transformed["category_ids"], category_id_to_name)

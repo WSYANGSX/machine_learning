@@ -80,15 +80,18 @@ class YoloV3(AlgorithmBase):
 
         total_loss = 0.0
 
-        for batch_idx, (data, labels) in enumerate(self.train_loader):
-            data = data.to(self._device, non_blocking=True)
+        for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
+            img = img.to(self.device, non_blocking=True)
+            bboxes = bboxes.to(self.device)
+            category_ids = category_ids.to(self.device)  # 每个bboxes的分类编号
+            indices = indices.to(self.device)  # 每个bboxes位于图片的标号
 
             self._optimizers["yolo"].zero_grad()
 
-            skips = self.models["darknet"](data)
+            skips = self.models["darknet"](img)
             fimg1, fimg2, fimg3 = self.models["fpn"](skips)
 
-            loss = self.criterion(fimg1, fimg2, fimg3, labels)
+            loss = self.criterion(fimg1, fimg2, fimg3, bboxes, category_ids, indices)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -111,14 +114,18 @@ class YoloV3(AlgorithmBase):
         self.models["fpn"].eval()
 
         total_loss = 0.0
-        criterion = nn.MSELoss()
 
         with torch.no_grad():
-            for data, _ in self.val_loader:
-                data = data.to(self._device, non_blocking=True)
-                skips = self.models["darknet"](data)
-                det1, det2, det3 = self.models["fpn"](skips)
-                total_loss += criterion(det1, det2, det3, data).item()
+            for img, bboxes, category_ids, indices in self.train_loader:
+                img = img.to(self.device, non_blocking=True)
+                bboxes = bboxes.to(self.device)
+                category_ids = category_ids.to(self.device)  # 每个bboxes的分类编号
+                indices = indices.to(self.device)  # 每个bboxes位于图片的标号
+
+                skips = self.models["darknet"](img)
+                fimg1, fimg2, fimg3 = self.models["fpn"](skips)
+
+                total_loss += self.criterion(fimg1, fimg2, fimg3, bboxes, category_ids, indices).item()
 
         avg_loss = total_loss / len(self.val_loader)
 
@@ -133,13 +140,17 @@ class YoloV3(AlgorithmBase):
         feature_image1: torch.Tensor,
         feature_image2: torch.Tensor,
         feature_image3: torch.Tensor,
-        labels: torch.Tensor,
+        bboxes: torch.Tensor,
+        category_ids: torch.Tensor,
+        indices: torch.Tensor,
     ) -> torch.Tensor:
         prediction1 = self.feature_decode(feature_image1)
         prediction2 = self.feature_decode(feature_image2)
         prediction3 = self.feature_decode(feature_image3)
 
-        return prediction1, prediction2, prediction3
+        loss = 
+        
+        return loss
 
     # 特征图解码
     def feature_decode(self, feature_image: torch.Tensor) -> torch.Tensor:
@@ -180,52 +191,6 @@ class YoloV3(AlgorithmBase):
         return prediction
 
 
-"""
-Helper function
-"""
 
 
-def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-9):
-    # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
-    box2 = box2.T
 
-    # Get the coordinates of bounding boxes
-    if x1y1x2y2:  # x1, y1, x2, y2 = box1
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1[0], box1[1], box1[2], box1[3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2[0], box2[1], box2[2], box2[3]
-    else:  # transform from xywh to xyxy
-        b1_x1, b1_x2 = box1[0] - box1[2] / 2, box1[0] + box1[2] / 2
-        b1_y1, b1_y2 = box1[1] - box1[3] / 2, box1[1] + box1[3] / 2
-        b2_x1, b2_x2 = box2[0] - box2[2] / 2, box2[0] + box2[2] / 2
-        b2_y1, b2_y2 = box2[1] - box2[3] / 2, box2[1] + box2[3] / 2
-
-    # Intersection area
-    inter = (torch.min(b1_x2, b2_x2) - torch.max(b1_x1, b2_x1)).clamp(0) * (
-        torch.min(b1_y2, b2_y2) - torch.max(b1_y1, b2_y1)
-    ).clamp(0)
-
-    # Union Area
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
-    union = w1 * h1 + w2 * h2 - inter + eps
-
-    iou = inter / union
-    if GIoU or DIoU or CIoU:
-        # convex (smallest enclosing box) width
-        cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)
-        ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)
-        if CIoU or DIoU:
-            c2 = cw**2 + ch**2 + eps
-            rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2 + (b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2) / 4
-            if DIoU:
-                return iou - rho2 / c2  # DIoU
-            elif CIoU:
-                v = (4 / torch.pi**2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
-                with torch.no_grad():
-                    alpha = v / ((1 + eps) - iou + v)
-                return iou - (rho2 / c2 + v * alpha)
-        else:
-            c_area = cw * ch + eps
-            return iou - (c_area - union) / c_area
-    else:
-        return iou
