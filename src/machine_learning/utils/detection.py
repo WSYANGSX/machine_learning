@@ -1,10 +1,12 @@
+from typing import Literal
+
 import torch
 import numpy as np
 
 
-def rescale_boxes(boxes: torch.Tensor, current_dim: int, original_shape: tuple[int]) -> torch.Tensor:
+def rescale_padded_boxes(boxes: torch.Tensor, current_dim: int, original_shape: tuple[int]) -> torch.Tensor:
     """
-    将目标检测模型输出的边界框坐标从调整后的正方形图像尺寸转换回原始图像尺寸,
+    将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
     [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
     orig_h, orig_w = original_shape
@@ -86,45 +88,43 @@ def yolo2voc(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) 
 
 
 def bbox_iou(
-    box1: torch.Tensor,
-    box2: torch.Tensor,
-    x1y1x2y2: bool = True,
-    GIoU: bool = False,
-    DIoU: bool = False,
-    CIoU: bool = False,
+    bbox1: torch.Tensor,
+    bbox2: torch.Tensor,
+    bbox_format: Literal["pascal_voc", "coco"] = "pascal_voc",
+    iou_type: Literal["default", "giou", "diou", "ciou"] = "Default",
     eps: float = 1e-9,
 ):
-    # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
-    box2 = box2.T
+    """Returns the IoU of box1 to box2. box1 is 4, box2 is nx4"""
+    bbox2 = bbox2.T
 
     # Get the coordinates of bounding boxes
-    if not x1y1x2y2:  # x1, y1, x2, y2 = box1
-        box1, box2 = xywh2xyxy(box1), xywh2xyxy(box2)
+    if bbox_format == "coco":  # x1, y1, x2, y2 = box1
+        bbox1, bbox2 = xywh2xyxy(bbox1), xywh2xyxy(bbox2)
 
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1[0], box1[1], box1[2], box1[3]
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2[0], box2[1], box2[2], box2[3]
+    bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[0], bbox1[1], bbox1[2], bbox1[3]
+    bb2_x1, bb2_y1, bb2_x2, bb2_y2 = bbox2[0], bbox2[1], bbox2[2], bbox2[3]
 
     # Intersection area
-    inter = (torch.min(b1_x2, b2_x2) - torch.max(b1_x1, b2_x1)).clamp(0) * (
-        torch.min(b1_y2, b2_y2) - torch.max(b1_y1, b2_y1)
+    inter = (torch.min(bb1_x2, bb2_x2) - torch.max(bb1_x1, bb2_x1)).clamp(0) * (
+        torch.min(bb1_y2, bb2_y2) - torch.max(bb1_y1, bb2_y1)
     ).clamp(0)
 
     # Union Area
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
+    w1, h1 = bb1_x2 - bb1_x1, bb1_y2 - bb1_y1 + eps
+    w2, h2 = bb2_x2 - bb2_x1, bb2_y2 - bb2_y1 + eps
     union = w1 * h1 + w2 * h2 - inter + eps
 
     iou = inter / union
-    if GIoU or DIoU or CIoU:
+    if iou_type == "giou" or iou_type == "diou" or iou_type == "ciou":
         # convex (smallest enclosing box) width
-        cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)
-        ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)
-        if CIoU or DIoU:
+        cw = torch.max(bb1_x2, bb2_x2) - torch.min(bb1_x1, bb2_x1)
+        ch = torch.max(bb1_y2, bb2_y2) - torch.min(bb1_y1, bb2_y1)
+        if iou_type == "diou" or iou_type == "ciou":
             c2 = cw**2 + ch**2 + eps
-            rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2 + (b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2) / 4
-            if DIoU:
+            rho2 = ((bb2_x1 + bb2_x2 - bb1_x1 - bb1_x2) ** 2 + (bb2_y1 + bb2_y2 - bb1_y1 - bb1_y2) ** 2) / 4
+            if iou_type == "diou":
                 return iou - rho2 / c2  # DIoU
-            elif CIoU:
+            elif iou_type == "ciou":
                 v = (4 / torch.pi**2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
                 with torch.no_grad():
                     alpha = v / ((1 + eps) - iou + v)

@@ -29,10 +29,15 @@ class YoloV3(AlgorithmBase):
         super().__init__(cfg=cfg, models=models, name=name, device=device)
 
         # 配置主要参数
-        self.num_classes = self._cfg["algorithm"]["num_classes"]
-        self.num_anchors = self._cfg["algorithm"]["num_anchors"]
-        self.anchor_sizes = self._cfg["algorithm"]["anchor_sizes"]
-        self.image_size = self._cfg["algorithm"]["image_size"]
+        self.num_classes = self.cfg["algorithm"]["num_classes"]
+        self.num_anchors = self.cfg["algorithm"]["num_anchors"]
+        self.anchor_sizes = self.cfg["algorithm"]["anchor_sizes"]
+        self.default_img_size = self.cfg["algorithm"]["image_size"]
+
+        # loss权重参数
+        self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
+        self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)
+        self.c_weiget = self.cfg["algorithm"].get("c_weiget", 0.5)
 
         # -------------------- 配置优化器 --------------------
         self._configure_optimizers()
@@ -90,8 +95,11 @@ class YoloV3(AlgorithmBase):
 
             skips = self.models["darknet"](img)
             fimg1, fimg2, fimg3 = self.models["fpn"](skips)
+            det1 = self.feature_decode(fimg1, img_size=img.shape[1])
+            det2 = self.feature_decode(fimg2, img_size=img.shape[1])
+            det3 = self.feature_decode(fimg3, img_size=img.shape[1])
 
-            loss = self.criterion(fimg1, fimg2, fimg3, bboxes, category_ids, indices)
+            loss = self.criterion(det1, det2, det3, bboxes, category_ids, indices)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -137,27 +145,29 @@ class YoloV3(AlgorithmBase):
     # 损失函数设计
     def criterion(
         self,
-        feature_image1: torch.Tensor,
-        feature_image2: torch.Tensor,
-        feature_image3: torch.Tensor,
+        det1: torch.Tensor,
+        det2: torch.Tensor,
+        det3: torch.Tensor,
         bboxes: torch.Tensor,
         category_ids: torch.Tensor,
         indices: torch.Tensor,
     ) -> torch.Tensor:
-        prediction1 = self.feature_decode(feature_image1)
-        prediction2 = self.feature_decode(feature_image2)
-        prediction3 = self.feature_decode(feature_image3)
+        # bbox_loss计算
 
-        loss = 
-        
+        # obj_loss计算
+
+        # cls_loss计算
+
+        loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
+
         return loss
 
     # 特征图解码
-    def feature_decode(self, feature_image: torch.Tensor) -> torch.Tensor:
+    def feature_decode(self, feature_image: torch.Tensor, img_size: int) -> torch.Tensor:
         # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
         prediction = feature_image.permute(0, 2, 3, 1).contiguous()
         B, H, W, _ = prediction.shape
-        stride = self.image_size // H  # 计算步长
+        stride = img_size // H  # 计算步长
 
         # 根据特征图尺寸选择锚框
         if H == 52:
@@ -189,8 +199,3 @@ class YoloV3(AlgorithmBase):
         prediction = prediction.view(B, H, W, -1)
 
         return prediction
-
-
-
-
-

@@ -13,6 +13,10 @@ algorithm:
     - [116, 90]
     - [156, 198]
     - [373, 326]
+  # loss权重
+  b_weight = 0.05
+  o_weight = 1.0
+  c_weight = 0.5
 
 optimizer:
   type: "Adam"
