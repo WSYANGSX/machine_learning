@@ -104,7 +104,7 @@ class Diffusion(AlgorithmBase):
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> float:
         """训练单个epoch"""
-        self._models["noise_predictor"].train()
+        self.set_train()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -139,7 +139,7 @@ class Diffusion(AlgorithmBase):
 
     def validate(self) -> float:
         """验证步骤"""
-        self._models["noise_predictor"].eval()
+        self.set_eval()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -190,7 +190,7 @@ class Diffusion(AlgorithmBase):
     @torch.no_grad()
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self._models["noise_predictor"].eval()
+        self.set_eval()
 
         data = torch.randn(num_samples, *self.batch_data_shape[1:], device=self.device)
 

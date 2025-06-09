@@ -80,6 +80,7 @@ class GAN(AlgorithmBase):
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10):
         """训练单个epoch"""
+        self.set_train()
         total_d_loss = 0.0
         total_g_loss = 0.0
         g_count = 0
@@ -144,8 +145,7 @@ class GAN(AlgorithmBase):
 
     def validate(self) -> dict[str, float]:
         """验证步骤"""
-        self.models["generator"].eval()
-        self.models["discriminator"].eval()
+        self.set_eval()
 
         d_total_loss = 0.0
         g_total_loss = 0.0
@@ -172,8 +172,7 @@ class GAN(AlgorithmBase):
 
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self.models["generator"].eval()  # 将模型切换到评估模式，主要是影响层的行为，比如dropout层停止随机丢弃神经元
-        self.models["discriminator"].eval()
+        self.set_eval()  # 将模型切换到评估模式，主要是影响层的行为，比如dropout层停止随机丢弃神经元
 
         z = torch.randn((num_samples, self.z_dim), device=self.device, dtype=torch.float32)
 

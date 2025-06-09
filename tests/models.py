@@ -1,5 +1,6 @@
 import torch
 
-a = torch.randn((2, 3))
-print(a)
-print(a[:, :, None])
+
+bboxes = torch.randn((3, 2))
+t = bboxes[:, None, ...]
+print(t)

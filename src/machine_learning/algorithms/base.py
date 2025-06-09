@@ -183,3 +183,13 @@ class AlgorithmBase(ABC):
         best_loss = state["best loss"]
 
         return {"epoch": epoch, "cfg": cfg, "loss": loss, "best_loss": best_loss}
+
+    def set_train(self) -> None:
+        """将算法中的所有模型设置为train model"""
+        for model in self.models.values():
+            model.train()
+
+    def set_eval(self) -> None:
+        """将算法中的所有模型设置为eval model"""
+        for model in self.models.values():
+            model.eval()

@@ -80,8 +80,7 @@ class YoloV3(AlgorithmBase):
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         """训练单个epoch"""
-        self.models["darknet"].train()
-        self.models["fpn"].train()
+        self.set_train()
 
         total_loss = 0.0
 
@@ -95,11 +94,20 @@ class YoloV3(AlgorithmBase):
 
             skips = self.models["darknet"](img)
             fimg1, fimg2, fimg3 = self.models["fpn"](skips)
-            det1 = self.feature_decode(fimg1, img_size=img.shape[1])
-            det2 = self.feature_decode(fimg2, img_size=img.shape[1])
-            det3 = self.feature_decode(fimg3, img_size=img.shape[1])
 
-            loss = self.criterion(det1, det2, det3, bboxes, category_ids, indices)
+            # 特征图解码
+            det1, anchor_sizes1, stride1 = self.feature_image_decode(fimg1, img_size=img.shape[2])
+            det2, anchor_sizes2, stride2 = self.feature_image_decode(fimg2, img_size=img.shape[2])
+            det3, anchor_sizes3, stride3 = self.feature_image_decode(fimg3, img_size=img.shape[2])
+
+            loss = self.criterion(
+                (det1, det2, det3),
+                (anchor_sizes1, anchor_sizes2, anchor_sizes3),
+                (stride1, stride2, stride3),
+                bboxes,
+                category_ids,
+                indices,
+            )
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -118,8 +126,7 @@ class YoloV3(AlgorithmBase):
 
     def validate(self) -> dict[str, float]:
         """验证步骤"""
-        self.models["darknet"].eval()
-        self.models["fpn"].eval()
+        self.set_eval()
 
         total_loss = 0.0
 
@@ -140,14 +147,14 @@ class YoloV3(AlgorithmBase):
         return {"yolo": avg_loss, "save": avg_loss}
 
     def eval(self, num_samples: int = 5) -> None:
-        pass
+        self.set_eval()
 
     # 损失函数设计
     def criterion(
         self,
-        det1: torch.Tensor,
-        det2: torch.Tensor,
-        det3: torch.Tensor,
+        dets: list[torch.Tensor],
+        anchor_sizes: list[torch.Tensor],
+        strides: list[int],
         bboxes: torch.Tensor,
         category_ids: torch.Tensor,
         indices: torch.Tensor,
@@ -163,7 +170,7 @@ class YoloV3(AlgorithmBase):
         return loss
 
     # 特征图解码
-    def feature_decode(self, feature_image: torch.Tensor, img_size: int) -> torch.Tensor:
+    def feature_image_decode(self, feature_image: torch.Tensor, img_size: int) -> torch.Tensor:
         # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
         prediction = feature_image.permute(0, 2, 3, 1).contiguous()
         B, H, W, _ = prediction.shape
@@ -171,11 +178,11 @@ class YoloV3(AlgorithmBase):
 
         # 根据特征图尺寸选择锚框
         if H == 52:
-            anchor_sizes = self.anchor_sizes[:3] / stride
+            anchor_sizes = torch.tensor(self.anchor_sizes[:3], dtype=torch.int32, device=self.device)
         elif H == 26:
-            anchor_sizes = self.anchor_sizes[3:6] / stride
+            anchor_sizes = torch.tensor(self.anchor_sizes[3:6], dtype=torch.int32, device=self.device)
         else:
-            anchor_sizes = self.anchor_sizes[6:9] / stride
+            anchor_sizes = torch.tensor(self.anchor_sizes[6:9], dtype=torch.int32, device=self.device)
 
         # 构建偏移矩阵
         grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
@@ -190,12 +197,66 @@ class YoloV3(AlgorithmBase):
         # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
         prediction = prediction.view(B, H, W, self.num_anchors, -1)
 
-        # 解码坐标和尺寸 (向量化操作)
+        # 特征解码
         prediction[..., :2] = (torch.sigmoid(prediction[..., :2]) + grid_xy) * stride
-        prediction[..., 2:4] = anchor_wh * torch.exp(prediction[..., 2:4]) * stride
-        prediction[..., 4:] = torch.sigmoid(prediction[..., 4:])
+        prediction[..., 2:4] = anchor_wh * torch.exp(prediction[..., 2:4])
+        prediction[..., 4] = torch.sigmoid(prediction[..., 4])
+        prediction[..., 5:] = torch.sigmoid(prediction[..., 5:])
 
         # 重塑回原始维度 [B, H, W, C]
         prediction = prediction.view(B, H, W, -1)
 
-        return prediction
+        return prediction, anchor_sizes, stride
+
+    def prepare_targets(
+        self,
+        dets: list[torch.Tensor],
+        anchor_sizes: list[torch.Tensor],
+        strides: list[int],
+        bboxes: torch.Tensor,
+        category_ids: torch.Tensor,
+        indices: torch.Tensor,
+    ) -> tuple:
+        """
+        将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
+        特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
+        """
+        num_bboxes = bboxes.shape[0]  # number of bboxes(targets)
+
+        for i, (det, anchor_size, strides) in enumerate(zip(dets, anchor_sizes, strides)):
+            normalized_anchor_size = anchor_size / strides
+            det_width, det_height = det.shape[2], det.shape[1]
+
+            t = bboxes.repeat(self.num_anchors, 1, 1) * bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
+
+            if num_bboxes:
+                r = t[:, :, 2:4] / anchor_size[:, None]
+                j = torch.max(r, 1.0 / r).max(2)[0] < 4
+                t = t[j]
+            else:
+                t = bboxes[0]
+
+            # Extract image id in batch and class id
+            b, c = t[:, :2].long().T
+            # We isolate the target cell associations.
+            # x, y, w, h are allready in the cell coordinate system meaning an x = 1.2 would be 1.2 times cellwidth
+            gxy = t[:, 2:4]
+            gwh = t[:, 4:6]  # grid wh
+            # Cast to int to get an cell index e.g. 1.2 gets associated to cell 1
+            gij = gxy.long()
+            # Isolate x and y index dimensions
+            gi, gj = gij.T  # grid xy indices
+
+            # Convert anchor indexes to int
+            a = t[:, 6].long()
+            # Add target tensors for this yolo layer to the output lists
+            # Add to index list and limit index range to prevent out of bounds
+            indices.append((b, a, gj.clamp_(0, gain[3].long() - 1), gi.clamp_(0, gain[2].long() - 1)))
+            # Add to target box list and convert box coordinates from global grid coordinates to local offsets in the grid cell
+            tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
+            # Add correct anchor for each target to the list
+            anch.append(anchors[a])
+            # Add class for each target to the list
+            tcls.append(c)
+
+        return tcls, tbox, indices, anch

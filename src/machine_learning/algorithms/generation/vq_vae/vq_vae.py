@@ -92,8 +92,7 @@ class VQ_VAE(AlgorithmBase):
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> float:
         """训练单个epoch"""
-        self._models["encoder"].train()
-        self._models["decoder"].train()
+        self.set_train()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -139,8 +138,7 @@ class VQ_VAE(AlgorithmBase):
     @torch.no_grad()
     def validate(self) -> float:
         """验证步骤"""
-        self._models["encoder"].eval()
-        self._models["decoder"].eval()
+        self.set_eval()
 
         total_loss = 0.0
         criterion = nn.MSELoss()
@@ -161,8 +159,7 @@ class VQ_VAE(AlgorithmBase):
     @torch.no_grad()
     def eval(self, num_samples: int = 5) -> None:
         """可视化重构结果"""
-        self._models["encoder"].eval()
-        self._models["decoder"].eval()
+        self.set_eval()
 
         data, _ = next(iter(self.val_loader))
         sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
