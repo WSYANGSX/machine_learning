@@ -230,7 +230,7 @@ class YoloV3(AlgorithmBase):
             t = bboxes.repeat(self.num_anchors, 1, 1) * bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
 
             if num_bboxes:
-                r = t[:, :, 2:4] / anchor_size[:, None]
+                r = t[:, :, 2:4] / normalized_anchor_size[:, None]
                 j = torch.max(r, 1.0 / r).max(2)[0] < 4
                 t = t[j]
             else:
