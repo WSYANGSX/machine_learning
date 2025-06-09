@@ -148,7 +148,7 @@ class YoloDataset(LazyDataset):
                 warnings.simplefilter("ignore")
                 labels = np.loadtxt(label_path).reshape(-1, 5)
                 bboxes = labels[:, 1:5]
-                category_ids = np.array(labels[:, 0], dtype=np.uint8)
+                category_ids = np.array(labels[:, 0], dtype=np.uint16)
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
