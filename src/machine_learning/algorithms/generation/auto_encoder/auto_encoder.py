@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils.draw import draw_figures
+from machine_learning.utils.draw import show_raw_and_recon_images
 
 
 class AutoEncoder(AlgorithmBase):
@@ -132,4 +132,4 @@ class AutoEncoder(AlgorithmBase):
             z = self._models["encoder"](data)
             recons = self._models["decoder"](z)
 
-        plot_raw_recon_figures(data, recons)
+        show_raw_and_recon_images(data, recons)

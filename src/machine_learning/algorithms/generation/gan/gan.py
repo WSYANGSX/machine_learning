@@ -5,7 +5,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import draw_figures
+from machine_learning.utils import show_image
 
 
 class GAN(AlgorithmBase):
@@ -179,7 +179,7 @@ class GAN(AlgorithmBase):
         with torch.no_grad():  # 禁用梯度计算，作用与.detach()相同
             recons = self.models["generator"](z)
 
-        draw_figures(recons, cmap="gray")
+        show_image(recons, color_mode="gray", backend="pyplot")
 
 
 """

@@ -2,7 +2,7 @@ from itertools import chain
 from typing import Literal, Mapping
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import plot_raw_recon_figures
+from machine_learning.utils import show_raw_and_recon_images
 
 import torch
 import torch.nn as nn
@@ -148,4 +148,4 @@ class PixelCNN(AlgorithmBase):
             # z = mu + std * torch.randn_like(mu)
             recons = self._models["decoder"](mu)
 
-        plot_raw_recon_figures(data, recons)
+        show_raw_and_recon_images(data, recons)

@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import plot_figures
+from machine_learning.utils import show_image
 
 
 class Diffusion(AlgorithmBase):
@@ -202,7 +202,7 @@ class Diffusion(AlgorithmBase):
             data = self.sample(data, time_step)
             epoch += 1
 
-        plot_figures(data, cmap="gray")
+        show_image(data, color_mode="gray")
 
     def _initialize_data_loader(self, train_data_loader, val_data_loader):
         super()._initialize_data_loader(train_data_loader, val_data_loader)
