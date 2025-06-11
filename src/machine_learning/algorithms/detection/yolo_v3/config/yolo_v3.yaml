@@ -17,6 +17,7 @@ algorithm:
   b_weight : 0.05
   o_weight : 1.0
   c_weight : 0.5
+  ignore_threshold: 0.225
 
 optimizer:
   type: "Adam"

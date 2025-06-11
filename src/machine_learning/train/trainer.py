@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils.dataload_utils import FullDataset, LazyDataset
+from machine_learning.utils.dataload import FullDataset, LazyDataset
 from machine_learning.utils.others import set_seed
 
 

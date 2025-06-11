@@ -2,8 +2,9 @@ import cv2
 import math
 import torch
 import numpy as np
+from PIL import Image
 
-from typing import Sequence, Mapping
+from typing import Sequence, Mapping, Literal
 import matplotlib.pyplot as plt
 
 
@@ -113,7 +114,11 @@ def visualize_bboxes(
     plt.show()
 
 
-def draw_figures(figures: torch.Tensor | np.ndarray, cmap: str):
+def show_figures(
+    figures: torch.Tensor | np.ndarray,
+    color_mode: Literal["rgb", "gray"],
+    backend: Literal["opencv", "pyplot", "pillow"],
+):
     if isinstance(figures, torch.Tensor):
         figures = figures.cpu().numpy()
 

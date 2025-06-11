@@ -98,7 +98,7 @@ def bbox_iou(
     bbox2 = bbox2.T
 
     # Get the coordinates of bounding boxes
-    if bbox_format == "coco":  # x1, y1, x2, y2 = box1
+    if bbox_format == "coco":
         bbox1, bbox2 = xywh2xyxy(bbox1), xywh2xyxy(bbox2)
 
     bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[0], bbox1[1], bbox1[2], bbox1[3]

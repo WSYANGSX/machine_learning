@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils.draw_utils import draw_figures
+from machine_learning.utils.draw import draw_figures
 
 
 class AutoEncoder(AlgorithmBase):

@@ -1,9 +1,9 @@
-from torchvision import transforms
-
-from machine_learning.train import Trainer
+from machine_learning.train import Trainer, TrainCfg
 from machine_learning.algorithms import YoloV3
 from machine_learning.models import Darknet, FPN
-from machine_learning.utils import load_config_from_path, yolo_parse
+from machine_learning.utils import load_config_from_path
+from machine_learning.utils.dataload import ParserCfg, ParserFactory
+from machine_learning.utils.transforms import YoloTransform
 
 
 def main():
@@ -13,32 +13,32 @@ def main():
     num_classes = yolo_v3_cfg["algorithm"]["num_classes"]
     num_anchors = yolo_v3_cfg["algorithm"]["num_anchors"]
 
+    # 构建算法
     darknet = Darknet(imgae_size)
     fpn = FPN(num_anchors, num_classes)
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, models={"darknet": darknet, "fpn": fpn})
 
-    # 加载数据
-    dataset = yolo_parse("/home/yangxf/WorkSpace/machine_learning/data/coco-2017")
-
     # 配置transform
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.1307], std=[0.3081]),
-        ]
-    )
+    tfs = YoloTransform(augmentation="default", mean=[0, 0, 0], std=[1, 1, 1])
+
+    # 加载数据
+    dataset_dir = "./data/coco-2017"
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
+    parser = ParserFactory().parser_create(parser_cfg)
+    dataset = parser.create()
 
     # 配置训练参数
-    trainer_cfg = {
-        "epochs": 100,
-        "log_dir": "./logs/yolo_v3/",
-        "model_dir": "./checkpoints/yolo_v3/",
-        "log_interval": 10,
-        "save_interval": 10,
-        "batch_size": 256,
-        "data_num_workers": 4,
-    }
-    trainer = Trainer(trainer_cfg, dataset, transform, yolo_v3)
+    trainer_cfg = TrainCfg(
+        log_dir="./logs/yolov3/",
+        model_dir="./checkpoints/yolov3/",
+        batch_size=2048,
+        data_num_workers=8,
+        epochs=50000,
+        log_interval=20,
+        save_interval=20,
+        save_best=True,
+    )
+    trainer = Trainer(trainer_cfg, dataset, yolo_v3)
 
     # 模型训练
     trainer.train()

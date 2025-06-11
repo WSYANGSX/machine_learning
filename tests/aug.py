@@ -1,6 +1,6 @@
 import cv2
-from machine_learning.utils.augmentation import DEFAULT_AUG
-from machine_learning.utils.draw_utils import visualize_bboxes
+from machine_learning.utils.augmentations import DEFAULT_AUG
+from machine_learning.utils.draw import visualize_bboxes
 from machine_learning.utils.detection import yolo2voc
 
 if __name__ == "__main__":

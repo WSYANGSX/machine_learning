@@ -7,6 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils.detection import bbox_iou
 
 
 class YoloV3(AlgorithmBase):
@@ -86,7 +87,7 @@ class YoloV3(AlgorithmBase):
 
         for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
             img = img.to(self.device, non_blocking=True)
-            cls_imgids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
+            cls_iids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
                 self.device
             )  # (class_id, img_id, bboxes)
 
@@ -98,7 +99,7 @@ class YoloV3(AlgorithmBase):
             # 特征图解码
             dets, anchor_sizes, strides = self.feature_decode(fimgs, img_size=img.shape[2])
 
-            loss = self.criterion(dets, anchor_sizes, strides, bboxes, cls_imgids_bboxes)
+            loss = self.criterion(dets, anchor_sizes, strides, bboxes, cls_iids_bboxes)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -124,7 +125,7 @@ class YoloV3(AlgorithmBase):
         with torch.no_grad():
             for img, bboxes, category_ids, indices in self.train_loader:
                 img = img.to(self.device, non_blocking=True)
-                cls_imgids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
+                cls_iids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
                     self.device
                 )  # (class_id, img_id, bboxes)
 
@@ -134,7 +135,7 @@ class YoloV3(AlgorithmBase):
                 # 特征图解码
                 dets, anchor_sizes, strides = self.feature_decode(fimgs, img_size=img.shape[2])
 
-                total_loss += self.criterion(dets, anchor_sizes, strides, cls_imgids_bboxes).item()
+                total_loss += self.criterion(dets, anchor_sizes, strides, cls_iids_bboxes).item()
 
         avg_loss = total_loss / len(self.val_loader)
 
@@ -149,13 +150,40 @@ class YoloV3(AlgorithmBase):
         dets: list[torch.Tensor],
         anchor_sizes: list[torch.Tensor],
         strides: list[int],
-        cls_imgids_bboxes: torch.Tensor,
+        cls_iids_bboxes: torch.Tensor,
     ) -> torch.Tensor:
-        # bbox_loss计算
+        tcls, tbox, indices, anchors = self.prepare_targets(dets, anchor_sizes, strides, cls_iids_bboxes)
 
-        # obj_loss计算
+        cls_loss, bbox_loss, obj_loss = (torch.scalar_tensor(0, device=self.device) for _ in range(3))
 
-        # cls_loss计算
+        BCEcls = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([1.0], device=self.device)
+        )  # binary cross entropy loss (二元交叉熵)
+        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.0], device=self.device))
+
+        for i, det in enumerate(dets):
+            img_ids, anchor_ids, grid_j, grid_i = indices[i]
+            num_bboxes = img_ids.shape[0]
+            tobj = torch.zeros_like(det[..., 0], device=self.device)  # target obj
+
+            if num_bboxes:
+                ps = det[img_ids, anchor_ids, grid_j, grid_i]
+
+                pxy, pwh = ps[:, :2], ps[:, 2:4]
+                pbox = torch.cat((pxy, pwh), 1)
+                iou = bbox_iou(pbox.T, tbox[i], bbox_format="coco", iou_type="ciou")
+                bbox_loss += (1.0 - iou).mean()  # iou loss
+
+                tobj[img_ids, anchor_ids, grid_j, grid_i] = (
+                    iou.detach().clamp(0).type(tobj.dtype)
+                )  # Use cells with iou > 0 as object targets
+
+                if ps.size(1) - 5 > 1:
+                    t = torch.zeros_like(ps[:, 5:], device=self.device)  # targets
+                    t[range(num_bboxes), tcls[i]] = 1
+                    cls_loss += BCEcls(ps[:, 5:], t)  # BCE
+
+            obj_loss += BCEobj(det[..., 4], tobj)  # obj loss
 
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
@@ -198,8 +226,8 @@ class YoloV3(AlgorithmBase):
             prediction[..., 4] = torch.sigmoid(prediction[..., 4])
             prediction[..., 5:] = torch.sigmoid(prediction[..., 5:])
 
-            # 重塑回原始维度 [B, H, W, C]
-            prediction = prediction.view(B, H, W, -1)
+            # 重塑张量维度 [B, A, H, W, (C/A)]
+            prediction = prediction.view(B, self.num_anchors, H, W, -1)
 
             prediction_ls.append(prediction)
             anchor_sizes_ls.append(anchor_sizes)
@@ -212,38 +240,49 @@ class YoloV3(AlgorithmBase):
         dets: list[torch.Tensor],
         anchor_sizes: list[torch.Tensor],
         strides: list[int],
-        cls_imgids_bboxes: torch.Tensor,
+        cls_iids_bboxes: torch.Tensor,
     ) -> tuple:
         """
         将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
         特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
         """
-        num_bboxes = cls_imgids_bboxes.shape[0]  # number of bboxes(targets)
+        tcls, tbox, indices, anches = [], [], [], []
+
+        num_bboxes = cls_iids_bboxes.shape[0]  # number of bboxes(targets)
 
         for i, (det, anchor_size, strides) in enumerate(zip(dets, anchor_sizes, strides)):
             normalized_anchor_size = anchor_size / strides
             det_width, det_height = det.shape[2], det.shape[1]
 
-            t = cls_imgids_bboxes.repeat(self.num_anchors, 1, 1)
-            t[:, :, 2:6] *= cls_imgids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
+            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)
+            targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
+
+            anchor_ids = (
+                torch.arange(self.num_anchors)
+                .view(self.num_anchors, 1)
+                .repeat(1, num_bboxes)
+                .view(self.num_anchors, num_bboxes, 1)
+            )
+
+            targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, class_id, img_id, x, y, w, h)
 
             # 筛选合适的目标框
             if num_bboxes:
-                r = t[:, :, 4:6] / normalized_anchor_size[:, None]
+                r = targets[:, :, 4:6] / normalized_anchor_size[:, None]
                 j = torch.max(r, 1.0 / r).max(2)[0] < 4
-                t = t[j]
+                targets = targets[j]
 
-            b, c = t[:, :2].long().T
-            gxy = t[:, 2:4]
-            gwh = t[:, 4:6]  # grid wh
+            anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
+            gxy = targets[:, 3:5]
+            gwh = targets[:, 5:7]  # grid wh
             gij = gxy.long()
             gi, gj = gij.T  # grid xy indices
 
-            # Convert anchor indexes to int
-            a = t[:, 6].long()
-            indices.append((b, a, gj.clamp_(0, gain[3].long() - 1), gi.clamp_(0, gain[2].long() - 1)))
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
-            anch.append(anchors[a])
-            tcls.append(c)
+            tcls.append(cls_ids)
+            anches.append(normalized_anchor_size[anchor_ids])
+            indices.append(
+                (img_ids, anchor_ids, gj.clamp_(0, det_height.long() - 1), gi.clamp_(0, det_width.long() - 1))
+            )
 
-        return tcls, tbox, indices, anch
+        return tcls, tbox, indices, anches

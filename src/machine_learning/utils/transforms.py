@@ -5,7 +5,7 @@ from torchvision import transforms
 
 from typing import Literal, Sequence
 
-from machine_learning.utils.augmentation import DEFAULT_AUG, ENHANCED_AUG
+from machine_learning.utils.augmentations import DEFAULT_AUG, ENHANCED_AUG
 
 
 class CustomTransform:

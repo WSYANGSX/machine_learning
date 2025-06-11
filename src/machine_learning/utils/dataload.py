@@ -15,7 +15,7 @@ import numpy as np
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-from machine_learning.utils.transform import CustomTransform, YoloTransform
+from machine_learning.utils.transforms import CustomTransform, YoloTransform
 from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
 
