@@ -27,18 +27,29 @@ class CustomTransform:
 
 
 class YoloTransform(CustomTransform):
-    r"""YoloTransform, 实现 albumentations.Compose 到 transforms.Compose 接口的转换."""
-
     def __init__(
         self,
         augmentation: Literal["default", "enhanced"] | A.Compose,
-        mean: Sequence[float],
-        std: Sequence[float],
+        normalize: bool = True,
+        mean: Sequence[float] | None = None,
+        std: Sequence[float] | None = None,
+        to_tensor: bool = True,
     ):
+        """YoloTransform, 实现 albumentations.Compose 到 transforms.Compose 接口的转换.
+
+        Args:
+            augmentation (Literal[&quot;default&quot;, &quot;enhanced&quot;] | A.Compose): 增强器.
+            normalize (bool, optional): 是否对数据进行归一化处理. Defaults to True.
+            mean (Sequence[float] | None, optional): 如果normalize,需要提供均值. Defaults to None.
+            std (Sequence[float] | None, optional): 如果normalize,需要提供方差. Defaults to None.
+            to_tensor (bool, optional): 是否转化为Tensor. Defaults to True.
+        """
         super().__init__(augmentation)
 
-        self.to_tensor = transforms.ToTensor()  # 只能应用于2/3维
-        self.normalize = transforms.Normalize(mean=mean, std=std)
+        if normalize:
+            self.normalize = transforms.Normalize(mean=mean, std=std)
+        if to_tensor:
+            self.to_tensor = transforms.ToTensor()  # 只能应用于2/3维
 
     def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
         """应用数据增强
@@ -50,11 +61,11 @@ class YoloTransform(CustomTransform):
             转换成 Tensor 后的 (image_tensor, bboxes_tensor, category_ids)
         """
         img, bboxes, category_ids = data
-        aug_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
+        auged_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
 
-        img = aug_data["image"]
-        bboxes = aug_data["bboxes"]
-        category_ids = aug_data["category_ids"]
+        img = auged_data["image"]
+        bboxes = auged_data["bboxes"]
+        category_ids = auged_data["category_ids"]
 
         # 转化为Tensor
         img = self.to_tensor(img)

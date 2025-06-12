@@ -9,12 +9,12 @@ import albumentations as A
 if __name__ == "__main__":
     import numpy as np
 
-    img_path = "./data/coco-2017/images/train/000000121989.jpg"
+    img_path = "./data/coco-2017/images/train/000000200365.jpg"
     image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
 
-    labels = np.loadtxt("./data/coco-2017/labels/train/000000121989.txt").reshape(-1, 5)
+    labels = np.loadtxt("./data/coco-2017/labels/train/000000200365.txt").reshape(-1, 5)
     bboxes = labels[:, 1:5]
-
+    print(bboxes)
     # bboxes_voc = yolo2voc(image, bboxes)
     category_ids = np.array(labels[:, 0], dtype=np.uint8)
 

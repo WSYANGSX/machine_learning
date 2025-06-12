@@ -1,7 +1,7 @@
 # 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
 # auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
-from itertools import chain
 from typing import Literal, Mapping
+from itertools import chain
 
 import torch
 import torch.nn as nn

@@ -1,9 +1,9 @@
-from machine_learning.train import Trainer, TrainCfg
 from machine_learning.algorithms import YoloV3
 from machine_learning.models import Darknet, FPN
+from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils import load_config_from_path
-from machine_learning.utils.dataload import ParserCfg, ParserFactory
 from machine_learning.utils.transforms import YoloTransform
+from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 
 def main():
@@ -19,7 +19,7 @@ def main():
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, models={"darknet": darknet, "fpn": fpn})
 
     # 配置transform
-    tfs = YoloTransform(augmentation="default", mean=[0, 0, 0], std=[1, 1, 1])
+    tfs = YoloTransform(augmentation="default", mean=[0.471, 0.448, 0.408], std=[0.234, 0.239, 0.242])
 
     # 加载数据
     dataset_dir = "./data/coco-2017"
