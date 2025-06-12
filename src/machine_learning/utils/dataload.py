@@ -160,6 +160,7 @@ class YoloDataset(LazyDataset):
                 img, bboxes, category_ids = self.transform((img, bboxes, category_ids))
             except Exception:
                 print("Could not apply transform.")
+                print(img_path)
                 return
 
         return img, bboxes, category_ids

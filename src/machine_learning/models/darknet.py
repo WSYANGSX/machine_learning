@@ -152,9 +152,9 @@ class FPN(BaseNet):
 
         # 当网络forward函数有多个参数输入时，创建符合输入结构的虚拟数据传递
         dummy_input = [
-            torch.randn(1, 256, 52, 52),  # 对应浅层特征图
-            torch.randn(1, 512, 26, 26),  # 中层特征图
-            torch.randn(1, 1024, 13, 13),  # 深层特征图
+            torch.randn(1, 256, 52, 52, device=self.device),  # 对应浅层特征图
+            torch.randn(1, 512, 26, 26, device=self.device),  # 中层特征图
+            torch.randn(1, 1024, 13, 13, device=self.device),  # 深层特征图
         ]
 
         # 正确调用方式

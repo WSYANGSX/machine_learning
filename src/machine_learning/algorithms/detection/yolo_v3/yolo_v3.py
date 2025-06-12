@@ -47,7 +47,7 @@ class YoloV3(AlgorithmBase):
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
 
-        self.params = chain([self.models["darknet"].parameters(), self.models["fpn"]])
+        self.params = chain(self.models["darknet"].parameters(), self.models["fpn"].parameters())
 
         if opt_cfg["type"] == "Adam":
             self._optimizers.update(

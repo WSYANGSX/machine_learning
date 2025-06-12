@@ -15,7 +15,7 @@ class CustomTransform:
         self,
         augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
     ):
-        if not augmentation:
+        if augmentation is not None:
             if isinstance(augmentation, str):
                 self.augmentation = DEFAULT_AUG if augmentation == "default" else ENHANCED_AUG
             else:
@@ -59,7 +59,7 @@ class YoloTransform(CustomTransform):
         # 转化为Tensor
         img = self.to_tensor(img)
         bboxes = self.to_tensor(bboxes)
-        category_ids = torch.from_numpy(category_ids)
+        category_ids = torch.tensor(category_ids)
 
         # 归一化
         img = self.normalize(img)

@@ -9,6 +9,10 @@ class BaseNet(nn.Module, ABC):
     def __init__(self):
         super().__init__()
 
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def _initialize_weights(self):
         print(f"[INFO] Initializing weights of {self.__class__.__name__} with Kaiming normal...")
 
