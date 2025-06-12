@@ -3,7 +3,7 @@ import torch
 from typing import Any, Union
 from tqdm import trange
 
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
@@ -22,10 +22,11 @@ class Trainer:
         """机器学习算法训练器.
 
         Args:
-            cfg (dict): 训练器配置信息.
-            data (Sequence[torch.Tensor | np.ndarray]): 数据集 (train_data, train_labels, val_data, val_labels)
-            transform (transforms.Compose): 数据转换器.
-            algo (AlgorithmBase): 算法.
+            cfg (dict): 训练器配置信息
+            datasets (Sequence[torch.Tensor | np.ndarray]): 数据, 包括train_dataset和val_dataset,
+            可能包含特定数据集的数据信息
+            transform (transforms.Compose): 数据转换器
+            algo (AlgorithmBase): 算法
         """
         self.cfg = cfg
         self._algorithm = algo
@@ -36,15 +37,25 @@ class Trainer:
 
         # -------------------- 配置数据 --------------------
         self.batch_size = self.cfg.batch_size
-        self._configure_dataloader(train_dataset=datasets["train"], val_dataset=datasets["val"])
+        self._configure_datasets(datasets)
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
-    def _configure_dataloader(
-        self, train_dataset: Union[FullDataset, LazyDataset], val_dataset: Union[FullDataset, LazyDataset]
-    ):
+    def _configure_datasets(self, datasets: dict[str, Union[FullDataset, LazyDataset]]):
+        if "train" not in datasets:
+            raise ValueError("Input data dict does not include train dataset.")
+        elif "val" not in datasets:
+            raise ValueError("Input data dict does not include val dataset.")
+
+        train_dataset, val_dataset = datasets["train"], datasets["val"]
+
+        if not isinstance(datasets["train"], Dataset):
+            raise ValueError(f"Dataset {datasets['train']} has wrong type.")
+        elif not isinstance(datasets["val"], Dataset):
+            raise ValueError(f"Dataset {datasets['val']} has wrong type.")
+
         train_loader = DataLoader(
             dataset=train_dataset,
             batch_size=self.batch_size,
@@ -59,7 +70,8 @@ class Trainer:
             num_workers=self.cfg.data_num_workers,
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
-        self._algorithm._initialize_data_loader(
+
+        self._algorithm._initialize_data(
             train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size
         )
 

@@ -407,8 +407,8 @@ class YoloParser(DatasetParser):
         """
         # 解析类别和路径信息
         metadata = self.parse()
-
+        class_names = metadata["class_names"]
         trian_dataset = YoloDataset(metadata["train_img_paths"], metadata["train_labels_paths"], self.transforms)
         val_dataset = YoloDataset(metadata["val_img_paths"], metadata["val_labels_paths"], self.transforms)
 
-        return {"train": trian_dataset, "val": val_dataset}
+        return {"class_names": class_names, "train": trian_dataset, "val": val_dataset}

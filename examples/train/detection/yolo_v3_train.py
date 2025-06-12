@@ -25,7 +25,7 @@ def main():
     dataset_dir = "./data/coco-2017"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
     parser = ParserFactory().parser_create(parser_cfg)
-    dataset = parser.create()
+    datasets = parser.create()
 
     # 配置训练参数
     trainer_cfg = TrainCfg(
@@ -38,7 +38,7 @@ def main():
         save_interval=20,
         save_best=True,
     )
-    trainer = Trainer(trainer_cfg, dataset, yolo_v3)
+    trainer = Trainer(trainer_cfg, datasets, yolo_v3)
 
     # 模型训练
     trainer.train()
