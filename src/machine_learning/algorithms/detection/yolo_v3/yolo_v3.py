@@ -1,8 +1,10 @@
+from __future__ import annotations
 from typing import Literal, Iterable
 from itertools import chain
 
 import torch
 import torch.nn as nn
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -87,19 +89,19 @@ class YoloV3(AlgorithmBase):
 
         for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
             img = img.to(self.device, non_blocking=True)
-            cls_iids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
+            cls_iids_bboxes = torch.cat([indices.view(-1, 1), category_ids.view(-1, 1), bboxes], dim=-1).to(
                 self.device
             )  # (class_id, img_id, bboxes)
 
             self._optimizers["yolo"].zero_grad()
 
             skips = self.models["darknet"](img)
-            fimgs = self.models["fpn"](skips)
+            fimgs = self.models["fpn"](*skips)
 
             # 特征图解码
-            dets, anchor_sizes, strides = self.feature_decode(fimgs, img_size=img.shape[2])
+            det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
-            loss = self.criterion(dets, anchor_sizes, strides, bboxes, cls_iids_bboxes)
+            loss = self.criterion(det_ls, anchor_sizes_ls, stride_ls, cls_iids_bboxes)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -116,33 +118,47 @@ class YoloV3(AlgorithmBase):
 
         return {"yolo": avg_loss}
 
+    @torch.no_grad()
     def validate(self) -> dict[str, float]:
         """验证步骤"""
         self.set_eval()
 
         total_loss = 0.0
 
-        with torch.no_grad():
-            for img, bboxes, category_ids, indices in self.train_loader:
-                img = img.to(self.device, non_blocking=True)
-                cls_iids_bboxes = torch.cat([indices, category_ids, bboxes], dim=-1).to(
-                    self.device
-                )  # (class_id, img_id, bboxes)
+        for img, bboxes, category_ids, indices in self.train_loader:
+            img = img.to(self.device, non_blocking=True)
+            cls_iids_bboxes = torch.cat(
+                [
+                    indices.view(-1, 1),
+                    category_ids.view(-1, 1),
+                    bboxes,
+                ],
+                dim=-1,
+            ).to(self.device)  # (class_id, img_id, bboxes)
 
-                skips = self.models["darknet"](img)
-                fimgs = self.models["fpn"](skips)
+            skips = self.models["darknet"](img)
+            fimgs = self.models["fpn"](*skips)
 
-                # 特征图解码
-                dets, anchor_sizes, strides = self.feature_decode(fimgs, img_size=img.shape[2])
+            # 特征图解码
+            det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
-                total_loss += self.criterion(dets, anchor_sizes, strides, cls_iids_bboxes).item()
+            total_loss += self.criterion(det_ls, anchor_sizes_ls, stride_ls, cls_iids_bboxes).item()
 
         avg_loss = total_loss / len(self.val_loader)
 
         return {"yolo": avg_loss, "save": avg_loss}
 
-    def eval(self, num_samples: int = 5) -> None:
+    # TODO
+    @torch.no_grad()
+    def eval(self, img: torch.Tensor | np.ndarray) -> None:
         self.set_eval()
+
+        skips = self.models["darknet"](img)
+        fimgs = self.models["fpn"](*skips)
+
+        # 特征图解码
+        det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
+        ...
 
     # 损失函数设计
     def criterion(
@@ -191,12 +207,12 @@ class YoloV3(AlgorithmBase):
 
     # 特征图解码
     def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
-        prediction_ls, anchor_sizes_ls, stride_ls = [], [], []
+        detection_ls, anchor_sizes_ls, stride_ls = [], [], []
 
         for feature in features:
             # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
-            prediction = feature.permute(0, 2, 3, 1).contiguous()
-            B, H, W, _ = prediction.shape
+            detection = feature.permute(0, 2, 3, 1).contiguous()
+            B, H, W, _ = detection.shape
             stride = img_size // H  # 计算步长
 
             # 根据特征图尺寸选择锚框
@@ -209,7 +225,7 @@ class YoloV3(AlgorithmBase):
 
             # 构建偏移矩阵
             grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
-            grid_xy = torch.stack((grid_x, grid_y), dim=-1).to(prediction.device)  # [H, W, 2]
+            grid_xy = torch.stack((grid_x, grid_y), dim=-1).to(self.device)  # [H, W, 2]
 
             # 扩展维度以支持广播 [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
             grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
@@ -218,22 +234,22 @@ class YoloV3(AlgorithmBase):
             anchor_wh = anchor_sizes.view(1, 1, 1, self.num_anchors, 2)
 
             # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
-            prediction = prediction.view(B, H, W, self.num_anchors, -1)
+            detection = detection.view(B, H, W, self.num_anchors, -1)
 
             # 特征解码
-            prediction[..., :2] = (torch.sigmoid(prediction[..., :2]) + grid_xy) * stride
-            prediction[..., 2:4] = anchor_wh * torch.exp(prediction[..., 2:4])
-            prediction[..., 4] = torch.sigmoid(prediction[..., 4])
-            prediction[..., 5:] = torch.sigmoid(prediction[..., 5:])
+            detection[..., :2] = (torch.sigmoid(detection[..., :2]) + grid_xy) * stride
+            detection[..., 2:4] = anchor_wh * torch.exp(detection[..., 2:4])
+            detection[..., 4] = torch.sigmoid(detection[..., 4])
+            detection[..., 5:] = torch.sigmoid(detection[..., 5:])
 
             # 重塑张量维度 [B, A, H, W, (C/A)]
-            prediction = prediction.view(B, self.num_anchors, H, W, -1)
+            detection = detection.view(B, self.num_anchors, H, W, -1)
 
-            prediction_ls.append(prediction)
+            detection_ls.append(detection)
             anchor_sizes_ls.append(anchor_sizes)
             stride_ls.append(stride)
 
-        return prediction_ls, anchor_sizes_ls, stride_ls
+        return detection_ls, anchor_sizes_ls, stride_ls
 
     def prepare_targets(
         self,
@@ -246,7 +262,7 @@ class YoloV3(AlgorithmBase):
         将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
         特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
         """
-        tcls, tbox, indices, anches = [], [], [], []
+        tcls, tbox, indices, anchors = [], [], [], []
 
         num_bboxes = cls_iids_bboxes.shape[0]  # number of bboxes(targets)
 
@@ -258,7 +274,7 @@ class YoloV3(AlgorithmBase):
             targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
 
             anchor_ids = (
-                torch.arange(self.num_anchors)
+                torch.arange(self.num_anchors, device=self.device)
                 .view(self.num_anchors, 1)
                 .repeat(1, num_bboxes)
                 .view(self.num_anchors, num_bboxes, 1)
@@ -280,9 +296,7 @@ class YoloV3(AlgorithmBase):
 
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             tcls.append(cls_ids)
-            anches.append(normalized_anchor_size[anchor_ids])
-            indices.append(
-                (img_ids, anchor_ids, gj.clamp_(0, det_height.long() - 1), gi.clamp_(0, det_width.long() - 1))
-            )
+            anchors.append(normalized_anchor_size[anchor_ids])
+            indices.append((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
 
-        return tcls, tbox, indices, anches
+        return tcls, tbox, indices, anchors

@@ -108,6 +108,7 @@ class YoloDataset(LazyDataset):
         label_paths: Sequence[int],
         transform: YoloTransform = None,
         img_size: int = 416,
+        img_adj_stride: int = 32,
         multiscale: bool = False,
     ):
         """LazyLoadDataset初始化.
@@ -120,10 +121,11 @@ class YoloDataset(LazyDataset):
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
         self.img_size = img_size
+        self.img_adj_stride = img_adj_stride
         self.multiscale = multiscale
 
-        self.min_size = self.img_size - 3 * 32
-        self.max_size = self.img_size + 3 * 32
+        self.min_size = self.img_size - 3 * img_adj_stride
+        self.max_size = self.img_size + 3 * img_adj_stride
         self.batch_count = 0
 
     def __len__(self) -> int:
@@ -146,10 +148,9 @@ class YoloDataset(LazyDataset):
             # Ignore warning if file is empty
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                labels = np.loadtxt(label_path).reshape(-1, 5)
+                labels = np.loadtxt(label_path, dtype=np.float64).reshape(-1, 5)
                 bboxes = labels[:, 1:5]
                 category_ids = np.array(labels[:, 0], dtype=np.uint16)
-
         except Exception:
             print(f"Could not read label '{label_path}'.")
             return
@@ -159,8 +160,7 @@ class YoloDataset(LazyDataset):
             try:
                 img, bboxes, category_ids = self.transform((img, bboxes, category_ids))
             except Exception:
-                print("Could not apply transform.")
-                print(img_path)
+                print(f"Could not apply transform to image: {img_path}.")
                 return
 
         return img, bboxes, category_ids
@@ -176,7 +176,7 @@ class YoloDataset(LazyDataset):
 
         # Selects new image size every tenth batch
         if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, 32))
+            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_adj_stride))
 
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs])

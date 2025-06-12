@@ -65,11 +65,11 @@ class YoloTransform(CustomTransform):
 
         img = auged_data["image"]
         bboxes = auged_data["bboxes"]
-        category_ids = auged_data["category_ids"]
+        category_ids = auged_data["category_ids"]  # augementation会将其他未注册数据类型转换成列表类型
 
         # 转化为Tensor
         img = self.to_tensor(img)
-        bboxes = self.to_tensor(bboxes)
+        bboxes = torch.from_numpy(bboxes)
         category_ids = torch.tensor(category_ids)
 
         # 归一化

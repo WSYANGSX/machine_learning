@@ -31,9 +31,9 @@ def main():
     trainer_cfg = TrainCfg(
         log_dir="./logs/yolov3/",
         model_dir="./checkpoints/yolov3/",
-        batch_size=2048,
+        batch_size=5,
         data_num_workers=8,
-        epochs=50000,
+        epochs=500,
         log_interval=20,
         save_interval=20,
         save_best=True,
