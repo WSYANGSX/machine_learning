@@ -33,6 +33,7 @@ class YoloV3(AlgorithmBase):
 
         # 配置主要参数
         self.num_classes = self.cfg["algorithm"]["num_classes"]
+        self.class_names = self.cfg["algorithm"].get("class_names", None)
         self.num_anchors = self.cfg["algorithm"]["num_anchors"]
         self.anchor_sizes = self.cfg["algorithm"]["anchor_sizes"]
         self.default_img_size = self.cfg["algorithm"]["image_size"]

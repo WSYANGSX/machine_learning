@@ -8,7 +8,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils.dataload import FullDataset, LazyDataset
 from machine_learning.utils.others import set_seed
 
 
@@ -16,7 +15,7 @@ class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
-        datasets: dict[str, Union[FullDataset, LazyDataset]],
+        data: dict[str, Union[Any]],
         algo: AlgorithmBase,
     ):
         """机器学习算法训练器.
@@ -37,24 +36,24 @@ class Trainer:
 
         # -------------------- 配置数据 --------------------
         self.batch_size = self.cfg.batch_size
-        self._configure_datasets(datasets)
+        self._configure_datasets(data)
 
         # -------------------- 配置记录器 --------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
-    def _configure_datasets(self, datasets: dict[str, Union[FullDataset, LazyDataset]]):
-        if "train" not in datasets:
+    def _configure_datasets(self, data: dict[str, Union[Any]]):
+        if "train" not in data:
             raise ValueError("Input data dict does not include train dataset.")
-        elif "val" not in datasets:
+        elif "val" not in data:
             raise ValueError("Input data dict does not include val dataset.")
 
-        train_dataset, val_dataset = datasets["train"], datasets["val"]
+        train_dataset, val_dataset = data.pop("train"), data.pop("val")
 
-        if not isinstance(datasets["train"], Dataset):
-            raise ValueError(f"Dataset {datasets['train']} has wrong type.")
-        elif not isinstance(datasets["val"], Dataset):
-            raise ValueError(f"Dataset {datasets['val']} has wrong type.")
+        if not isinstance(train_dataset, Dataset):
+            raise ValueError(f"Dataset {data['train']} has wrong type.")
+        elif not isinstance(val_dataset, Dataset):
+            raise ValueError(f"Dataset {data['val']} has wrong type.")
 
         train_loader = DataLoader(
             dataset=train_dataset,
@@ -71,8 +70,8 @@ class Trainer:
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
 
-        self._algorithm._initialize_data(
-            train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size
+        self._algorithm._initialize_dependent_on_data(
+            train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size, **data
         )
 
     def _configure_writer(self):

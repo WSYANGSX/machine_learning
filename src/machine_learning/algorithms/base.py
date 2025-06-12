@@ -113,8 +113,10 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    def _initialize_data(self, train_loader: DataLoader, val_loader: DataLoader, batch_size: int) -> None:
-        """初始化算法训练和验证数据，需要在训练前调用
+    def _initialize_dependent_on_data(
+        self, train_loader: DataLoader, val_loader: DataLoader, batch_size: int, **kwargs
+    ) -> None:
+        """初始化算法训练和验证数据加载器和其他需要数据解析后才能确定的参数，需要在训练前调用
 
         Args:
             train_loader (_type_): 训练数据集加载器.
@@ -122,8 +124,23 @@ class AlgorithmBase(ABC):
         """
         self.train_loader = train_loader
         self.val_loader = val_loader
-
         self.batch_size = batch_size
+
+        # 保护关键属性不被覆盖
+        protected_attrs = {"train_loader", "val_loader", "batch_size"}
+
+        for key, val in kwargs.items():
+            if key in protected_attrs:
+                print(f"Attempted to override protected attribute '{key}'. Ignored.")
+                continue
+
+            if hasattr(self, key):
+                # 对已有属性使用 setattr 确保描述符正常工作
+                setattr(self, key, val)
+                print(f"[INFO] Set {key} attribute of {self.__class__.__name__} to new value.")
+            else:
+                setattr(self, key, val)
+                print(f"[INFO] {self.__class__.__name__.capitalize()} set new attribute: {key}")
 
     @abstractmethod
     def _configure_optimizers(self):
