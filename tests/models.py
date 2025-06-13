@@ -1,7 +1,12 @@
 import torch
-import cv2
-import numpy as np
 
-image = np.random.randint(low=0, high=255, size=(3, 3, 1), dtype=np.uint8)
-image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-print(image.shape)
+a = torch.randn((3, 3, 2))
+print(a[:2, 2, :2])
+# b = torch.randn((3, 3, 2))
+# print(b)
+# c = torch.max(a, b)
+# print(c)
+# d = c.max(2)
+# j = d[0] < 0.5
+# print(j)
+# print(a[j])

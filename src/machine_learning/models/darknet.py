@@ -110,10 +110,10 @@ class FPN(BaseNet):
                 "conv_x3": ConvBNLeaky(1024, 512, 1),
                 # 上采样层
                 "upsample": nn.Upsample(scale_factor=2, mode="nearest"),
-                # 检测头前的卷积
-                "head_conv1": nn.Sequential(ConvBNLeaky(896, 448, 3, padding=1), ConvBNLeaky(448, self.channels, 1)),
-                "head_conv2": nn.Sequential(ConvBNLeaky(768, 384, 3, padding=1), ConvBNLeaky(384, self.channels, 1)),
-                "head_conv3": nn.Sequential(ConvBNLeaky(512, 256, 3, padding=1), ConvBNLeaky(256, self.channels, 1)),
+                # 检测头(最后一层不使用激活函数，保持logits输出)
+                "head_conv1": nn.Sequential(ConvBNLeaky(896, 448, 3, padding=1), nn.Conv2d(448, self.channels, 1)),
+                "head_conv2": nn.Sequential(ConvBNLeaky(768, 384, 3, padding=1), nn.Conv2d(384, self.channels, 1)),
+                "head_conv3": nn.Sequential(ConvBNLeaky(512, 256, 3, padding=1), nn.Conv2d(256, self.channels, 1)),
             }
         )
 

@@ -90,7 +90,7 @@ class YoloV3(AlgorithmBase):
 
         for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
             img = img.to(self.device, non_blocking=True)
-            cls_iids_bboxes = torch.cat([indices.view(-1, 1), category_ids.view(-1, 1), bboxes], dim=-1).to(
+            cls_iids_bboxes = torch.cat([category_ids.view(-1, 1), indices.view(-1, 1), bboxes], dim=-1).to(
                 self.device
             )  # (class_id, img_id, bboxes)
 
@@ -100,9 +100,9 @@ class YoloV3(AlgorithmBase):
             fimgs = self.models["fpn"](*skips)
 
             # 特征图解码
-            det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
+            det_ls, anchor_sizes_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
-            loss = self.criterion(det_ls, anchor_sizes_ls, stride_ls, cls_iids_bboxes)
+            loss = self.criterion(det_ls, anchor_sizes_ls, cls_iids_bboxes)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -161,22 +161,118 @@ class YoloV3(AlgorithmBase):
         det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
         ...
 
+    # 特征图解码
+    def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
+        detection_ls, anchors_ls = [], []
+
+        for feature in features:
+            # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
+            detection = feature.permute(0, 2, 3, 1).contiguous()
+            B, H, W, C = detection.shape
+            stride = img_size // H  # 计算步长
+
+            # 根据特征图尺寸选择锚框
+            if H == 52:
+                norm_anchors = torch.tensor(self.anchor_sizes[:3], dtype=torch.int32, device=self.device) / stride
+            elif H == 26:
+                norm_anchors = torch.tensor(self.anchor_sizes[3:6], dtype=torch.int32, device=self.device) / stride
+            else:
+                norm_anchors = torch.tensor(self.anchor_sizes[6:9], dtype=torch.int32, device=self.device) / stride
+
+            # 构建偏移矩阵, 注意 ”ij“ 形式和 ”xy“ 形式
+            grid_x, grid_y = torch.meshgrid(torch.arange(W), torch.arange(H), indexing="xy")
+            grid_xy = torch.stack((grid_x, grid_y), dim=-1).float().to(self.device)  # [H, W, 2]
+
+            # 扩展维度以支持广播 [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
+            grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
+
+            # 调整锚框形状 [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
+            norm_wh = norm_anchors.view(1, 1, 1, self.num_anchors, 2)
+
+            # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
+            detection = detection.view(B, H, W, self.num_anchors, -1)
+
+            # 特征解码
+            detection[..., :2] = torch.sigmoid(detection[..., :2]) + grid_xy
+            detection[..., 2:4] = norm_wh * torch.exp(detection[..., 2:4])
+            detection[..., 4] = torch.sigmoid(detection[..., 4])
+            detection[..., 5:] = torch.sigmoid(detection[..., 5:])
+
+            # 重塑张量维度 [B, A, H, W, (C/A)]
+            detection = detection.view(B, self.num_anchors, H, W, -1)
+
+            detection_ls.append(detection)
+            anchors_ls.append(norm_anchors)
+
+        return detection_ls, anchors_ls
+
+    def prepare_targets(
+        self,
+        dets_ls: list[torch.Tensor],
+        anchors_ls: list[torch.Tensor],
+        cls_iids_bboxes: torch.Tensor,
+    ) -> tuple:
+        """
+        将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
+        特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
+        """
+        tcls, tbox, indices, anchors = [], [], [], []
+
+        num_bboxes = cls_iids_bboxes.shape[0]  # number of bboxes(targets)
+
+        for _, (dets, anchor_sizes) in enumerate(zip(dets_ls, anchors_ls)):
+            det_height, det_width = dets.shape[2], dets.shape[3]  # det [B, A, H, W, (C / A)]
+
+            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)
+            targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
+
+            anchor_ids = (
+                torch.arange(self.num_anchors, device=self.device)
+                .view(self.num_anchors, 1)
+                .repeat(1, num_bboxes)
+                .view(self.num_anchors, num_bboxes, 1)
+            )
+
+            targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, class_id, img_id, x, y, w, h)
+
+            # 筛选合适的目标框
+            if num_bboxes:
+                r = targets[:, :, 4:6] / anchor_sizes[:, None]
+                j = torch.max(r, 1.0 / r).max(2)[0] < 4
+                targets = targets[j]
+
+            anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
+            gxy = targets[:, 3:5]
+            gwh = targets[:, 5:7]  # grid wh
+            gij = gxy.long()
+            gi, gj = gij.T  # grid xy indices
+
+            tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
+            tcls.append(cls_ids)
+            anchors.append(anchor_sizes[anchor_ids])
+            indices.append((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
+            print(torch.cat((gxy - gij, gwh), 1))
+            print(cls_ids)
+            print(anchor_sizes[anchor_ids])
+            print((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
+        return tcls, tbox, indices, anchors
+
     # 损失函数设计
     def criterion(
         self,
         dets: list[torch.Tensor],
         anchor_sizes: list[torch.Tensor],
-        strides: list[int],
         cls_iids_bboxes: torch.Tensor,
     ) -> torch.Tensor:
-        tcls, tbox, indices, anchors = self.prepare_targets(dets, anchor_sizes, strides, cls_iids_bboxes)
+        tcls, tbox, indices, _ = self.prepare_targets(dets, anchor_sizes, cls_iids_bboxes)
 
-        cls_loss, bbox_loss, obj_loss = (torch.scalar_tensor(0, device=self.device) for _ in range(3))
+        cls_loss = torch.scalar_tensor(0, device=self.device)
+        bbox_loss = torch.scalar_tensor(0, device=self.device)
+        obj_loss = torch.scalar_tensor(0, device=self.device)
 
-        BCEcls = nn.BCEWithLogitsLoss(
-            pos_weight=torch.tensor([1.0], device=self.device)
-        )  # binary cross entropy loss (二元交叉熵)
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.0], device=self.device))
+        # 使用BCELoss
+        BCEcls = nn.BCELoss()
+        BCEobj = nn.BCELoss()
 
         for i, det in enumerate(dets):
             img_ids, anchor_ids, grid_j, grid_i = indices[i]
@@ -184,10 +280,11 @@ class YoloV3(AlgorithmBase):
             tobj = torch.zeros_like(det[..., 0], device=self.device)  # target obj
 
             if num_bboxes:
-                ps = det[img_ids, anchor_ids, grid_j, grid_i]
+                ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
 
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
-                pbox = torch.cat((pxy, pwh), 1)
+                pbox = torch.cat((pxy - pxy.long(), pwh), 1)
+
                 iou = bbox_iou(pbox.T, tbox[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
@@ -205,99 +302,3 @@ class YoloV3(AlgorithmBase):
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
         return loss
-
-    # 特征图解码
-    def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
-        detection_ls, anchor_sizes_ls, stride_ls = [], [], []
-
-        for feature in features:
-            # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
-            detection = feature.permute(0, 2, 3, 1).contiguous()
-            B, H, W, _ = detection.shape
-            stride = img_size // H  # 计算步长
-
-            # 根据特征图尺寸选择锚框
-            if H == 52:
-                anchor_sizes = torch.tensor(self.anchor_sizes[:3], dtype=torch.int32, device=self.device)
-            elif H == 26:
-                anchor_sizes = torch.tensor(self.anchor_sizes[3:6], dtype=torch.int32, device=self.device)
-            else:
-                anchor_sizes = torch.tensor(self.anchor_sizes[6:9], dtype=torch.int32, device=self.device)
-
-            # 构建偏移矩阵
-            grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
-            grid_xy = torch.stack((grid_x, grid_y), dim=-1).to(self.device)  # [H, W, 2]
-
-            # 扩展维度以支持广播 [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
-            grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
-
-            # 调整锚框形状 [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
-            anchor_wh = anchor_sizes.view(1, 1, 1, self.num_anchors, 2)
-
-            # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
-            detection = detection.view(B, H, W, self.num_anchors, -1)
-
-            # 特征解码
-            detection[..., :2] = (torch.sigmoid(detection[..., :2]) + grid_xy) * stride
-            detection[..., 2:4] = anchor_wh * torch.exp(detection[..., 2:4])
-            detection[..., 4] = torch.sigmoid(detection[..., 4])
-            detection[..., 5:] = torch.sigmoid(detection[..., 5:])
-
-            # 重塑张量维度 [B, A, H, W, (C/A)]
-            detection = detection.view(B, self.num_anchors, H, W, -1)
-
-            detection_ls.append(detection)
-            anchor_sizes_ls.append(anchor_sizes)
-            stride_ls.append(stride)
-
-        return detection_ls, anchor_sizes_ls, stride_ls
-
-    def prepare_targets(
-        self,
-        dets: list[torch.Tensor],
-        anchor_sizes: list[torch.Tensor],
-        strides: list[int],
-        cls_iids_bboxes: torch.Tensor,
-    ) -> tuple:
-        """
-        将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
-        特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
-        """
-        tcls, tbox, indices, anchors = [], [], [], []
-
-        num_bboxes = cls_iids_bboxes.shape[0]  # number of bboxes(targets)
-
-        for i, (det, anchor_size, strides) in enumerate(zip(dets, anchor_sizes, strides)):
-            normalized_anchor_size = anchor_size / strides
-            det_width, det_height = det.shape[2], det.shape[1]
-
-            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)
-            targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
-
-            anchor_ids = (
-                torch.arange(self.num_anchors, device=self.device)
-                .view(self.num_anchors, 1)
-                .repeat(1, num_bboxes)
-                .view(self.num_anchors, num_bboxes, 1)
-            )
-
-            targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, class_id, img_id, x, y, w, h)
-
-            # 筛选合适的目标框
-            if num_bboxes:
-                r = targets[:, :, 4:6] / normalized_anchor_size[:, None]
-                j = torch.max(r, 1.0 / r).max(2)[0] < 4
-                targets = targets[j]
-
-            anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
-            gxy = targets[:, 3:5]
-            gwh = targets[:, 5:7]  # grid wh
-            gij = gxy.long()
-            gi, gj = gij.T  # grid xy indices
-
-            tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
-            tcls.append(cls_ids)
-            anchors.append(normalized_anchor_size[anchor_ids])
-            indices.append((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
-
-        return tcls, tbox, indices, anchors
