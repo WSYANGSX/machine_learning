@@ -95,11 +95,11 @@ def bbox_iou(
     eps: float = 1e-9,
 ):
     """Returns the IoU of box1 to box2. box1 is 4, box2 is nx4"""
-    bbox2 = bbox2.T
-
     # Get the coordinates of bounding boxes
     if bbox_format == "coco":
         bbox1, bbox2 = xywh2xyxy(bbox1), xywh2xyxy(bbox2)
+
+    bbox2 = bbox2.T
 
     bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[0], bbox1[1], bbox1[2], bbox1[3]
     bb2_x1, bb2_y1, bb2_x2, bb2_y2 = bbox2[0], bbox2[1], bbox2[2], bbox2[3]

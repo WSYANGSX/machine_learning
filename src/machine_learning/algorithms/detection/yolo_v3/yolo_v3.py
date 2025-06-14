@@ -244,13 +244,15 @@ class YoloV3(AlgorithmBase):
                 targets = targets[j]
 
             anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
-            gxy = targets[:, 3:5]  # 特征图坐标系中中心点坐标
-            gwh = targets[:, 5:7]  # 特征图坐标系中 bboxes 的宽和高
+            gxy = targets[:, 3:5]  # 目标 bboxes 在特征图坐标系中中心点坐标
+            gwh = targets[:, 5:7]  # 目标 bboxes 在特征图坐标系中 bboxes 的宽和高
+            gij = gxy.long()
+            gi, gj = gij.T
 
             tbboxes.append(torch.cat((gxy, gwh), 1))  # box
             tcls.append(cls_ids)
             tanchors.append(norm_anchors[anchor_ids])
-            indices.append(img_ids, anchor_ids)
+            indices.append((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
 
         return tcls, tbboxes, indices, tanchors
 
@@ -278,10 +280,10 @@ class YoloV3(AlgorithmBase):
 
             if num_bboxes:
                 ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
-
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
-                pbox = torch.cat((pxy - pxy.long(), pwh), 1)
-
+                pbox = torch.cat((pxy, pwh), 1)
+                print(pbox.shape)
+                print(tbboxes[i].shape)
                 iou = bbox_iou(pbox.T, tbboxes[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
@@ -292,9 +294,9 @@ class YoloV3(AlgorithmBase):
                 if ps.size(1) - 5 > 1:
                     t = torch.zeros_like(ps[:, 5:], device=self.device)  # targets
                     t[range(num_bboxes), tcls[i]] = 1
-                    cls_loss += BCEcls(ps[:, 5:], t)  # BCE
+                    cls_loss += BCEcls(ps[:, 5:].clamp(0.0, 1.0), t.clamp(0.0, 1.0))  # BCE
 
-            obj_loss += BCEobj(det[..., 4], tobj)  # obj loss
+            obj_loss += BCEobj(det[..., 4].clamp(0.0, 1.0), tobj.clamp(0.0, 1.0))  # obj loss
 
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 

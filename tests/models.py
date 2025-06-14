@@ -1,12 +1,4 @@
 import torch
 
-a = torch.randn((3, 3, 2))
-print(a[:2, 2, :2])
-# b = torch.randn((3, 3, 2))
-# print(b)
-# c = torch.max(a, b)
-# print(c)
-# d = c.max(2)
-# j = d[0] < 0.5
-# print(j)
-# print(a[j])
+a = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8], [3, 2, 5, 4], [6, 7, 5, 1]])
+print(a[[1, 3], [3, 2]])
