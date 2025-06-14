@@ -128,14 +128,9 @@ class YoloV3(AlgorithmBase):
 
         for img, bboxes, category_ids, indices in self.train_loader:
             img = img.to(self.device, non_blocking=True)
-            cls_iids_bboxes = torch.cat(
-                [
-                    indices.view(-1, 1),
-                    category_ids.view(-1, 1),
-                    bboxes,
-                ],
-                dim=-1,
-            ).to(self.device)  # (class_id, img_id, bboxes)
+            cls_iids_bboxes = torch.cat([category_ids.view(-1, 1), indices.view(-1, 1), bboxes], dim=-1).to(
+                self.device
+            )  # (class_id, img_id, bboxes)
 
             skips = self.models["darknet"](img)
             fimgs = self.models["fpn"](*skips)
@@ -282,8 +277,6 @@ class YoloV3(AlgorithmBase):
                 ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
                 pbox = torch.cat((pxy, pwh), 1)
-                print(pbox.shape)
-                print(tbboxes[i].shape)
                 iou = bbox_iou(pbox.T, tbboxes[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
@@ -298,6 +291,6 @@ class YoloV3(AlgorithmBase):
 
             obj_loss += BCEobj(det[..., 4].clamp(0.0, 1.0), tobj.clamp(0.0, 1.0))  # obj loss
 
-        loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
+        loss = self.b_weiget * bbox_loss + self.c_weiget * cls_loss + self.o_weiget * obj_loss
 
         return loss
