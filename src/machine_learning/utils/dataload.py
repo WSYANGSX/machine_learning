@@ -108,7 +108,7 @@ class YoloDataset(LazyDataset):
         label_paths: Sequence[int],
         transform: YoloTransform = None,
         img_size: int = 416,
-        img_adj_stride: int = 32,
+        img_size_stride: int = 32,
         multiscale: bool = False,
     ):
         """LazyLoadDataset初始化.
@@ -121,11 +121,11 @@ class YoloDataset(LazyDataset):
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
         self.img_size = img_size
-        self.img_adj_stride = img_adj_stride
+        self.img_size_stride = img_size_stride
         self.multiscale = multiscale
 
-        self.min_size = self.img_size - 3 * img_adj_stride
-        self.max_size = self.img_size + 3 * img_adj_stride
+        self.min_size = self.img_size - 3 * img_size_stride
+        self.max_size = self.img_size + 3 * img_size_stride
         self.batch_count = 0
 
     def __len__(self) -> int:

@@ -92,7 +92,7 @@ class YoloV3(AlgorithmBase):
             img = img.to(self.device, non_blocking=True)
             cls_iids_bboxes = torch.cat([category_ids.view(-1, 1), indices.view(-1, 1), bboxes], dim=-1).to(
                 self.device
-            )  # (class_id, img_id, bboxes)
+            )  # (class_ids, img_ids, bboxes)
 
             self._optimizers["yolo"].zero_grad()
 
@@ -100,9 +100,9 @@ class YoloV3(AlgorithmBase):
             fimgs = self.models["fpn"](*skips)
 
             # 特征图解码
-            det_ls, anchor_sizes_ls = self.feature_decode(fimgs, img_size=img.shape[2])
+            det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
-            loss = self.criterion(det_ls, anchor_sizes_ls, cls_iids_bboxes)
+            loss = self.criterion(det_ls, norm_anchors_ls, cls_iids_bboxes)
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -141,9 +141,9 @@ class YoloV3(AlgorithmBase):
             fimgs = self.models["fpn"](*skips)
 
             # 特征图解码
-            det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
+            det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
-            total_loss += self.criterion(det_ls, anchor_sizes_ls, stride_ls, cls_iids_bboxes).item()
+            total_loss += self.criterion(det_ls, norm_anchors_ls, cls_iids_bboxes).item()
 
         avg_loss = total_loss / len(self.val_loader)
 
@@ -158,17 +158,17 @@ class YoloV3(AlgorithmBase):
         fimgs = self.models["fpn"](*skips)
 
         # 特征图解码
-        det_ls, anchor_sizes_ls, stride_ls = self.feature_decode(fimgs, img_size=img.shape[2])
+        det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
         ...
 
     # 特征图解码
     def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
-        detection_ls, anchors_ls = [], []
+        detection_ls, norm_anchors_ls = [], []
 
         for feature in features:
             # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
             detection = feature.permute(0, 2, 3, 1).contiguous()
-            B, H, W, C = detection.shape
+            B, H, W, _ = detection.shape
             stride = img_size // H  # 计算步长
 
             # 根据特征图尺寸选择锚框
@@ -193,37 +193,37 @@ class YoloV3(AlgorithmBase):
             detection = detection.view(B, H, W, self.num_anchors, -1)
 
             # 特征解码
-            detection[..., :2] = torch.sigmoid(detection[..., :2]) + grid_xy
-            detection[..., 2:4] = norm_wh * torch.exp(detection[..., 2:4])
-            detection[..., 4] = torch.sigmoid(detection[..., 4])
-            detection[..., 5:] = torch.sigmoid(detection[..., 5:])
+            detection[..., :2] = torch.sigmoid(detection[..., :2]) + grid_xy  # 特征图坐标系上的中心点坐标
+            detection[..., 2:4] = norm_wh * torch.exp(detection[..., 2:4])  # 特征图坐标系上的bboxes宽和高
+            detection[..., 4] = torch.sigmoid(detection[..., 4])  # 将obj是否存在映射到 0-1
+            detection[..., 5:] = torch.sigmoid(detection[..., 5:])  # 将cls是否正确映射到 0-1
 
             # 重塑张量维度 [B, A, H, W, (C/A)]
             detection = detection.view(B, self.num_anchors, H, W, -1)
 
             detection_ls.append(detection)
-            anchors_ls.append(norm_anchors)
+            norm_anchors_ls.append(norm_anchors)
 
-        return detection_ls, anchors_ls
+        return detection_ls, norm_anchors_ls
 
     def prepare_targets(
         self,
         dets_ls: list[torch.Tensor],
-        anchors_ls: list[torch.Tensor],
+        norm_anchors_ls: list[torch.Tensor],
         cls_iids_bboxes: torch.Tensor,
     ) -> tuple:
         """
         将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
         特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
         """
-        tcls, tbox, indices, anchors = [], [], [], []
+        tcls, tbboxes, indices, tanchors = [], [], [], []
 
         num_bboxes = cls_iids_bboxes.shape[0]  # number of bboxes(targets)
 
-        for _, (dets, anchor_sizes) in enumerate(zip(dets_ls, anchors_ls)):
+        for _, (dets, norm_anchors) in enumerate(zip(dets_ls, norm_anchors_ls)):
             det_height, det_width = dets.shape[2], dets.shape[3]  # det [B, A, H, W, (C / A)]
 
-            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)
+            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)  # targets [num_anchors, num_bboxes, 6]
             targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
 
             anchor_ids = (
@@ -233,38 +233,35 @@ class YoloV3(AlgorithmBase):
                 .view(self.num_anchors, num_bboxes, 1)
             )
 
-            targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, class_id, img_id, x, y, w, h)
+            targets = torch.cat(
+                [anchor_ids, targets], dim=-1
+            )  # targets [num_anchors, num_bboxes, 7] (anchor_ids, class_id, img_id, x, y, w, h)
 
             # 筛选合适的目标框
             if num_bboxes:
-                r = targets[:, :, 4:6] / anchor_sizes[:, None]
+                r = targets[:, :, 5:7] / norm_anchors[:, None]
                 j = torch.max(r, 1.0 / r).max(2)[0] < 4
                 targets = targets[j]
 
             anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
-            gxy = targets[:, 3:5]
-            gwh = targets[:, 5:7]  # grid wh
-            gij = gxy.long()
-            gi, gj = gij.T  # grid xy indices
+            gxy = targets[:, 3:5]  # 特征图坐标系中中心点坐标
+            gwh = targets[:, 5:7]  # 特征图坐标系中 bboxes 的宽和高
 
-            tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
+            tbboxes.append(torch.cat((gxy, gwh), 1))  # box
             tcls.append(cls_ids)
-            anchors.append(anchor_sizes[anchor_ids])
-            indices.append((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
-            print(torch.cat((gxy - gij, gwh), 1))
-            print(cls_ids)
-            print(anchor_sizes[anchor_ids])
-            print((img_ids, anchor_ids, gj.clamp_(0, det_height - 1), gi.clamp_(0, det_width - 1)))
-        return tcls, tbox, indices, anchors
+            tanchors.append(norm_anchors[anchor_ids])
+            indices.append(img_ids, anchor_ids)
+
+        return tcls, tbboxes, indices, tanchors
 
     # 损失函数设计
     def criterion(
         self,
-        dets: list[torch.Tensor],
-        anchor_sizes: list[torch.Tensor],
+        dets_ls: list[torch.Tensor],
+        anchors_ls: list[torch.Tensor],
         cls_iids_bboxes: torch.Tensor,
     ) -> torch.Tensor:
-        tcls, tbox, indices, _ = self.prepare_targets(dets, anchor_sizes, cls_iids_bboxes)
+        tcls, tbboxes, indices, _ = self.prepare_targets(dets_ls, anchors_ls, cls_iids_bboxes)
 
         cls_loss = torch.scalar_tensor(0, device=self.device)
         bbox_loss = torch.scalar_tensor(0, device=self.device)
@@ -274,7 +271,7 @@ class YoloV3(AlgorithmBase):
         BCEcls = nn.BCELoss()
         BCEobj = nn.BCELoss()
 
-        for i, det in enumerate(dets):
+        for i, det in enumerate(dets_ls):
             img_ids, anchor_ids, grid_j, grid_i = indices[i]
             num_bboxes = img_ids.shape[0]
             tobj = torch.zeros_like(det[..., 0], device=self.device)  # target obj
@@ -285,7 +282,7 @@ class YoloV3(AlgorithmBase):
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
                 pbox = torch.cat((pxy - pxy.long(), pwh), 1)
 
-                iou = bbox_iou(pbox.T, tbox[i], bbox_format="coco", iou_type="ciou")
+                iou = bbox_iou(pbox.T, tbboxes[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
                 tobj[img_ids, anchor_ids, grid_j, grid_i] = (
