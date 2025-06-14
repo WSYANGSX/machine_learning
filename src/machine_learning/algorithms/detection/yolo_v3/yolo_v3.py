@@ -277,20 +277,19 @@ class YoloV3(AlgorithmBase):
                 ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
                 pbox = torch.cat((pxy, pwh), 1)
-                iou = bbox_iou(pbox.T, tbboxes[i], bbox_format="coco", iou_type="ciou")
+                iou = bbox_iou(pbox, tbboxes[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
                 tobj[img_ids, anchor_ids, grid_j, grid_i] = (
                     iou.detach().clamp(0).type(tobj.dtype)
                 )  # Use cells with iou > 0 as object targets
-
                 if ps.size(1) - 5 > 1:
                     t = torch.zeros_like(ps[:, 5:], device=self.device)  # targets
                     t[range(num_bboxes), tcls[i]] = 1
-                    cls_loss += BCEcls(ps[:, 5:].clamp(0.0, 1.0), t.clamp(0.0, 1.0))  # BCE
+                    cls_loss += BCEcls(ps[:, 5:], t)  # BCE
 
-            obj_loss += BCEobj(det[..., 4].clamp(0.0, 1.0), tobj.clamp(0.0, 1.0))  # obj loss
+            obj_loss += BCEobj(det[..., 4], tobj)  # obj loss
 
-        loss = self.b_weiget * bbox_loss + self.c_weiget * cls_loss + self.o_weiget * obj_loss
+        loss = self.b_weiget * bbox_loss
 
         return loss

@@ -91,46 +91,101 @@ def bbox_iou(
     bbox1: torch.Tensor,
     bbox2: torch.Tensor,
     bbox_format: Literal["pascal_voc", "coco"] = "pascal_voc",
-    iou_type: Literal["default", "giou", "diou", "ciou"] = "Default",
+    iou_type: Literal["default", "giou", "diou", "ciou"] = "default",
     eps: float = 1e-9,
-):
-    """Returns the IoU of box1 to box2. box1 is 4, box2 is nx4"""
-    # Get the coordinates of bounding boxes
+    safe: bool = True,  # 添加安全模式开关
+) -> torch.Tensor:
+    """计算改进的 IoU, 增强数值稳定性"""
+
+    # 0. 输入验证
+    if safe:
+        # 检查输入是否为有限值
+        if not torch.isfinite(bbox1).all() or not torch.isfinite(bbox2).all():
+            raise ValueError("输入边界框包含非有限值(NaN或inf)")
+
+        # 检查坐标有效性
+        if bbox_format == "pascal_voc":
+            if (bbox1[2] < bbox1[0]).any() or (bbox1[3] < bbox1[1]).any():
+                print("警告: bbox1 包含无效坐标 (x2 < x1 或 y2 < y1)")
+            if (bbox2[2] < bbox2[0]).any() or (bbox2[3] < bbox2[1]).any():
+                print("警告: bbox2 包含无效坐标 (x2 < x1 或 y2 < y1)")
+
+    # 1. 格式转换
     if bbox_format == "coco":
-        bbox1, bbox2 = xywh2xyxy(bbox1), xywh2xyxy(bbox2)
+        bbox1 = xywh2xyxy(bbox1)
+        bbox2 = xywh2xyxy(bbox2)
 
-    bbox2 = bbox2.T
+    # 2. 提取坐标 - 添加维度处理
+    if bbox1.dim() == 1:
+        bbox1 = bbox1.unsqueeze(0)
+    if bbox2.dim() == 1:
+        bbox2 = bbox2.unsqueeze(0)
 
-    bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[0], bbox1[1], bbox1[2], bbox1[3]
-    bb2_x1, bb2_y1, bb2_x2, bb2_y2 = bbox2[0], bbox2[1], bbox2[2], bbox2[3]
+    bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[:, 0], bbox1[:, 1], bbox1[:, 2], bbox1[:, 3]
+    bb2_x1, bb2_y1, bb2_x2, bb2_y2 = bbox2[:, 0], bbox2[:, 1], bbox2[:, 2], bbox2[:, 3]
 
-    # Intersection area
-    inter = (torch.min(bb1_x2, bb2_x2) - torch.max(bb1_x1, bb2_x1)).clamp(0) * (
-        torch.min(bb1_y2, bb2_y2) - torch.max(bb1_y1, bb2_y1)
-    ).clamp(0)
+    # 3. 计算交集区域 (添加保护性clamp)
+    inter_x1 = torch.max(bb1_x1, bb2_x1)
+    inter_y1 = torch.max(bb1_y1, bb2_y1)
+    inter_x2 = torch.min(bb1_x2, bb2_x2)
+    inter_y2 = torch.min(bb1_y2, bb2_y2)
 
-    # Union Area
-    w1, h1 = bb1_x2 - bb1_x1, bb1_y2 - bb1_y1 + eps
-    w2, h2 = bb2_x2 - bb2_x1, bb2_y2 - bb2_y1 + eps
-    union = w1 * h1 + w2 * h2 - inter + eps
+    inter_width = (inter_x2 - inter_x1).clamp(min=0)
+    inter_height = (inter_y2 - inter_y1).clamp(min=0)
+    inter_area = inter_width * inter_height
 
-    iou = inter / union
-    if iou_type == "giou" or iou_type == "diou" or iou_type == "ciou":
-        # convex (smallest enclosing box) width
-        cw = torch.max(bb1_x2, bb2_x2) - torch.min(bb1_x1, bb2_x1)
-        ch = torch.max(bb1_y2, bb2_y2) - torch.min(bb1_y1, bb2_y1)
-        if iou_type == "diou" or iou_type == "ciou":
-            c2 = cw**2 + ch**2 + eps
-            rho2 = ((bb2_x1 + bb2_x2 - bb1_x1 - bb1_x2) ** 2 + (bb2_y1 + bb2_y2 - bb1_y1 - bb1_y2) ** 2) / 4
-            if iou_type == "diou":
-                return iou - rho2 / c2  # DIoU
-            elif iou_type == "ciou":
-                v = (4 / torch.pi**2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
+    # 4. 计算并集区域 (所有维度添加eps)
+    bb1_width = (bb1_x2 - bb1_x1).clamp(min=eps)
+    bb1_height = (bb1_y2 - bb1_y1).clamp(min=eps)
+    bb2_width = (bb2_x2 - bb2_x1).clamp(min=eps)
+    bb2_height = (bb2_y2 - bb2_y1).clamp(min=eps)
+
+    union_area = (bb1_width * bb1_height) + (bb2_width * bb2_height) - inter_area + eps
+
+    # 5. 基本IoU计算
+    iou = inter_area / union_area
+
+    # 6. 高级IoU变体
+    if iou_type != "default":
+        # 最小包围框
+        c_x1 = torch.min(bb1_x1, bb2_x1)
+        c_y1 = torch.min(bb1_y1, bb2_y1)
+        c_x2 = torch.max(bb1_x2, bb2_x2)
+        c_y2 = torch.max(bb1_y2, bb2_y2)
+
+        c_width = (c_x2 - c_x1).clamp(min=eps)
+        c_height = (c_y2 - c_y1).clamp(min=eps)
+        c_area = c_width * c_height
+
+        if iou_type in ["diou", "ciou"]:
+            # 中心点距离平方
+            bb1_cx = (bb1_x1 + bb1_x2) / 2
+            bb1_cy = (bb1_y1 + bb1_y2) / 2
+            bb2_cx = (bb2_x1 + bb2_x2) / 2
+            bb2_cy = (bb2_y1 + bb2_y2) / 2
+
+            center_dist_sq = (bb2_cx - bb1_cx).pow(2) + (bb2_cy - bb1_cy).pow(2)
+            c_diagonal_sq = c_width.pow(2) + c_height.pow(2) + eps
+
+            diou_term = center_dist_sq / c_diagonal_sq
+
+            if iou_type == "ciou":
+                # 改进的宽高比计算 (避免除零)
+                arctan_diff = torch.atan(bb2_width / bb2_height.clamp(min=eps)) - torch.atan(
+                    bb1_width / bb1_height.clamp(min=eps)
+                )
+
+                # 更稳定的v计算
+                v = (4 / (torch.pi**2)) * arctan_diff.pow(2)
+
+                # 动态加权
                 with torch.no_grad():
                     alpha = v / ((1 + eps) - iou + v)
-                return iou - (rho2 / c2 + v * alpha)
-        else:
-            c_area = cw * ch + eps
-            return iou - (c_area - union) / c_area
-    else:
-        return iou
+
+                return iou - diou_term - v * alpha
+            else:
+                return iou - diou_term
+        else:  # GIoU
+            return iou - (c_area - union_area) / c_area
+
+    return iou
