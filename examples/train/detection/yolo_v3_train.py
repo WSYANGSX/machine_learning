@@ -34,8 +34,8 @@ def main():
         batch_size=64,
         data_num_workers=8,
         epochs=500,
-        log_interval=2,
-        save_interval=2,
+        log_interval=10,
+        save_interval=10,
         save_best=True,
     )
     trainer = Trainer(trainer_cfg, data, yolo_v3)
@@ -44,8 +44,8 @@ def main():
     trainer.train()
     # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
 
-    # 模型验证
-    trainer.eval()
+    # # 模型验证
+    # trainer.eval()
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ class CustomTransform:
                 self.augmentation = DEFAULT_AUG if augmentation == "default" else ENHANCED_AUG
             else:
                 self.augmentation = augmentation
+        else:
+            self.augmentation = None
 
     def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
         """应用数据增强"""

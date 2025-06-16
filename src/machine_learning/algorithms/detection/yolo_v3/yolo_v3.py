@@ -172,11 +172,11 @@ class YoloV3(AlgorithmBase):
 
             # 根据特征图尺寸选择锚框
             if H == 52:
-                norm_anchors = torch.tensor(self.anchor_sizes[:3], dtype=torch.int32, device=self.device) / stride
+                norm_anchors = torch.tensor(self.anchor_sizes[:3], dtype=torch.float32, device=self.device) / stride
             elif H == 26:
-                norm_anchors = torch.tensor(self.anchor_sizes[3:6], dtype=torch.int32, device=self.device) / stride
+                norm_anchors = torch.tensor(self.anchor_sizes[3:6], dtype=torch.float32, device=self.device) / stride
             else:
-                norm_anchors = torch.tensor(self.anchor_sizes[6:9], dtype=torch.int32, device=self.device) / stride
+                norm_anchors = torch.tensor(self.anchor_sizes[6:9], dtype=torch.float32, device=self.device) / stride
 
             # 构建偏移矩阵, 注意 ”ij“ 形式和 ”xy“ 形式
             grid_x, grid_y = torch.meshgrid(torch.arange(W), torch.arange(H), indexing="xy")
@@ -264,9 +264,9 @@ class YoloV3(AlgorithmBase):
     ) -> torch.Tensor:
         tcls, tbboxes, indices, _ = self.prepare_targets(dets_ls, anchors_ls, cls_iids_bboxes)
 
-        cls_loss = torch.scalar_tensor(0, device=self.device)
-        bbox_loss = torch.scalar_tensor(0, device=self.device)
-        obj_loss = torch.scalar_tensor(0, device=self.device)
+        cls_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
+        bbox_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
+        obj_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
 
         # 使用BCELoss
         BCEcls = nn.BCELoss()
