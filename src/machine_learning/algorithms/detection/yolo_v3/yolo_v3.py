@@ -12,6 +12,9 @@ from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import bbox_iou
 
 
+torch.set_printoptions(threshold=torch.inf)
+
+
 class YoloV3(AlgorithmBase):
     def __init__(
         self,
@@ -103,6 +106,7 @@ class YoloV3(AlgorithmBase):
             det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
             loss = self.criterion(det_ls, norm_anchors_ls, cls_iids_bboxes)
+
             loss.backward()  # 反向传播计算各权重的梯度
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -271,7 +275,9 @@ class YoloV3(AlgorithmBase):
         for i, det in enumerate(dets_ls):
             img_ids, anchor_ids, grid_j, grid_i = indices[i]
             num_bboxes = img_ids.shape[0]
-            tobj = torch.zeros_like(det[..., 0], device=self.device)  # target obj
+
+            # 使用detach创建tobj以避免梯度传播问题
+            tobj = torch.zeros_like(det[..., 0], device=self.device).detach()
 
             if num_bboxes:
                 ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
@@ -290,6 +296,6 @@ class YoloV3(AlgorithmBase):
 
             obj_loss += BCEobj(det[..., 4], tobj)  # obj loss
 
-        loss = self.b_weiget * bbox_loss
+        loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
         return loss

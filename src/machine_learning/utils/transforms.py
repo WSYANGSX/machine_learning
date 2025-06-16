@@ -29,7 +29,7 @@ class CustomTransform:
 class YoloTransform(CustomTransform):
     def __init__(
         self,
-        augmentation: Literal["default", "enhanced"] | A.Compose,
+        augmentation: Literal["default", "enhanced"] | A.Compose = None,
         normalize: bool = True,
         mean: Sequence[float] | None = None,
         std: Sequence[float] | None = None,
@@ -61,18 +61,22 @@ class YoloTransform(CustomTransform):
             转换成 Tensor 后的 (image_tensor, bboxes_tensor, category_ids)
         """
         img, bboxes, category_ids = data
-        auged_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
 
-        img = auged_data["image"]
-        bboxes = auged_data["bboxes"]
-        category_ids = auged_data["category_ids"]  # augementation会将其他未注册数据类型转换成列表类型
+        if self.augmentation is not None:
+            auged_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
+
+            img = auged_data["image"]
+            bboxes = auged_data["bboxes"]
+            category_ids = auged_data["category_ids"]  # augementation会将其他未注册数据类型转换成列表类型
 
         # 转化为Tensor
-        img = self.to_tensor(img)
-        bboxes = torch.from_numpy(bboxes)
-        category_ids = torch.tensor(category_ids)
+        if self.to_tensor:
+            img = self.to_tensor(img)
+            bboxes = torch.from_numpy(bboxes)
+            category_ids = torch.tensor(category_ids)
 
         # 归一化
-        img = self.normalize(img)
+        if self.normalize:
+            img = self.normalize(img)
 
         return img, bboxes, category_ids

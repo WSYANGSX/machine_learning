@@ -31,11 +31,11 @@ def main():
     trainer_cfg = TrainCfg(
         log_dir="./logs/yolov3/",
         model_dir="./checkpoints/yolov3/",
-        batch_size=96,
+        batch_size=64,
         data_num_workers=8,
         epochs=500,
-        log_interval=20,
-        save_interval=20,
+        log_interval=2,
+        save_interval=2,
         save_best=True,
     )
     trainer = Trainer(trainer_cfg, data, yolo_v3)

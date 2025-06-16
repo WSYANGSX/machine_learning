@@ -76,7 +76,7 @@ DEFAULT_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-20, 20), sat_shift_limit=(-20, 20), val_shift_limit=(-20, 20), p=0.5),
         # 水平翻转
         A.HorizontalFlip(p=0.5),
-        PadShortEdge(pad_values=0, p=1),
+        PadShortEdge(pad_values=0.1, p=1),
     ],
     bbox_params=A.BboxParams(format="yolo", min_visibility=0.4, label_fields=["category_ids"], clip=True),
 )
@@ -97,7 +97,7 @@ ENHANCED_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-30, 30), sat_shift_limit=(-30, 30), val_shift_limit=(-30, 30), p=0.8),
         # 强制水平翻转（100%概率）
         A.HorizontalFlip(p=1.0),
-        PadShortEdge(pad_values=0, p=1),
+        PadShortEdge(pad_values=0.1, p=1),
     ],
     bbox_params=A.BboxParams(format="yolo", min_visibility=0.3, label_fields=["category_ids"], clip=True),
 )

@@ -5,7 +5,7 @@ import struct
 import random
 import warnings
 from copy import deepcopy
-from PIL import Image, ImageFile
+from PIL import Image
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, MISSING
 from typing import Callable, Sequence, Any
@@ -18,9 +18,6 @@ from torch.utils.data import Dataset
 from machine_learning.utils.transforms import CustomTransform, YoloTransform
 from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
-
-
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class FullDataset(Dataset):
@@ -110,6 +107,7 @@ class YoloDataset(LazyDataset):
         img_size: int = 416,
         img_size_stride: int = 32,
         multiscale: bool = False,
+        
     ):
         """LazyLoadDataset初始化.
 
@@ -136,7 +134,6 @@ class YoloDataset(LazyDataset):
         try:
             img_path = self.data_paths[index % len(self.data_paths)]
             img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-
         except Exception:
             print(f"Could not read image '{img_path}'.")
             return
@@ -148,9 +145,10 @@ class YoloDataset(LazyDataset):
             # Ignore warning if file is empty
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                labels = np.loadtxt(label_path, dtype=np.float64).reshape(-1, 5)
+                labels = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
                 bboxes = labels[:, 1:5]
                 category_ids = np.array(labels[:, 0], dtype=np.uint16)
+
         except Exception:
             print(f"Could not read label '{label_path}'.")
             return
