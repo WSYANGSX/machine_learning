@@ -107,7 +107,6 @@ class YoloDataset(LazyDataset):
         img_size: int = 416,
         img_size_stride: int = 32,
         multiscale: bool = False,
-        
     ):
         """LazyLoadDataset初始化.
 
@@ -373,13 +372,15 @@ class YoloParser(DatasetParser):
         classes = list_from_txt(class_names_file)
 
         train_img_dir = os.path.join(self.dataset_dir, "images/train/")
-        val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         train_labels_dir = os.path.join(self.dataset_dir, "labels/train/")
+
+        val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
         # 读取训练、验证图像列表
         train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
+
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
 

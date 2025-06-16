@@ -277,7 +277,7 @@ class YoloV3(AlgorithmBase):
             num_bboxes = img_ids.shape[0]
 
             # 使用detach创建tobj以避免梯度传播问题
-            tobj = torch.zeros_like(det[..., 0], device=self.device).detach()
+            tobj = torch.zeros_like(det[..., 0], device=self.device)
 
             if num_bboxes:
                 ps = det[img_ids, anchor_ids, grid_j, grid_i]  # det [B, A, H, W, (C / A)]
@@ -286,15 +286,17 @@ class YoloV3(AlgorithmBase):
                 iou = bbox_iou(pbox, tbboxes[i], bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
-                tobj[img_ids, anchor_ids, grid_j, grid_i] = (
-                    iou.detach().clamp(0).type(tobj.dtype)
-                )  # Use cells with iou > 0 as object targets
-                if ps.size(1) - 5 > 1:
-                    t = torch.zeros_like(ps[:, 5:], device=self.device)  # targets
-                    t[range(num_bboxes), tcls[i]] = 1
-                    cls_loss += BCEcls(ps[:, 5:], t)  # BCE
+                tobj[img_ids, anchor_ids, grid_j, grid_i] = iou.detach().clamp(0, 1).type(tobj.dtype)
+                if ps.size(1) > 5:
+                    targets = torch.zeros_like(ps[:, 5:], device=self.device)
+                    targets[range(num_bboxes), tcls[i]] = 1
 
-            obj_loss += BCEobj(det[..., 4], tobj)  # obj loss
+                    # 只计算分类部分
+                    class_preds = ps[:, 5:]
+                    cls_loss += BCEcls(class_preds, targets)
+
+            obj_preds = det[..., 4]  # 对象存在性预测
+            obj_loss += BCEobj(obj_preds, tobj.detach())  # 目标使用detach
 
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
