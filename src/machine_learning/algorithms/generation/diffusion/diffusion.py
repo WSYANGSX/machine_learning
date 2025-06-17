@@ -1,4 +1,4 @@
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Any
 from tqdm import trange
 
 import torch
@@ -6,54 +6,52 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import show_image
+from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
+from machine_learning.utils.draw import show_image
 
 
 class Diffusion(AlgorithmBase):
     def __init__(
         self,
-        cfg: str,
+        cfg: YamlFilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
-        name: str = "diffusion",
+        name: str | None = "diffusion",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ):
         """
-        扩散模型实现
+        Implementation of Diffusion algorithm
 
-        parameters:
-        - cfg (str): 配置文件路径 (YAML格式).
-        - models (Mapping[str, BaseNet]): diffusion算法所需模型.{"noise_predictor":model}.
-        - name (str): 算法名称. Default to "diffusion".
-        - device (str): 运行设备 (auto自动选择).
+        Args:
+            cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
+            models (Mapping[str, BaseNet]): Models required by the Diffusion algorithm, {"noise_predictor": model}.
+            name (str, optional): Name of the algorithm. Defaults to "diffusion".
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
         """
         super().__init__(cfg, models, name, device)
 
-        # -------------------- 配置优化器 --------------------
-        self._configure_optimizers()
-        self._configure_schedulers()
-
-        # -------------------- 配置权重项 --------------------
+        # main parameters of the algorithm
         self.time_steps = self.cfg["algorithm"].get("time_steps", 2000)
+
+        # ------------------------ configure algo parameters -----------------------
         self._configure_factors(self.cfg["algorithm"]["beta"]["method"])
 
     def _configure_optimizers(self) -> None:
-        opt_config = self.cfg["optimizer"]
+        opt_cfg = self.cfg["optimizer"]
 
-        if opt_config["type"] == "Adam":
+        if opt_cfg["type"] == "Adam":
             self._optimizers.update(
                 {
                     "noise_predictor": torch.optim.Adam(
                         params=self.models["noise_predictor"].parameters(),
-                        lr=opt_config["learning_rate"],
-                        betas=(opt_config["beta1"], opt_config["beta2"]),
-                        eps=opt_config["eps"],
-                        weight_decay=opt_config["weight_decay"],
+                        lr=opt_cfg["learning_rate"],
+                        betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
+                        eps=opt_cfg["eps"],
+                        weight_decay=opt_cfg["weight_decay"],
                     )
                 }
             )
         else:
-            ValueError(f"暂时不支持优化器:{opt_config['type']}")
+            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sch_config = self.cfg["scheduler"]
@@ -83,7 +81,7 @@ class Diffusion(AlgorithmBase):
         else:
             raise ValueError(f"Method {method} to generate betas is not implemented.")
 
-        # 模型因子
+        # model factors
         self.alphas = 1 - self.betas  # index 0:T-1
         self.alphas_hat = torch.cumprod(self.alphas, dim=0)  # index 0:T-1
         self.alphas_hat_prev = torch.cat(
@@ -103,7 +101,7 @@ class Diffusion(AlgorithmBase):
         return sqrt_alphas_cumprod_t * raw_data + sqrt_one_minus_alphas_cumprod_t * noise
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> float:
-        """训练单个epoch"""
+        """Train a single epoch"""
         self.set_train()
 
         total_loss = 0.0
@@ -120,7 +118,8 @@ class Diffusion(AlgorithmBase):
             loss = criterion(noise, noise_)
 
             self._optimizers["noise_predictor"].zero_grad()
-            loss.backward()  # 反向传播计算各权重的梯度
+            loss.backward()  # Backpropagation is used to calculate the gradients of each weight.
+
             torch.nn.utils.clip_grad_norm_(
                 self.models["noise_predictor"].parameters(), self.cfg["optimizer"]["grad_clip"]
             )
@@ -138,7 +137,7 @@ class Diffusion(AlgorithmBase):
         return {"noise_predictor": avg_loss}
 
     def validate(self) -> float:
-        """验证步骤"""
+        """Validate after a single train epoch"""
         self.set_eval()
 
         total_loss = 0.0
@@ -162,14 +161,14 @@ class Diffusion(AlgorithmBase):
 
     @torch.no_grad()
     def sample(self, data: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """基于当前时刻数据推断前一时刻的数据
+        """Infer the data of the previous moment based on the data of the current moment
 
         Args:
-            data (torch.Tensor): 当前时刻输入的数据.
-            t (torch.Tensor): 当前时刻.
+            data (torch.Tensor): The data at the current time step.
+            t (torch.Tensor): The present time step.
 
         Returns:
-            torch.Tensor: 前一时刻的预测数据.
+            torch.Tensor: The predicted data of the previous time step.
         """
         beta_t = extract(self.betas, t - 1, data.shape)
         sqrt_one_minus_alphas_hat_t = extract(self.sqrt_one_minus_alphas_hat, t - 1, data.shape)
@@ -189,7 +188,7 @@ class Diffusion(AlgorithmBase):
 
     @torch.no_grad()
     def eval(self, num_samples: int = 5) -> None:
-        """可视化重构结果"""
+        """Evaluate the model effect by visualizing reconstruction results"""
         self.set_eval()
 
         data = torch.randn(num_samples, *self.batch_data_shape[1:], device=self.device)
@@ -235,8 +234,10 @@ def sigmoid_beta_schedule(start: float, end: float, time_steps: int) -> torch.Te
 
 def extract(a: torch.Tensor, t: torch.Tensor, data_shape: tuple) -> torch.Tensor:
     """
-    根据生成的时间序列 t 提取对应 data 的时间t时的a值, 然后将 a 值转换为与 data 相同的 size, 用于后续数据广播
-    (batch_size, channels, 1, 1) -> (batch_size, channels, height, width)
+    Extract the a value from the data corresponding to time t in the generated time series, then reshape/expand this
+    scalar a value to match the same spatial dimensions as data (i.e., transform its shape from
+    (batch_size, channels, 1, 1) to (batch_size, channels, height, width)) to enable broadcasting for subsequent
+    operations.
     """
     batch_size = data_shape[0]
     out = a.gather(-1, t)

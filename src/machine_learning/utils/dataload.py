@@ -146,7 +146,12 @@ class YoloDataset(LazyDataset):
                 warnings.simplefilter("ignore")
                 labels = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
                 bboxes = labels[:, 1:5]
-                category_ids = np.array(labels[:, 0], dtype=np.uint16)
+                category_ids = labels[:, 0]
+
+                # 筛选有效的边界框
+                valid_indices = (bboxes[:, 2] > 0) & (bboxes[:, 3] > 0)
+                bboxes = bboxes[valid_indices]
+                category_ids = category_ids[valid_indices]
 
         except Exception:
             print(f"Could not read label '{label_path}'.")
@@ -173,7 +178,7 @@ class YoloDataset(LazyDataset):
 
         # Selects new image size every tenth batch
         if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_adj_stride))
+            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_size_stride))
 
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs])
@@ -371,14 +376,14 @@ class YoloParser(DatasetParser):
         # 读取种类名称
         classes = list_from_txt(class_names_file)
 
-        train_img_dir = os.path.join(self.dataset_dir, "images/train/")
-        train_labels_dir = os.path.join(self.dataset_dir, "labels/train/")
+        train_img_dir = os.path.join(self.dataset_dir, "images/val/")
+        train_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
         val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
         # 读取训练、验证图像列表
-        train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
+        train_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
 
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]

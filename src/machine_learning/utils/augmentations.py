@@ -87,7 +87,14 @@ DEFAULT_AUG = A.Compose(
         A.HorizontalFlip(p=0.5),
         PadShortEdge(pad_values=0.1, p=1),
     ],
-    bbox_params=A.BboxParams(format="yolo", min_visibility=0.4, label_fields=["category_ids"], clip=True),
+    bbox_params=A.BboxParams(
+        format="yolo",
+        min_width=0.02,
+        min_height=0.02,
+        min_visibility=0.3,
+        label_fields=["category_ids"],
+        clip=True,
+    ),
 )
 
 # 强增强

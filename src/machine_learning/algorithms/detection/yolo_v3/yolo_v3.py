@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Iterable
+from typing import Literal, Iterable, Mapping, Any
 from itertools import chain
 
 import torch
@@ -8,47 +8,41 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
 from machine_learning.utils.detection import bbox_iou
-
-
-torch.set_printoptions(threshold=torch.inf)
 
 
 class YoloV3(AlgorithmBase):
     def __init__(
         self,
-        cfg: str | dict,
-        models: dict[str, BaseNet],
-        name: str = "yolo_v3",
+        cfg: YamlFilePath | Mapping[str, Any],
+        models: Mapping[str, BaseNet],
+        name: str | None = "yolo_v3",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
-        Yolov3目标检测器算法实现
+        Implementation of YoloV3 object detection algorithm
 
-        parameters:
-        - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): yolov3算法所需模型, {"darknet":model1, "fpn":model2}.
-        - name (str): 算法名称. Default to "yolo_v3".
-        - device (str): 运行设备(auto自动选择).
+        Args:
+            cfg (str, dict): Configuration of the algorithm, it can be yaml file path or cfg dict.
+            models (dict[str, BaseNet]): Models required by the YOLOv3 algorithm, {"darknet": model1, "fpn": model2}.
+            name (str): Name of the algorithm. Defaults to "yolo_v3".
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
         """
         super().__init__(cfg=cfg, models=models, name=name, device=device)
 
-        # 配置主要参数
-        self.num_classes = self.cfg["algorithm"]["num_classes"]
-        self.class_names = self.cfg["algorithm"].get("class_names", None)
-        self.num_anchors = self.cfg["algorithm"]["num_anchors"]
+        # main parameters of the algorithm
+        self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
         self.anchor_sizes = self.cfg["algorithm"]["anchor_sizes"]
         self.default_img_size = self.cfg["algorithm"]["image_size"]
-
-        # loss权重参数
+        self.ignore_threshold = self.cfg["algorithm"]["ignore_threshold"]
         self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
         self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)
         self.c_weiget = self.cfg["algorithm"].get("c_weiget", 0.5)
 
-        # -------------------- 配置优化器 --------------------
-        self._configure_optimizers()
-        self._configure_schedulers()
+        # parameters that varys due to difference of dataset
+        self.class_nums = self.cfg["algorithm"].get("class_nums", None)
+        self.class_names = self.cfg["algorithm"].get("class_names", None)
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
@@ -68,7 +62,7 @@ class YoloV3(AlgorithmBase):
                 }
             )
         else:
-            ValueError(f"暂时不支持优化器:{opt_cfg['type']}")
+            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sch_config = self._cfg["scheduler"]
@@ -86,12 +80,15 @@ class YoloV3(AlgorithmBase):
             )
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
-        """训练单个epoch"""
         self.set_train()
 
         total_loss = 0.0
 
         for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
+            if check_data_integrity(img, bboxes, category_ids, self.num_classes):
+                print(f"Epoch: {epoch}, Batch: {batch_idx}, invalid data detected, skipping.")
+                continue
+
             img = img.to(self.device, non_blocking=True)
             cls_iids_bboxes = torch.cat([category_ids.view(-1, 1), indices.view(-1, 1), bboxes], dim=-1).to(
                 self.device
@@ -102,12 +99,11 @@ class YoloV3(AlgorithmBase):
             skips = self.models["darknet"](img)
             fimgs = self.models["fpn"](*skips)
 
-            # 特征图解码
             det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
             loss = self.criterion(det_ls, norm_anchors_ls, cls_iids_bboxes)
 
-            loss.backward()  # 反向传播计算各权重的梯度
+            loss.backward()
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
             self._optimizers["yolo"].step()
@@ -125,7 +121,6 @@ class YoloV3(AlgorithmBase):
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """验证步骤"""
         self.set_eval()
 
         total_loss = 0.0
@@ -139,7 +134,6 @@ class YoloV3(AlgorithmBase):
             skips = self.models["darknet"](img)
             fimgs = self.models["fpn"](*skips)
 
-            # 特征图解码
             det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
 
             total_loss += self.criterion(det_ls, norm_anchors_ls, cls_iids_bboxes).item()
@@ -160,17 +154,16 @@ class YoloV3(AlgorithmBase):
         det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
         ...
 
-    # 特征图解码
     def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
         detection_ls, norm_anchors_ls = [], []
 
         for feature in features:
-            # 调整维度顺序 [B,C,H,W] -> [B,H,W,C]
+            # [B,C,H,W] -> [B,H,W,C]
             detection = feature.permute(0, 2, 3, 1).contiguous()
             B, H, W, _ = detection.shape
-            stride = img_size // H  # 计算步长
+            stride = img_size // H  # compute stride
 
-            # 根据特征图尺寸选择锚框
+            # anchors choose
             if H == 52:
                 norm_anchors = torch.tensor(self.anchor_sizes[:3], dtype=torch.float32, device=self.device) / stride
             elif H == 26:
@@ -178,29 +171,38 @@ class YoloV3(AlgorithmBase):
             else:
                 norm_anchors = torch.tensor(self.anchor_sizes[6:9], dtype=torch.float32, device=self.device) / stride
 
-            # 构建偏移矩阵, 注意 ”ij“ 形式和 ”xy“ 形式
+            # Construct the offset matrix, paying attention to the "ij" form and the "xy" form
             grid_x, grid_y = torch.meshgrid(torch.arange(W), torch.arange(H), indexing="xy")
             grid_xy = torch.stack((grid_x, grid_y), dim=-1).float().to(self.device)  # [H, W, 2]
 
-            # 扩展维度以支持广播 [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
+            # [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
             grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
 
-            # 调整锚框形状 [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
+            # [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
             norm_wh = norm_anchors.view(1, 1, 1, self.num_anchors, 2)
 
-            # 将预测张量重塑为 [B, H, W, num_anchors, (5 + num_classes)]
+            # [B, H, W, num_anchors, (5 + num_classes)]
             detection = detection.view(B, H, W, self.num_anchors, -1)
 
-            # 特征解码
-            detection[..., :2] = torch.sigmoid(detection[..., :2]) + grid_xy  # 特征图坐标系上的中心点坐标
-            detection[..., 2:4] = norm_wh * torch.exp(detection[..., 2:4])  # 特征图坐标系上的bboxes宽和高
-            detection[..., 4] = torch.sigmoid(detection[..., 4])  # 将obj是否存在映射到 0-1
-            detection[..., 5:] = torch.sigmoid(detection[..., 5:])  # 将cls是否正确映射到 0-1
+            # Decompose the original detection tensor. In-place operations on the tensor will disrupt the
+            # gradient and lead to calculation errors
+            xy = detection[..., :2]  # Center point offset
+            wh = detection[..., 2:4].clamp(-10, 10)  # Width and height offset
+            obj = detection[..., 4:5]  # Target Confidence Level
+            cls = detection[..., 5:]  # Classification Probability
 
-            # 重塑张量维度 [B, A, H, W, (C/A)]
-            detection = detection.view(B, self.num_anchors, H, W, -1)
+            new_xy = (
+                torch.sigmoid(xy) + grid_xy
+            )  # The coordinates of center point on the coordinate system of feature map
+            new_wh = norm_wh * torch.exp(wh)  # The width and height of bboxes on the feature map coordinate system
+            new_obj = torch.sigmoid(obj)  # Map the existence of obj to 0-1
+            new_cls = torch.sigmoid(cls)  # Whether the cls is correctly mapped to 0-1
 
-            detection_ls.append(detection)
+            # reshape tensor -> [B, A, H, W, (C/A)]
+            detection_decoded = torch.cat([new_xy, new_wh, new_obj, new_cls], dim=-1)
+            detection_decoded = detection_decoded.permute(0, 3, 1, 2, 4).contiguous()  # [B, num_anchors, H, W, ...]
+
+            detection_ls.append(detection_decoded)
             norm_anchors_ls.append(norm_anchors)
 
         return detection_ls, norm_anchors_ls
@@ -212,8 +214,11 @@ class YoloV3(AlgorithmBase):
         cls_iids_bboxes: torch.Tensor,
     ) -> tuple:
         """
-        将原始图像目标信息映射到特征空间, 为loss计算做准备, 不将特征空间映射到原始图像空间的原因是
-        特征空间的边界框数量远远大于目标边界框,比如52*52特征图的边界框数量为52*52*3, 计算复杂度高
+        The target information of the original image is mapped to the feature space to prepare for the loss calculation
+
+        The reason for not mapping the feature space to the original image space is that the number of bounding boxes in
+        the feature space is much larger than that in the target bounding box. For example, the number of bounding boxes
+        in the 52*52 feature map is 52*52*3, and the computational complexity is high.
         """
         tcls, tbboxes, indices, tanchors = [], [], [], []
 
@@ -236,15 +241,20 @@ class YoloV3(AlgorithmBase):
                 [anchor_ids, targets], dim=-1
             )  # targets [num_anchors, num_bboxes, 7] (anchor_ids, class_id, img_id, x, y, w, h)
 
-            # 筛选合适的目标框
+            # Filter the appropriate target box
             if num_bboxes:
                 r = targets[:, :, 5:7] / norm_anchors[:, None]
                 j = torch.max(r, 1.0 / r).max(2)[0] < 4
                 targets = targets[j]
 
             anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
-            gxy = targets[:, 3:5]  # 目标 bboxes 在特征图坐标系中中心点坐标
-            gwh = targets[:, 5:7]  # 目标 bboxes 在特征图坐标系中 bboxes 的宽和高
+
+            gxy = targets[
+                :, 3:5
+            ]  # The center point coordinates of the target bboxes in the feature map coordinate system
+            gwh = targets[
+                :, 5:7
+            ]  # The width and height of the target bboxes in the coordinate system of the feature map
             gij = gxy.long()
             gi, gj = gij.T
 
@@ -255,7 +265,6 @@ class YoloV3(AlgorithmBase):
 
         return tcls, tbboxes, indices, tanchors
 
-    # 损失函数设计
     def criterion(
         self,
         dets_ls: list[torch.Tensor],
@@ -276,7 +285,7 @@ class YoloV3(AlgorithmBase):
             img_ids, anchor_ids, grid_j, grid_i = indices[i]
             num_bboxes = img_ids.shape[0]
 
-            # 使用detach创建tobj以避免梯度传播问题
+            # Use detach() to create tobj to avoid gradient propagation issues.
             tobj = torch.zeros_like(det[..., 0], device=self.device)
 
             if num_bboxes:
@@ -284,20 +293,47 @@ class YoloV3(AlgorithmBase):
                 pxy, pwh = ps[:, :2], ps[:, 2:4]
                 pbox = torch.cat((pxy, pwh), 1)
                 iou = bbox_iou(pbox, tbboxes[i], bbox_format="coco", iou_type="ciou")
+
+                if torch.isnan(iou).any() or torch.isinf(iou).any():
+                    print("iou has nan value.")
+
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
-                tobj[img_ids, anchor_ids, grid_j, grid_i] = iou.detach().clamp(0, 1).type(tobj.dtype)
+                tobj[img_ids, anchor_ids, grid_j, grid_i] = iou.detach().clamp(0.0, 1.0).type(tobj.dtype)
                 if ps.size(1) > 5:
                     targets = torch.zeros_like(ps[:, 5:], device=self.device)
-                    targets[range(num_bboxes), tcls[i]] = 1
+                    targets[range(num_bboxes), tcls[i]] = 1.0
 
-                    # 只计算分类部分
                     class_preds = ps[:, 5:]
                     cls_loss += BCEcls(class_preds, targets)
 
-            obj_preds = det[..., 4]  # 对象存在性预测
-            obj_loss += BCEobj(obj_preds, tobj.detach())  # 目标使用detach
+            obj_preds = det[..., 4]
+            obj_loss += BCEobj(obj_preds, tobj.detach())
 
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
         return loss
+
+
+"""
+Helper function
+"""
+
+
+def check_data_integrity(img: torch.Tensor, bboxes: torch.Tensor, category_ids: torch.Tensor, class_nums: int) -> bool:
+    "Check whether the input data is valid"
+    # check img data
+    if torch.isnan(img).any() or torch.isinf(img).any():
+        return True
+
+    # check bboxes data
+    if (bboxes[..., 2:] <= 0).any():  # height and width less than zero
+        return True
+    if (bboxes[..., :2] < 0).any() or (bboxes[..., :2] > 1).any():  # value out of range [0,1]
+        return True
+
+    # check category_ids
+    if (category_ids < 0).any() or (category_ids >= class_nums).any():
+        return True
+
+    return False

@@ -1,6 +1,4 @@
-# 对于无监督式学习，比较好的办法是重建自己，通过重建数据发现数据的模态特征信息
-# auto-encoder相当于对数据进行降维处理，类似PCA，只不过PCA是通过求解特征向量进行降维，是线性降维方式，而auto-encoder是非线性降维方式
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Any
 from itertools import chain
 
 import torch
@@ -8,32 +6,28 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
 from machine_learning.utils.draw import show_raw_and_recon_images
 
 
 class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
-        cfg: str,
+        cfg: YamlFilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
-        name: str = "auto_encoder",
+        name: str | None = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
-        自编码器实现
+        Implementation of AutoEncoder algorithm
 
-        parameters:
-        - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): auto-encoder算法所需模型.{"encoder":model1,"decoder":model2}.
-        - name (str): 算法名称. Default to "auto_encoder".
-        - device (str): 运行设备(auto自动选择).
+        Args:
+            cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
+            models (Mapping[str, BaseNet]): Models required by the AutoEncoder algorithm, {"encoder": model1, "decoder": model2}.
+            name (str, optional): Name of the algorithm. Defaults to "auto_encoder".
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
         """
         super().__init__(cfg=cfg, models=models, name=name, device=device)
-
-        # -------------------- 配置优化器 --------------------
-        self._configure_optimizers()
-        self._configure_schedulers()
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
@@ -53,7 +47,7 @@ class AutoEncoder(AlgorithmBase):
                 }
             )
         else:
-            ValueError(f"暂时不支持优化器:{opt_cfg['type']}")
+            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sch_config = self._cfg["scheduler"]
@@ -71,7 +65,7 @@ class AutoEncoder(AlgorithmBase):
             )
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
-        """训练单个epoch"""
+        """Train a single epoch"""
         self.set_train()
 
         total_loss = 0.0
@@ -86,7 +80,7 @@ class AutoEncoder(AlgorithmBase):
             output = self._models["decoder"](z)
 
             loss = criterion(output, data)
-            loss.backward()  # 反向传播计算各权重的梯度
+            loss.backward()  # Backpropagation is used to calculate the gradients of each weight.
 
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
             self._optimizers["ae"].step()
@@ -100,10 +94,10 @@ class AutoEncoder(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"ae": avg_loss}  # 统一接口
+        return {"ae": avg_loss}  # use dict to unify interface
 
     def validate(self) -> dict[str, float]:
-        """验证步骤"""
+        """Validate after a single train epoch"""
         self.set_eval()
 
         total_loss = 0.0
@@ -118,10 +112,10 @@ class AutoEncoder(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"ae": avg_loss, "save": avg_loss}  # 统一接口
+        return {"ae": avg_loss, "save": avg_loss}  # use dict to unify interface
 
     def eval(self, num_samples: int = 5) -> None:
-        """可视化重构结果"""
+        """Evaluate the model effect"""
         self.set_eval()
 
         data, _ = next(iter(self.val_loader))

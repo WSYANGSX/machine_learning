@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from machine_learning.models.base import BaseNet, AttentionBlock
-from machine_learning.utils import cal_conv_output_size, cal_convtrans_output_size
+from machine_learning.utils.layers import cal_conv_output_size, cal_convtrans_output_size
 
 
 # 时间步嵌入层

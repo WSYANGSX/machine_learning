@@ -1,7 +1,6 @@
 algorithm: 
   name: "yolo_v3"
   image_size: [3, 416, 416]
-  num_classes: 80
   num_anchors: 3
   anchor_sizes: 
     - [10, 13]
@@ -13,11 +12,12 @@ algorithm:
     - [116, 90]
     - [156, 198]
     - [373, 326]
-  # loss权重
-  b_weight : 0.05
-  o_weight : 1.0
-  c_weight : 0.5
   ignore_threshold: 0.225
+  # loss权重
+  b_weight : 0.05 # bboxes loss weight
+  o_weight : 1.0  # object loss weight
+  c_weight : 0.5  # cls loss weight
+  
 
 optimizer:
   type: "Adam"

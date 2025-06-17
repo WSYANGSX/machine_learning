@@ -70,7 +70,7 @@ class Trainer:
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
 
-        self._algorithm._initialize_dependent_on_data(
+        self._algorithm._initialize_dependent_on_dataset(
             train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size, **data
         )
 

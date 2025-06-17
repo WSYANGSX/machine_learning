@@ -93,22 +93,29 @@ def bbox_iou(
     bbox_format: Literal["pascal_voc", "coco"] = "pascal_voc",
     iou_type: Literal["default", "giou", "diou", "ciou"] = "default",
     eps: float = 1e-9,
-    safe: bool = True,  # 添加安全模式开关
+    safe: bool = True,
 ) -> torch.Tensor:
     """计算改进的 IoU, 增强数值稳定性"""
 
     # 0. 输入验证
     if safe:
         # 检查输入是否为有限值
-        if not torch.isfinite(bbox1).all() or not torch.isfinite(bbox2).all():
-            raise ValueError("输入边界框包含非有限值(NaN或inf)")
+        if torch.isnan(bbox1).any():
+            raise ValueError("输入边界框 bbox1 包含非有限值(NaN)")
+        elif torch.isinf(bbox1).any():
+            raise ValueError("输入边界框 bbox1 包含非有限值(inf)")
+
+        if torch.isnan(bbox2).any():
+            raise ValueError("输入边界框 bbox2 包含非有限值(NaN)")
+        elif torch.isinf(bbox2).any():
+            raise ValueError("输入边界框 bbox2 包含非有限值(inf)")
 
         # 检查坐标有效性
         if bbox_format == "pascal_voc":
             if (bbox1[2] < bbox1[0]).any() or (bbox1[3] < bbox1[1]).any():
-                print("警告: bbox1 包含无效坐标 (x2 < x1 或 y2 < y1)")
+                raise ValueError("bbox1 包含无效坐标 (x2 < x1 或 y2 < y1)")
             if (bbox2[2] < bbox2[0]).any() or (bbox2[3] < bbox2[1]).any():
-                print("警告: bbox2 包含无效坐标 (x2 < x1 或 y2 < y1)")
+                raise ValueError("bbox2 包含无效坐标 (x2 < x1 或 y2 < y1)")
 
     # 1. 格式转换
     if bbox_format == "coco":

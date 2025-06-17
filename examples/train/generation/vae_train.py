@@ -1,114 +1,46 @@
-import torch.nn as nn
-from torchinfo import summary
 from torchvision import transforms
 
-from machine_learning.models import BaseNet
 from machine_learning.algorithms import VAE
+from machine_learning.models.vae import Encoder, Decoder
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils import minist_parse
-
-
-# 模型定义
-class Encoder(BaseNet):
-    def __init__(
-        self,
-        input_size: tuple[int],
-        z_dim: int,
-    ) -> None:
-        """
-        Network for vae encoder.
-
-        Args:
-            input_size (tuple[int]): 输入数据的size (channels, ...).
-            z_dim (int): 多维高斯的维度.
-        """
-        super().__init__()
-
-        self.input_size = input_size
-        self.z_dim = z_dim
-
-        self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 3, 2, 1), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
-        self.layer2 = nn.Sequential(nn.Conv2d(3, 6, 3, 2, 1), nn.BatchNorm2d(6), nn.ReLU(), nn.Flatten())  # (6,7,7)
-
-        self.mu = nn.Linear(294, self.z_dim)
-        self.sigma = nn.Linear(294, self.z_dim)
-
-    def forward(self, x):
-        mid_val = self.layer1(x)
-        mid_val = self.layer2(mid_val)
-
-        mu = self.mu(mid_val)
-        log_var = self.sigma(mid_val)
-
-        return mu, log_var
-
-    def view_structure(self):
-        summary(self, input_size=(1, *self.input_size))
-
-
-class Decoder(BaseNet):
-    def __init__(self, z_dim: int) -> None:
-        """
-        Network for vae decoder.
-
-        Args:
-            z_dim (int): 特征向量的维度.
-        """
-        super().__init__()
-
-        self.z_dim = z_dim
-
-        self.layer1 = nn.Sequential(nn.Linear(self.z_dim, 294), nn.Unflatten(1, (6, 7, 7)))
-
-        self.layer2 = nn.Sequential(
-            nn.BatchNorm2d(6),
-            nn.ReLU(),
-            nn.ConvTranspose2d(6, 3, 3, 2, 1, output_padding=1),
-        )
-
-        self.layer3 = nn.Sequential(
-            nn.BatchNorm2d(3), nn.ReLU(), nn.ConvTranspose2d(3, 1, 3, 2, 1, output_padding=1), nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        mid_val = self.layer1(x)
-        mid_val = self.layer2(mid_val)
-        output = self.layer3(mid_val)
-
-        return output
-
-    def view_structure(self):
-        summary(self, input_size=(1, self.z_dim))
+from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 
 def main():
+    # Step 1: Build the network
     image_size = (1, 28, 28)
     z_dim = 64
-
     encoder = Encoder(image_size, z_dim)
     decoder = Decoder(z_dim)
-    models = {"encoder": encoder, "decoder": decoder}
 
+    # Step 2: Build the algorithm
     vae = VAE(
         "./src/machine_learning/algorithms/generation/vae/config/config.yaml",
-        models,
+        {"encoder": encoder, "decoder": decoder},
     )
 
-    transform = transforms.Compose(
+    # Step 3: Configure the augmentator/converter
+    tfs = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=0.1307, std=0.3081),
         ]
     )
-    data = minist_parse("./data/minist")
 
+    # Step 4: Parse the data
+    dataset_dir = "./data/minist"
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
+    parser = ParserFactory().parser_create(parser_cfg)
+    dataset = parser.create()
+
+    # Step 5: Configure the trainer
     trainer_cfg = TrainCfg(
-        dataset="minist",
         log_dir="./logs/vae/",
         model_dir="./checkpoints/vae/",
     )
-    trainer = Trainer(trainer_cfg, data, transform, vae)
+    trainer = Trainer(trainer_cfg, dataset, vae)
 
+    # Step 6: Train/Evaluate the model
     trainer.train()
     trainer.eval()
 

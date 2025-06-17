@@ -1,51 +1,47 @@
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Any
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils import show_image
+from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
+from machine_learning.utils.draw import show_image
 
 
 class GAN(AlgorithmBase):
     def __init__(
         self,
-        cfg: str,
+        cfg: YamlFilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
-        name: str = "gan",
+        name: str | None = "gan",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
-        生成对抗网络实现
+        Implementation of GAN algorithm
 
-        parameters:
-        - cfg (str): 配置文件路径(YAML格式).
-        - models (Mapping[str, BaseNet]): gan算法所需模型.{"generator": model1, "discriminator": model2}.
-        - name (str): 算法名称. Default to "gan".
-        - device (str): 运行设备(auto自动选择).
+        Args:
+            cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
+            models (Mapping[str, BaseNet]): Models required by the GAN algorithm, {"generator": model1, "discriminator": model2}.
+            name (str, optional): Name of the algorithm. Defaults to "gan".
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
         """
         super().__init__(cfg, models, name, device)
 
-        # -------------------- 配置优化器 -------------------
-        self._configure_optimizers()
-        self._configure_schedulers()
-
-        # -------------------- 先验 ------------------------
+        # -------------------- the dim of prior ------------------------
         self.z_dim = self.models["generator"].input_dim
 
     def _configure_optimizers(self) -> None:
-        opt_config = self.cfg["optimizer"]
+        opt_cfg = self.cfg["optimizer"]
 
-        if opt_config["type"] == "Adam":
+        if opt_cfg["type"] == "Adam":
             self._optimizers.update(
                 {
                     "generator": torch.optim.Adam(
                         params=self.models["generator"].parameters(),
-                        lr=opt_config["g_learning_rate"],
-                        betas=(opt_config["g_beta1"], opt_config["g_beta2"]),
-                        eps=opt_config["g_eps"],
-                        weight_decay=opt_config["g_weight_decay"],
+                        lr=opt_cfg["g_learning_rate"],
+                        betas=(opt_cfg["g_beta1"], opt_cfg["g_beta2"]),
+                        eps=opt_cfg["g_eps"],
+                        weight_decay=opt_cfg["g_weight_decay"],
                     )
                 }
             )
@@ -53,15 +49,15 @@ class GAN(AlgorithmBase):
                 {
                     "discriminator": torch.optim.Adam(
                         params=self.models["discriminator"].parameters(),
-                        lr=opt_config["d_learning_rate"],
-                        betas=(opt_config["d_beta1"], opt_config["d_beta2"]),
-                        eps=opt_config["d_eps"],
-                        weight_decay=opt_config["d_weight_decay"],
+                        lr=opt_cfg["d_learning_rate"],
+                        betas=(opt_cfg["d_beta1"], opt_cfg["d_beta2"]),
+                        eps=opt_cfg["d_eps"],
+                        weight_decay=opt_cfg["d_weight_decay"],
                     )
                 }
             )
         else:
-            ValueError(f"暂时不支持优化器:{opt_config['type']}")
+            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sched_config = self.cfg.get("scheduler", {})
@@ -79,7 +75,7 @@ class GAN(AlgorithmBase):
             )
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10):
-        """训练单个epoch"""
+        """train a single epoch"""
         self.set_train()
         total_d_loss = 0.0
         total_g_loss = 0.0
@@ -92,7 +88,7 @@ class GAN(AlgorithmBase):
             z = torch.randn((len(real_images), self.z_dim), device=self.device, dtype=torch.float32)
             fake_image = self.models["generator"](z)
 
-            # 训练 discriminator
+            # train discriminator
             self._optimizers["discriminator"].zero_grad()
 
             real_preds = self.models["discriminator"](real_images)
@@ -110,7 +106,7 @@ class GAN(AlgorithmBase):
             real_accuracy = (real_preds > 0.5).float().mean()
             fake_accuracy = (fake_preds < 0.5).float().mean()
 
-            # 训练 generator
+            # train generator
             if batch_idx % n_discriminator == 0:
                 self._optimizers["generator"].zero_grad()
 
@@ -127,7 +123,7 @@ class GAN(AlgorithmBase):
 
                 g_count += 1
 
-            # 记录数据
+            # log data
             if batch_idx % log_interval == 0:
                 writer.add_scalar("d_loss/train_batch", d_loss.item(), epoch * len(self.train_loader) + batch_idx)
                 writer.add_scalar("g_loss/train_batch", g_loss.item(), epoch * len(self.train_loader) + batch_idx)
@@ -144,7 +140,7 @@ class GAN(AlgorithmBase):
         return {"discriminator": d_avg_loss, "generator": g_avg_loss}
 
     def validate(self) -> dict[str, float]:
-        """验证步骤"""
+        """Validate after a single train epoch"""
         self.set_eval()
 
         d_total_loss = 0.0
@@ -168,15 +164,15 @@ class GAN(AlgorithmBase):
         d_avg_loss = d_total_loss / len(self.val_loader)
         g_avg_loss = g_total_loss / len(self.val_loader)
 
-        return {"discriminator": d_avg_loss, "generator": g_avg_loss}  # 统一接口
+        return {"discriminator": d_avg_loss, "generator": g_avg_loss}
 
     def eval(self, num_samples: int = 5) -> None:
-        """可视化重构结果"""
-        self.set_eval()  # 将模型切换到评估模式，主要是影响层的行为，比如dropout层停止随机丢弃神经元
+        """Evaluate the model effect by visualizing reconstruction results"""
+        self.set_eval()
 
         z = torch.randn((num_samples, self.z_dim), device=self.device, dtype=torch.float32)
 
-        with torch.no_grad():  # 禁用梯度计算，作用与.detach()相同
+        with torch.no_grad():  # Disable gradient calculation, which has the same effect as.detach()
             recons = self.models["generator"](z)
 
         show_image(recons, color_mode="gray", backend="pyplot")
@@ -187,7 +183,7 @@ Helper functions
 """
 
 
-# 方案1 loss函数
+# loss fun1
 def discriminator_criterion(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> torch.Tensor:
     eps = 1e-8
     loss = -(torch.log(real_preds + eps).mean() + torch.log(1 - fake_preds + eps).mean())
@@ -200,7 +196,7 @@ def generator_criterion(fake_preds: torch.Tensor) -> torch.Tensor:
     return loss
 
 
-# 方案2 loss函数
+# loss fun2
 def discriminator_criterion_bce(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> torch.Tensor:
     real_loss = torch.nn.functional.binary_cross_entropy(real_preds, torch.ones_like(real_preds))
     fake_loss = torch.nn.functional.binary_cross_entropy(fake_preds, torch.zeros_like(fake_preds))
@@ -211,7 +207,7 @@ def generator_criterion_bce(fake_preds: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.binary_cross_entropy(fake_preds, torch.ones_like(fake_preds))
 
 
-# 方案3 loss函数
+# loss fun3
 def discriminator_criterion_bce_logits(real_preds: torch.Tensor, fake_preds: torch.Tensor) -> torch.Tensor:
     real_loss = torch.nn.functional.binary_cross_entropy_with_logits(real_preds, torch.ones_like(real_preds))
     fake_loss = torch.nn.functional.binary_cross_entropy_with_logits(fake_preds, torch.zeros_like(fake_preds))
