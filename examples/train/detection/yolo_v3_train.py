@@ -1,14 +1,14 @@
 from machine_learning.algorithms import YoloV3
 from machine_learning.models import Darknet, FPN
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils.others import load_config_from_path
 from machine_learning.utils.transforms import YoloTransform
+from machine_learning.utils.others import load_config_from_yaml
 from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 
 def main():
     # Step 1: Build the network
-    yolo_v3_cfg = load_config_from_path("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
+    yolo_v3_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
     imgae_size = yolo_v3_cfg["algorithm"]["image_size"]
     num_classes = yolo_v3_cfg["algorithm"]["num_classes"]
     num_anchors = yolo_v3_cfg["algorithm"]["num_anchors"]
