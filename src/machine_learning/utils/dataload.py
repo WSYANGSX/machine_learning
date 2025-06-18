@@ -416,7 +416,7 @@ class YoloParser(DatasetParser):
             "val_labels_paths": val_labels_paths,
         }
 
-    def create(self, img_size: int = 416, img_size_stride: int = 32, multiscale: bool = False) -> dict[str, Dataset]:
+    def create(self) -> dict[str, Dataset]:
         """Create a dataset based on the configuration information of YoloParser.
 
         Returns:
@@ -431,18 +431,12 @@ class YoloParser(DatasetParser):
             img_paths=metadata["train_img_paths"],
             label_paths=metadata["train_labels_paths"],
             transform=self.transforms,
-            img_size=img_size,
-            img_size_stride=img_size_stride,
-            multiscale=multiscale,
         )
         val_dataset = YoloDataset(
             metadata["val_img_paths"],
             metadata["val_labels_paths"],
             self.transforms,
             transform=self.transforms,
-            img_size=img_size,
-            img_size_stride=img_size_stride,
-            multiscale=multiscale,
         )
 
         return {

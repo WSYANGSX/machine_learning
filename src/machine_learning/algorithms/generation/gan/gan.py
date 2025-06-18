@@ -4,14 +4,15 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
+from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.types.aliases import FilePath
 from machine_learning.utils.draw import show_image
 
 
 class GAN(AlgorithmBase):
     def __init__(
         self,
-        cfg: YamlFilePath | Mapping[str, Any],
+        cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
         name: str | None = "gan",
         device: Literal["cuda", "cpu", "auto"] = "auto",

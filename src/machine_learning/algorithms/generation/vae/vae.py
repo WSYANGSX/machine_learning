@@ -1,19 +1,20 @@
 from typing import Literal, Mapping, Any
 from itertools import chain
 
-from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
-from machine_learning.utils.draw import show_raw_and_recon_images
-
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+
+from machine_learning.models import BaseNet
+from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.types.aliases import FilePath
+from machine_learning.utils.draw import show_raw_and_recon_images
 
 
 class VAE(AlgorithmBase):
     def __init__(
         self,
-        cfg: YamlFilePath | Mapping[str, Any],
+        cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
         name: str | None = "vae",
         device: Literal["cuda", "cpu", "auto"] = "auto",

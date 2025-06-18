@@ -1,25 +1,21 @@
 import os
 import yaml
-from typing import Literal, Mapping, Any, TypeAlias
+from typing import Literal, Mapping, Any
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
+from machine_learning.types.aliases import FilePath
 from machine_learning.utils.others import print_dict, print_segmentation
-
-
-YamlFilePath: TypeAlias = Path | str
-FilePath: TypeAlias = Path | str
 
 
 class AlgorithmBase(ABC):
     def __init__(
         self,
-        cfg: YamlFilePath | Mapping[str, Any],
+        cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -88,7 +84,7 @@ class AlgorithmBase(ABC):
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
-    def _load_config(self, config: YamlFilePath | Mapping[str, Any]) -> dict:
+    def _load_config(self, config: FilePath | Mapping[str, Any]) -> dict:
         if isinstance(config, Mapping):
             cfg = config
         else:

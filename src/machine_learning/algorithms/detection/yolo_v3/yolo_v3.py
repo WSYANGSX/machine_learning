@@ -8,14 +8,15 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase, YamlFilePath
+from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import bbox_iou
+from machine_learning.types.aliases import FilePath
 
 
 class YoloV3(AlgorithmBase):
     def __init__(
         self,
-        cfg: YamlFilePath | Mapping[str, Any],
+        cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
         name: str | None = "yolo_v3",
         device: Literal["cuda", "cpu", "auto"] = "auto",

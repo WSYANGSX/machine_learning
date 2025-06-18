@@ -5,7 +5,7 @@ import random
 import torch
 import numpy as np
 
-from machine_learning.algorithms.base import YamlFilePath, FilePath
+from machine_learning.types.aliases import FilePath
 
 
 def print_dict(input_dict: dict, indent: int = 0) -> None:
@@ -27,11 +27,11 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
             print("\t" * 5, val)
 
 
-def load_config_from_yaml(yaml_file_path: YamlFilePath) -> dict:
-    assert os.path.splitext(yaml_file_path)[1] == ".yaml" or os.path.splitext(yaml_file_path)[1] == ".yml", (
+def load_config_from_yaml(file_path: FilePath) -> dict:
+    assert os.path.splitext(file_path)[1] == ".yaml" or os.path.splitext(file_path)[1] == ".yml", (
         "Please ultilize a yaml configuration file."
     )
-    with open(yaml_file_path, "r") as f:
+    with open(file_path, "r") as f:
         config = yaml.safe_load(f)
 
     return config
