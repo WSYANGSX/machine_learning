@@ -8,10 +8,10 @@ from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 def main():
     # Step 1: Build the network
+    class_nums = 80
     yolo_v3_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
     default_image_size = yolo_v3_cfg["algorithm"]["default_img_size"]
     anchor_nums = yolo_v3_cfg["algorithm"]["anchor_nums"]
-    class_nums = 80
     darknet = Darknet(default_image_size)
     fpn = FPN(anchor_nums, class_nums)
 
