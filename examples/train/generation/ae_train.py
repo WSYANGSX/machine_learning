@@ -30,7 +30,7 @@ def main():
     # Step 4: Parse the data
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
-    parser = ParserFactory().parser_create(parser_cfg)
+    parser = ParserFactory().create_parser(parser_cfg)
     dataset = parser.create()
 
     # Step 5: Configure the trainer

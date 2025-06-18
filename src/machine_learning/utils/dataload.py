@@ -1,215 +1,25 @@
 from __future__ import annotations
-
 import os
+import sys
 import struct
-import random
-import warnings
-from PIL import Image
-from copy import deepcopy
+from typing import Callable, Any, Type
 from abc import ABC, abstractmethod
-from typing import Callable, Sequence, Any
 from dataclasses import dataclass, MISSING
 
-import torch
 import numpy as np
-from torchvision import transforms
 from torch.utils.data import Dataset
+from torchvision import transforms
 
-from machine_learning.utils.transforms import BaseTransform, YoloTransform
-from machine_learning.utils.image import resize
+from machine_learning.utils.transforms import BaseTransform
+from machine_learning.utils.dataset import FullDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
-
-
-class FullDataset(Dataset):
-    r"""
-    Fully load the dataset.
-
-    It is suitable for small datasets, occupies less memory space and speeds up data reading.
-    """
-
-    def __init__(
-        self,
-        data: np.ndarray | torch.Tensor,
-        labels: np.ndarray | torch.Tensor | None = None,
-        tansform: transforms.Compose | BaseTransform | None = None,
-    ) -> None:
-        """
-        Initialize the fully load dataset
-
-        Args:
-            data (np.ndarray, torch.Tensor): Data
-            labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
-            tansforms (Compose, BaseTransform, optional): Data converter. Defaults to None.
-        """
-        super().__init__()
-
-        self.data = data
-        self.labels = labels
-
-        self.transform = tansform
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __getitem__(self, index):
-        data_sample = self.data[index]
-
-        if self.labels is not None:
-            labels_sample = self.labels[index]
-
-        if self.transform:
-            data_sample = self.transform(data_sample)
-
-        return data_sample, labels_sample
-
-
-class LazyDataset(Dataset):
-    r"""
-    Lazily load dataset.
-
-    It is used for large datasets, reducing memory space occupation, but the data reading speed is relatively slow.
-    """
-
-    def __init__(
-        self,
-        data_paths: Sequence[str],
-        label_paths: Sequence[int],
-        transform: transforms.Compose | BaseTransform | None = None,
-    ):
-        """
-        Initialize the Lazily load dataset
-
-        Args:
-            data_paths (Sequence[str]): Data address list.
-            label_paths: (Sequence[int]): Labels address list.
-            transform (Compose, BaseTransform, optional): Data converter. Defaults to None.
-        """
-        super().__init__()
-
-        self.data_paths = data_paths
-        self.label_paths = label_paths
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.data_paths)
-
-    def __getitem__(self, index) -> Any:
-        pass
-
-
-class YoloDataset(LazyDataset):
-    r"""
-    Yolo object detection type dataset.
-
-    The object detection dataset is generally large. The inherited lazy loading dataset reduces the memory space
-    occupation, but the data reading speed is relatively slow.
-    """
-
-    def __init__(
-        self,
-        img_paths: Sequence[str],
-        label_paths: Sequence[int],
-        transform: YoloTransform = None,
-        img_size: int = 416,
-        img_size_stride: int = 32,
-        multiscale: bool = False,
-    ):
-        """YoloDataset Inherits from LazyLoadDataset, used for loading the yolo detection data
-
-        Args:
-            data_paths (Sequence[str]): Yolo data address list.
-            label_paths: (Sequence[int]): Yolo labels address list.
-            transform: (YoloTransform): Yolo data converter. Defaults to None.
-            img_size: (int): The default required dim of the detected image. Defaults to 416.
-            multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
-            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults
-            to None.
-        """
-        super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
-
-        self.img_size = img_size
-        self.multiscale = multiscale
-
-        if self.multiscale:
-            self.img_size_stride = img_size_stride
-            self.min_size = self.img_size - 3 * img_size_stride
-            self.max_size = self.img_size + 3 * img_size_stride
-
-        self.batch_count = 0
-
-    def __len__(self) -> int:
-        return len(self.data_paths)
-
-    def __getitem__(self, index) -> tuple:
-        #  Image
-        try:
-            img_path = self.data_paths[index % len(self.data_paths)]
-            img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-        except Exception:
-            print(f"Could not read image '{img_path}'.")
-            return
-
-        #  Label
-        try:
-            label_path = self.label_paths[index % len(self.data_paths)]
-
-            # Ignore warning if file is empty
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                labels = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
-                bboxes = labels[:, 1:5]
-                category_ids = labels[:, 0]
-
-                # Filter out effective bounding boxes
-                valid_indices = (bboxes[:, 2] > 0) & (bboxes[:, 3] > 0)
-                bboxes = bboxes[valid_indices]
-                category_ids = category_ids[valid_indices]
-
-        except Exception:
-            print(f"Could not read label '{label_path}'.")
-            return
-
-        #  Transform
-        if self.transform:
-            try:
-                img, bboxes, category_ids = self.transform((img, bboxes, category_ids))
-            except Exception:
-                print(f"Could not apply transform to image: {img_path}.")
-                return
-
-        return img, bboxes, category_ids
-
-    def collate_fn(self, batch) -> tuple:
-        self.batch_count += 1
-
-        # Drop invalid images
-        batch = [data for data in batch if data is not None]
-
-        imgs, bboxes, category_ids = list(zip(*batch))
-        indices = deepcopy(category_ids)
-
-        # Selects new image size every tenth batch
-        if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_size_stride))
-
-        # Resize images to input shape
-        imgs = torch.stack([resize(img, self.img_size) for img in imgs])
-
-        # Bboxes and category_ids may exist empty tensors.
-        bboxes = torch.cat(bboxes, 0)
-        category_ids = torch.cat(category_ids, 0)
-
-        for i, index in enumerate(indices):
-            index[:] = i
-        indices = torch.cat(indices, 0)
-
-        return imgs, bboxes, category_ids, indices
 
 
 class ParserFactory:
     r"""The factory class is used to generate specific data parsers and follows the open-closed principle."""
 
-    _parser_registry: dict[str, DatasetParser] = {}
+    _parser_registry: dict[str, Type[DatasetParser]] = {}
+    _cfg_registry: dict[str, Type[ParserCfg]] = {}
 
     def __init__(self):
         pass
@@ -220,24 +30,46 @@ class ParserFactory:
 
     @classmethod
     def register_parser(cls, dataset_type: str) -> Callable:
-        def parser_wrapper(parser_cls: DatasetParser) -> None:
+        def parser_wrapper(parser_cls: Type[DatasetParser]) -> Type[DatasetParser]:
             cls._parser_registry[dataset_type] = parser_cls
-            print(f"DataLoaderFactory has registred dataset_parser '{parser_cls.__name__}'.")
+
+            # Automatic association configuration class: ParserNameCfg
+            cfg_cls_name = f"{parser_cls.__name__}Cfg"
+            if hasattr(sys.modules[__name__], cfg_cls_name):
+                cfg_cls = getattr(sys.modules[__name__], cfg_cls_name)
+                cls._cfg_registry[dataset_type] = cfg_cls
+            else:
+                cls._cfg_registry[dataset_type] = ParserCfg
+
+            print(f"Regoster parser: '{parser_cls.__name__}' config: '{cfg_cls_name}'")
             return parser_cls
 
         return parser_wrapper
 
-    def parser_create(self, parser_cfg: ParserCfg) -> DatasetParser:
+    def create_parser(self, parser_cfg: ParserCfg) -> DatasetParser:
         dataset_dir = os.path.abspath(parser_cfg.dataset_dir)
         metadata = self._load_metadata(dataset_dir)
-
         dataset_type: str = metadata["dataset_type"]
+
         # Dynamically obtain the parser
         if dataset_type not in self._parser_registry:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
+
+        specific_cfg = self._create_specific_config(parser_cfg, dataset_type)
         parser_cls = self._parser_registry[dataset_type]
 
-        return parser_cls(parser_cfg)
+        return parser_cls(specific_cfg)
+
+    def _create_specific_config(self, base_cfg: ParserCfg, dataset_type: str) -> ParserCfg:
+        "Convert the basic configuration to a specific type of configuration"
+        cfg_cls = self._cfg_registry[dataset_type]
+
+        if isinstance(base_cfg, cfg_cls):
+            return base_cfg
+
+        specific_cfg = cfg_cls(**base_cfg.__dict__)
+
+        return specific_cfg
 
     def _load_metadata(self, dataset_dir: str) -> dict:
         "Load the metadata file"
@@ -250,9 +82,20 @@ class ParserFactory:
 
 @dataclass
 class ParserCfg:
+    """Basic parser configuration"""
+
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    transforms: transforms.Compose | BaseTransform | None = None
+    tfs: transforms.Compose | BaseTransform | None = None
+
+
+@dataclass
+class YoloParserCfg(ParserCfg):
+    """YOLO parser configuration"""
+
+    img_size: int = 416
+    multiscale: bool = False
+    img_size_stride: int | None = 32
 
 
 class DatasetParser(ABC):
@@ -264,7 +107,7 @@ class DatasetParser(ABC):
 
         self.dataset_dir = self.cfg.dataset_dir
         self.labels = self.cfg.labels
-        self.transforms = self.cfg.transforms
+        self.transforms = self.cfg.tfs
 
     @abstractmethod
     def parse(self) -> dict[str, Any]:
@@ -276,7 +119,7 @@ class DatasetParser(ABC):
         pass
 
     @abstractmethod
-    def create(self, *args, **kwargs) -> dict[str, Dataset]:
+    def create(self) -> dict[str, Dataset]:
         """Create a dataset based on the parsed data information of the dataset.
 
         Returns:
