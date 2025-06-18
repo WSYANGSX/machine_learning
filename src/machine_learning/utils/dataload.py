@@ -275,11 +275,17 @@ class YoloParser(DatasetParser):
             img_paths=metadata["train_img_paths"],
             label_paths=metadata["train_labels_paths"],
             transform=self.transforms,
+            img_size=self.cfg.img_size,
+            multiscale=self.cfg.multiscale,
+            img_size_stride=self.cfg.img_size_stride,
         )
         val_dataset = YoloDataset(
             metadata["val_img_paths"],
             metadata["val_labels_paths"],
             transform=self.transforms,
+            img_size=self.cfg.img_size,
+            multiscale=self.cfg.multiscale,
+            img_size_stride=self.cfg.img_size_stride,
         )
 
         return {
