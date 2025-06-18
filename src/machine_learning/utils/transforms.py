@@ -8,8 +8,8 @@ from typing import Literal, Sequence
 from machine_learning.utils.augmentations import DEFAULT_AUG, ENHANCED_AUG
 
 
-class CustomTransform:
-    r"""自定义Transform基类, 实现对 albumentations.Compose 和 transforms.Compose 接口的封装."""
+class BaseTransform:
+    r"""Base transform class to encapsulate the interfaces of albumentations.Compose and transforms.Compose."""
 
     def __init__(
         self,
@@ -24,43 +24,48 @@ class CustomTransform:
             self.augmentation = None
 
     def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
-        """应用数据增强"""
+        """The specific logical implementation of data enhancement"""
         pass
 
 
-class YoloTransform(CustomTransform):
+class YoloTransform(BaseTransform):
     def __init__(
         self,
-        augmentation: Literal["default", "enhanced"] | A.Compose = None,
-        normalize: bool = True,
+        augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
+        normalize: bool | None = True,
         mean: Sequence[float] | None = None,
         std: Sequence[float] | None = None,
         to_tensor: bool = True,
     ):
-        """YoloTransform, 实现 albumentations.Compose 到 transforms.Compose 接口的转换.
+        """
+        Implementation of data transform for Yolo object detection algorithm
 
         Args:
-            augmentation (Literal[&quot;default&quot;, &quot;enhanced&quot;] | A.Compose): 增强器.
-            normalize (bool, optional): 是否对数据进行归一化处理. Defaults to True.
-            mean (Sequence[float] | None, optional): 如果normalize,需要提供均值. Defaults to None.
-            std (Sequence[float] | None, optional): 如果normalize,需要提供方差. Defaults to None.
-            to_tensor (bool, optional): 是否转化为Tensor. Defaults to True.
+            augmentation (Literal[&quot;default&quot;, &quot;enhanced&quot;], A.Compose, optional): Enhancer.
+            normalize (bool, optional): Whether to normalize the data. Defaults to True.
+            mean (Sequence[float] | None, optional): If the normalize parameter set to True, the mean value needs to be
+            provided. Defaults to None.
+            std (Sequence[float] | None, optional): If the normalize parameter set to True, the std value needs to be
+            provided. Defaults to None.
+            to_tensor (bool, optional): Whether to convert data to Tensor. Defaults to True.
         """
         super().__init__(augmentation)
 
         if normalize:
             self.normalize = transforms.Normalize(mean=mean, std=std)
+
         if to_tensor:
-            self.to_tensor = transforms.ToTensor()  # 只能应用于2/3维
+            self.to_tensor = transforms.ToTensor()  # It can only be applied in 2/3 dimensions
 
     def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
-        """应用数据增强
+        """
+        Apply data augmentation.
 
         Args:
-            data: 包含 (image, bboxes, category_ids) 的元组
+            data: Tuples containing (image, bboxes, category_ids)
 
         Returns:
-            转换成 Tensor 后的 (image_tensor, bboxes_tensor, category_ids)
+            Converted tensors (image_tensor, bboxes_tensor, category_ids)
         """
         img, bboxes, category_ids = data
 
@@ -69,7 +74,9 @@ class YoloTransform(CustomTransform):
 
             img = auged_data["image"]
             bboxes = auged_data["bboxes"]
-            category_ids = auged_data["category_ids"]  # augementation会将其他未注册数据类型转换成列表类型
+            category_ids = auged_data[
+                "category_ids"
+            ]  # augementation will convert other unregistered data types to list types
 
         # 转化为Tensor
         if self.to_tensor:

@@ -35,7 +35,7 @@ class YoloV3(AlgorithmBase):
         # main parameters of the algorithm
         self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
         self.anchor_sizes = self.cfg["algorithm"]["anchor_sizes"]
-        self.default_img_size = self.cfg["algorithm"]["image_size"]
+        self.default_img_size = self.cfg["algorithm"]["default_img_size"]
         self.ignore_threshold = self.cfg["algorithm"]["ignore_threshold"]
         self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
         self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)

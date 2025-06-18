@@ -15,7 +15,7 @@ import numpy as np
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-from machine_learning.utils.transforms import CustomTransform, YoloTransform
+from machine_learning.utils.transforms import BaseTransform, YoloTransform
 from machine_learning.utils.image import resize
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
@@ -31,7 +31,7 @@ class FullDataset(Dataset):
         self,
         data: np.ndarray | torch.Tensor,
         labels: np.ndarray | torch.Tensor | None = None,
-        tansform: transforms.Compose | CustomTransform | None = None,
+        tansform: transforms.Compose | BaseTransform | None = None,
     ) -> None:
         """
         Initialize the fully load dataset
@@ -39,7 +39,7 @@ class FullDataset(Dataset):
         Args:
             data (np.ndarray, torch.Tensor): Data
             labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
-            tansforms (Compose, CustomTransform, optional): Data converter. Defaults to None.
+            tansforms (Compose, BaseTransform, optional): Data converter. Defaults to None.
         """
         super().__init__()
 
@@ -74,7 +74,7 @@ class LazyDataset(Dataset):
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: transforms.Compose | CustomTransform | None = None,
+        transform: transforms.Compose | BaseTransform | None = None,
     ):
         """
         Initialize the Lazily load dataset
@@ -82,7 +82,7 @@ class LazyDataset(Dataset):
         Args:
             data_paths (Sequence[str]): Data address list.
             label_paths: (Sequence[int]): Labels address list.
-            transform (Compose, CustomTransform, optional): Data converter. Defaults to None.
+            transform (Compose, BaseTransform, optional): Data converter. Defaults to None.
         """
         super().__init__()
 
@@ -122,7 +122,8 @@ class YoloDataset(LazyDataset):
             transform: (YoloTransform): Yolo data converter. Defaults to None.
             img_size: (int): The default required dim of the detected image. Defaults to 416.
             multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
-            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults to None.
+            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults
+            to None.
         """
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
@@ -251,7 +252,7 @@ class ParserFactory:
 class ParserCfg:
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    transforms: transforms.Compose | CustomTransform | None = None
+    transforms: transforms.Compose | BaseTransform | None = None
 
 
 class DatasetParser(ABC):
@@ -388,14 +389,14 @@ class YoloParser(DatasetParser):
 
         classes = list_from_txt(class_names_file)
 
-        train_img_dir = os.path.join(self.dataset_dir, "images/val/")
-        train_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
+        train_img_dir = os.path.join(self.dataset_dir, "images/train/")
+        train_labels_dir = os.path.join(self.dataset_dir, "labels/train/")
 
         val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
         # train、 val imgs list
-        train_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
+        train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
 
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
@@ -435,7 +436,6 @@ class YoloParser(DatasetParser):
         val_dataset = YoloDataset(
             metadata["val_img_paths"],
             metadata["val_labels_paths"],
-            self.transforms,
             transform=self.transforms,
         )
 
