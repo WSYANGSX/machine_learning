@@ -29,7 +29,7 @@ class Trainer:
         """
         self.cfg = cfg
         self._algorithm = algo
-
+        print(self.cfg.epochs)
         # ------------------ configure global random seed -----------------
         set_seed(self.cfg.seed)
         print(f"[INFO] Current seed: {self.cfg.seed}")
@@ -132,9 +132,8 @@ class Trainer:
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self.load(checkpoint)
-        self.cfg = state_dict["cfg"]
-        epoch = state_dict["epoch"]
-        self.train(epoch)
+        start_epoch = state_dict["epoch"]
+        self.train(start_epoch)
 
     def eval(self, num_samples: int = 5):
         self._algorithm.eval(num_samples)

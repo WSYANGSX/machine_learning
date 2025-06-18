@@ -23,8 +23,8 @@ def main():
 
     # Step 4: Parse the data
     dataset_dir = "./data/coco-2017"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
-    parser = ParserFactory().parser_create(parser_cfg)
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
+    parser = ParserFactory().create_parser(parser_cfg)
     data = parser.create()  # (class_names, train_dataset, val_dataset)
 
     # Step 5: Configure the trainer
@@ -41,8 +41,14 @@ def main():
     trainer = Trainer(trainer_cfg, data, yolo_v3)
 
     # Step 6: Train/Evaluate the model
+    # train
     trainer.train()
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+
+    # # train from checkpoint
+    # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
+
+    # # eval
+    # trainer.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
     # trainer.eval()
 
 
