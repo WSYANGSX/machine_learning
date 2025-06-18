@@ -136,17 +136,22 @@ class AlgorithmBase(ABC):
         # Unique parameters of the data set
         protected_attrs = {"train_loader", "val_loader", "batch_size"}
 
-        for key, val in kwargs.items():
-            if key in protected_attrs:
-                print(f"Attempted to override protected attribute '{key}'. Ignored.")
-                continue
+        if kwargs:
+            self.cfg["data"] = {}
 
-            if hasattr(self, key):
-                setattr(self, key, val)
-                print(f"[INFO] Set {key} attribute of {self.__class__.__name__} to new value.")
-            else:
-                setattr(self, key, val)
-                print(f"[INFO] {self.__class__.__name__.capitalize()} set new attribute: {key}")
+            for key, val in kwargs.items():
+                if key in protected_attrs:
+                    print(f"Attempted to override protected attribute '{key}'. Ignored.")
+                    continue
+
+                if hasattr(self, key):
+                    setattr(self, key, val)
+                    print(f"[INFO] Set {key} attribute of {self.__class__.__name__} to new value.")
+                else:
+                    setattr(self, key, val)
+                    print(f"[INFO] {self.__class__.__name__.capitalize()} set new attribute: {key}")
+
+                self.cfg["data"][key] = val
 
     @abstractmethod
     def _configure_optimizers(self):
