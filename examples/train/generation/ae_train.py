@@ -1,8 +1,8 @@
 from torchvision import transforms
 
-from machine_learning.models.ae import Encoder, Decoder
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
+from machine_learning.models.ae import Encoder, Decoder
 from machine_learning.utils.dataload import ParserFactory, ParserCfg
 
 

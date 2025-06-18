@@ -1,6 +1,6 @@
+from typing import Any, Union, Mapping
 import os
 import torch
-from typing import Any, Union
 from tqdm import trange
 
 from torch.utils.data import Dataset, DataLoader
@@ -15,45 +15,41 @@ class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
-        data: dict[str, Union[Any]],
+        parsed_data: Mapping[str, Union[Dataset, Any]],
         algo: AlgorithmBase,
-    ):
-        """机器学习算法训练器.
+    ) -> None:
+        """
+        The trainer of all machine learning algorithm
 
         Args:
-            cfg (dict): 训练器配置信息
-            datasets (Sequence[torch.Tensor | np.ndarray]): 数据, 包括train_dataset和val_dataset,
-            可能包含特定数据集的数据信息
-            transform (transforms.Compose): 数据转换器
-            algo (AlgorithmBase): 算法
+            cfg (TrainCfg): The configuration of the trainer.
+            parsed_data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train_dataset and
+            val_dataset, may contain data information of the specific dataset.
+            algo (AlgorithmBase): The algorithm to be trained.
         """
         self.cfg = cfg
         self._algorithm = algo
 
-        # ------------------ 配置随机种子 --------------------
+        # ------------------ configure global random seed -----------------
         set_seed(self.cfg.seed)
         print(f"[INFO] Current seed: {self.cfg.seed}")
 
-        # -------------------- 配置数据 --------------------
+        # ---------------------- configure algo data ----------------------
         self.batch_size = self.cfg.batch_size
-        self._configure_datasets(data)
+        self._configure_data(parsed_data)
 
-        # -------------------- 配置记录器 --------------------
+        # --------------------- configure algo logger ---------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
-    def _configure_datasets(self, data: dict[str, Union[Any]]):
-        if "train" not in data:
-            raise ValueError("Input data dict does not include train dataset.")
-        elif "val" not in data:
-            raise ValueError("Input data dict does not include val dataset.")
+    def _configure_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+        _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
 
-        train_dataset, val_dataset = data.pop("train"), data.pop("val")
+        for key, type in _necessary_key_type_couples_.items():
+            if key not in data or not isinstance(data[key], type):
+                raise ValueError(f"Input data mapping has no {key} or {key} is not Dataset type.")
 
-        if not isinstance(train_dataset, Dataset):
-            raise ValueError(f"Dataset {data['train']} has wrong type.")
-        elif not isinstance(val_dataset, Dataset):
-            raise ValueError(f"Dataset {data['val']} has wrong type.")
+        train_dataset, val_dataset = data.pop("train_dataset"), data.pop("val_dataset")
 
         train_loader = DataLoader(
             dataset=train_dataset,
@@ -70,13 +66,12 @@ class Trainer:
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
 
-        self._algorithm._initialize_dependent_on_dataset(
+        self._algorithm._initialize_dependent_on_data(
             train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size, **data
         )
 
     def _configure_writer(self):
         log_path = self.cfg.log_dir
-
         log_path = os.path.abspath(log_path)
 
         try:
@@ -87,14 +82,14 @@ class Trainer:
         self.writer = SummaryWriter(log_dir=log_path)
 
     def train(self, start_epoch: int = 0) -> None:
-        """完整训练"""
+        """Train the algorithm"""
         print("[INFO] Start training...")
 
         for epoch in trange(start_epoch, self.cfg.epochs):
             train_loss = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
             val_loss = self._algorithm.validate()
 
-            # 学习率调整
+            # adjust the learning rate
             if self._algorithm._schedulers:
                 for key, val in self._algorithm._schedulers.items():
                     if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -102,29 +97,28 @@ class Trainer:
                     else:
                         val.step()
 
-            # 记录训练损失
+            # log the train loss
             for key, val in train_loss.items():
                 self.writer.add_scalar(f"{key} loss/train", val, epoch)
 
-            # 记录验证损失
+            # log the val loss
             for key, val in val_loss.items():
                 self.writer.add_scalar(f"{key} loss/val", val, epoch)
 
-            # 保存最佳模型
-            if (
-                self.cfg.save_best and "save" in val_loss
-            ):  # 必须在train_cfg中配置保存best_model选项，同时在val_loss中返回“save_loss”
+            # save the best model
+            # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo
+            if self.cfg.save_best and "save" in val_loss:
                 if val_loss["save"] < self.best_loss:
                     self.best_loss = val_loss["save"]
                     self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
             else:
                 print("Saving of the best loss model skipped.")
 
-            # 定期保存
-            if (epoch + 1) % self.cfg.save_interval == 0:
+            # save the model regularly
+            if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
                 self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=False)
 
-            # 打印日志
+            # print log information
             print(f"Epoch: {epoch + 1:03d} | ", end="")
             for key, val in train_loss.items():
                 print(f"{key} train loss {val:.4f} | ", end="")
@@ -147,7 +141,6 @@ class Trainer:
 
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
         model_path = self.cfg.model_dir
-
         model_path = os.path.abspath(model_path)
 
         try:

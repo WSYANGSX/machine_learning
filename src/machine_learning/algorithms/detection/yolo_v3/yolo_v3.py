@@ -41,8 +41,8 @@ class YoloV3(AlgorithmBase):
         self.c_weiget = self.cfg["algorithm"].get("c_weiget", 0.5)
 
         # parameters that varys due to difference of dataset
-        self.class_nums = self.cfg["algorithm"].get("class_nums", None)
-        self.class_names = self.cfg["algorithm"].get("class_names", None)
+        self.class_nums = None
+        self.class_names = None
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
@@ -85,7 +85,7 @@ class YoloV3(AlgorithmBase):
         total_loss = 0.0
 
         for batch_idx, (img, bboxes, category_ids, indices) in enumerate(self.train_loader):
-            if check_data_integrity(img, bboxes, category_ids, self.num_classes):
+            if check_data_integrity(img, bboxes, category_ids, self.class_nums):
                 print(f"Epoch: {epoch}, Batch: {batch_idx}, invalid data detected, skipping.")
                 continue
 
@@ -176,13 +176,13 @@ class YoloV3(AlgorithmBase):
             grid_xy = torch.stack((grid_x, grid_y), dim=-1).float().to(self.device)  # [H, W, 2]
 
             # [H, W, 1, 2] -> [B, H, W, num_anchors, 2]
-            grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.num_anchors, 2)
+            grid_xy = grid_xy.view(1, H, W, 1, 2).expand(B, H, W, self.anchor_nums, 2)
 
             # [num_anchors, 2] -> [1, 1, 1, num_anchors, 2]
-            norm_wh = norm_anchors.view(1, 1, 1, self.num_anchors, 2)
+            norm_wh = norm_anchors.view(1, 1, 1, self.anchor_nums, 2)
 
             # [B, H, W, num_anchors, (5 + num_classes)]
-            detection = detection.view(B, H, W, self.num_anchors, -1)
+            detection = detection.view(B, H, W, self.anchor_nums, -1)
 
             # Decompose the original detection tensor. In-place operations on the tensor will disrupt the
             # gradient and lead to calculation errors
@@ -227,14 +227,14 @@ class YoloV3(AlgorithmBase):
         for _, (dets, norm_anchors) in enumerate(zip(dets_ls, norm_anchors_ls)):
             det_height, det_width = dets.shape[2], dets.shape[3]  # det [B, A, H, W, (C / A)]
 
-            targets = cls_iids_bboxes.repeat(self.num_anchors, 1, 1)  # targets [num_anchors, num_bboxes, 6]
+            targets = cls_iids_bboxes.repeat(self.anchor_nums, 1, 1)  # targets [num_anchors, num_bboxes, 6]
             targets[:, :, 2:6] *= cls_iids_bboxes.new([det_width, det_height]).repeat(num_bboxes, 2)
 
             anchor_ids = (
-                torch.arange(self.num_anchors, device=self.device)
-                .view(self.num_anchors, 1)
+                torch.arange(self.anchor_nums, device=self.device)
+                .view(self.anchor_nums, 1)
                 .repeat(1, num_bboxes)
-                .view(self.num_anchors, num_bboxes, 1)
+                .view(self.anchor_nums, num_bboxes, 1)
             )
 
             targets = torch.cat(
@@ -249,12 +249,10 @@ class YoloV3(AlgorithmBase):
 
             anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
 
-            gxy = targets[
-                :, 3:5
-            ]  # The center point coordinates of the target bboxes in the feature map coordinate system
-            gwh = targets[
-                :, 5:7
-            ]  # The width and height of the target bboxes in the coordinate system of the feature map
+            # The center point coordinates of the target bboxes in the feature map coordinate system
+            gxy = targets[:, 3:5]
+            # The width and height of the target bboxes in the coordinate system of the feature map
+            gwh = targets[:, 5:7]
             gij = gxy.long()
             gi, gj = gij.T
 

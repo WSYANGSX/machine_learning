@@ -5,6 +5,8 @@ import random
 import torch
 import numpy as np
 
+from machine_learning.algorithms.base import YamlFilePath, FilePath
+
 
 def print_dict(input_dict: dict, indent: int = 0) -> None:
     if not input_dict:
@@ -25,11 +27,11 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
             print("\t" * 5, val)
 
 
-def load_config_from_path(config: str) -> dict:
-    assert os.path.splitext(config)[1] == ".yaml" or os.path.splitext(config)[1] == ".yml", (
+def load_config_from_yaml(yaml_file_path: YamlFilePath) -> dict:
+    assert os.path.splitext(yaml_file_path)[1] == ".yaml" or os.path.splitext(yaml_file_path)[1] == ".yml", (
         "Please ultilize a yaml configuration file."
     )
-    with open(config, "r") as f:
+    with open(yaml_file_path, "r") as f:
         config = yaml.safe_load(f)
 
     return config
@@ -39,7 +41,7 @@ def print_segmentation() -> None:
     print("=" * 90)
 
 
-def list_from_txt(file_path: str) -> list[str]:
+def list_from_txt(file_path: FilePath) -> list[str]:
     lines = []
     with open(file_path, "r") as f:
         for line in f:
@@ -56,6 +58,6 @@ def set_seed(seed: int = 23) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
 
-    # CuDNN 设置（确保可重复性，但可能牺牲性能）
+    # Cudnn 设置（确保可重复性，但可能牺牲性能）
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False

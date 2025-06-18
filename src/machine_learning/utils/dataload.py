@@ -4,11 +4,11 @@ import os
 import struct
 import random
 import warnings
-from copy import deepcopy
 from PIL import Image
+from copy import deepcopy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, MISSING
 from typing import Callable, Sequence, Any
+from dataclasses import dataclass, MISSING
 
 import torch
 import numpy as np
@@ -17,27 +17,29 @@ from torch.utils.data import Dataset
 
 from machine_learning.utils.transforms import CustomTransform, YoloTransform
 from machine_learning.utils.image import resize
-from machine_learning.utils.others import print_dict, load_config_from_path, print_segmentation, list_from_txt
+from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
 
 class FullDataset(Dataset):
-    r"""完全加载数据集.
+    r"""
+    Fully load the dataset.
 
-    使用于小型数据集，占用内存空间小，加快数据读取速度.
+    It is suitable for small datasets, occupies less memory space and speeds up data reading.
     """
 
     def __init__(
         self,
         data: np.ndarray | torch.Tensor,
-        labels: np.ndarray | torch.Tensor = None,
-        tansform: transforms.Compose | CustomTransform = None,
+        labels: np.ndarray | torch.Tensor | None = None,
+        tansform: transforms.Compose | CustomTransform | None = None,
     ) -> None:
-        """完全加载数据集初始化.
+        """
+        Initialize the fully load dataset
 
         Args:
-            data (np.ndarray | torch.Tensor): 数据
-            labels (np.ndarray | torch.Tensor, optional): 标签. Defaults to None.
-            tansforms (Compose, optional): 数据转换器. Defaults to None.
+            data (np.ndarray, torch.Tensor): Data
+            labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
+            tansforms (Compose, CustomTransform, optional): Data converter. Defaults to None.
         """
         super().__init__()
 
@@ -62,23 +64,25 @@ class FullDataset(Dataset):
 
 
 class LazyDataset(Dataset):
-    r"""延迟加载数据集.
+    r"""
+    Lazily load dataset.
 
-    使用于大型数据集，减小内存空间占用，数据读取速度较慢.
+    It is used for large datasets, reducing memory space occupation, but the data reading speed is relatively slow.
     """
 
     def __init__(
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: transforms.Compose | CustomTransform = None,
+        transform: transforms.Compose | CustomTransform | None = None,
     ):
-        """LazyLoadDataset初始化.
+        """
+        Initialize the Lazily load dataset
 
         Args:
-            data_paths (Sequence[str]): 数据地址列表.
-            label_paths: (Sequence[int]): 标签地址列表.
-            transform (Compose, optional): 数据增强转换器. Defaults to None.
+            data_paths (Sequence[str]): Data address list.
+            label_paths: (Sequence[int]): Labels address list.
+            transform (Compose, CustomTransform, optional): Data converter. Defaults to None.
         """
         super().__init__()
 
@@ -94,9 +98,11 @@ class LazyDataset(Dataset):
 
 
 class YoloDataset(LazyDataset):
-    r"""yolo目标检测类数据集.
+    r"""
+    Yolo object detection type dataset.
 
-    目标检测数据集一般较大，继承延迟加载数据集，减小内存空间占用，数据读取速度较慢.
+    The object detection dataset is generally large. The inherited lazy loading dataset reduces the memory space
+    occupation, but the data reading speed is relatively slow.
     """
 
     def __init__(
@@ -108,21 +114,26 @@ class YoloDataset(LazyDataset):
         img_size_stride: int = 32,
         multiscale: bool = False,
     ):
-        """LazyLoadDataset初始化.
+        """YoloDataset Inherits from LazyLoadDataset, used for loading the yolo detection data
 
         Args:
-            data_paths (Sequence[str]): 数据地址列表.
-            label_paths: (Sequence[int]): 标签地址列表.
-            transform (Compose, optional): 数据增强转换器. Defaults to None.
+            data_paths (Sequence[str]): Yolo data address list.
+            label_paths: (Sequence[int]): Yolo labels address list.
+            transform: (YoloTransform): Yolo data converter. Defaults to None.
+            img_size: (int): The default required dim of the detected image. Defaults to 416.
+            multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
+            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults to None.
         """
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
         self.img_size = img_size
-        self.img_size_stride = img_size_stride
         self.multiscale = multiscale
 
-        self.min_size = self.img_size - 3 * img_size_stride
-        self.max_size = self.img_size + 3 * img_size_stride
+        if self.multiscale:
+            self.img_size_stride = img_size_stride
+            self.min_size = self.img_size - 3 * img_size_stride
+            self.max_size = self.img_size + 3 * img_size_stride
+
         self.batch_count = 0
 
     def __len__(self) -> int:
@@ -148,7 +159,7 @@ class YoloDataset(LazyDataset):
                 bboxes = labels[:, 1:5]
                 category_ids = labels[:, 0]
 
-                # 筛选有效的边界框
+                # Filter out effective bounding boxes
                 valid_indices = (bboxes[:, 2] > 0) & (bboxes[:, 3] > 0)
                 bboxes = bboxes[valid_indices]
                 category_ids = category_ids[valid_indices]
@@ -195,7 +206,7 @@ class YoloDataset(LazyDataset):
 
 
 class ParserFactory:
-    r"""工厂类, 用于生成具体的数据解析器, 遵循开闭原则."""
+    r"""The factory class is used to generate specific data parsers and follows the open-closed principle."""
 
     _parser_registry: dict[str, DatasetParser] = {}
 
@@ -220,7 +231,7 @@ class ParserFactory:
         metadata = self._load_metadata(dataset_dir)
 
         dataset_type: str = metadata["dataset_type"]
-        # 动态获取解析器
+        # Dynamically obtain the parser
         if dataset_type not in self._parser_registry:
             raise ValueError(f"Unsupported dataset type: {dataset_type}")
         parser_cls = self._parser_registry[dataset_type]
@@ -228,9 +239,9 @@ class ParserFactory:
         return parser_cls(parser_cfg)
 
     def _load_metadata(self, dataset_dir: str) -> dict:
-        """加载元数据文件"""
+        "Load the metadata file"
         metadata_path = os.path.join(dataset_dir, "metadata.yaml")
-        return load_config_from_path(metadata_path)
+        return load_config_from_yaml(metadata_path)
 
     def __str__(self):
         return f"DataLoaderFactory(parsers={self.parsers})"
@@ -244,31 +255,32 @@ class ParserCfg:
 
 
 class DatasetParser(ABC):
-    """数据集解析器抽象基类."""
+    """Dataset parser abstract base class."""
 
     def __init__(self, parser_cfg: ParserCfg) -> None:
         super().__init__()
         self.cfg = parser_cfg
 
-        self.dataset_dir = parser_cfg.dataset_dir
-        self.labels = parser_cfg.labels
+        self.dataset_dir = self.cfg.dataset_dir
+        self.labels = self.cfg.labels
         self.transforms = self.cfg.transforms
 
     @abstractmethod
     def parse(self) -> dict[str, Any]:
-        """解析数据集元信息
+        """Parse the metadata information of the data set
 
         Returns:
-            dict[str, Any]: 元信息返回值.
+            dict[str, Any]: Meta-information return value.
         """
         pass
 
     @abstractmethod
-    def create(self) -> dict[str, Dataset]:
-        """根据数据集的解析数据信息创建数据集.
+    def create(self, *args, **kwargs) -> dict[str, Dataset]:
+        """Create a dataset based on the parsed data information of the dataset.
 
         Returns:
-            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+            dict[str, Dataset]: Return the dictionary containing the training (train_dataset), validation (val_dataset)
+            datasets and special meta info of dataset.
         """
         pass
 
@@ -283,14 +295,19 @@ class DatasetParser(ABC):
 
 @ParserFactory.register_parser("minist")
 class MinistParser(DatasetParser):
-    r"""minist手写数字集数据解析器, 由于misit数据集体量小, 只实现了完全解析."""
+    r"""
+    The minist handwritten digit set data parser, due to the small volume of misit data sets, adopts a full data loading
+    method.
+    """
 
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        """ """
-        metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
+        """
+        Parse minist dataset metadata
+        """
+        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         dataset_name = metadata["dataset_name"]
         if metadata["dataset_type"] != "minist":
@@ -306,9 +323,7 @@ class MinistParser(DatasetParser):
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
         with open(dataset_dir, "rb") as f:
-            # 读取前16个字节的文件头信息
             magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
-            # 读取图像数据，并重新整形为(num_images, rows, cols)的三维数组
             images = np.fromfile(f, dtype=np.uint8).reshape(num_images, rows, cols)
 
             return images, magic, num_images, rows, cols
@@ -316,18 +331,16 @@ class MinistParser(DatasetParser):
     @staticmethod
     def load_idx1_ubyte(dataset_dir: str) -> tuple:
         with open(dataset_dir, "rb") as f:
-            # 读取前8个字节的文件头信息
             magic, num_labels = struct.unpack(">II", f.read(8))
-            # 读取标签数据，并重新整形为(num_labels,)的一维数组
             labels = np.fromfile(f, dtype=np.uint8)
 
             return labels, magic, num_labels
 
     def create(self) -> dict[str, Dataset]:
-        """根据MinistParser的配置信息创建数据集.
+        """Create data based on the configuration information of MinistParser
 
         Returns:
-            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
         """
         self.parse()
 
@@ -336,7 +349,7 @@ class MinistParser(DatasetParser):
         print("[INFO] Train data directory path: ", train_data_dir)
         print("[INFO] Val data directory path: ", val_data_dir)
 
-        # 加载数据
+        # load data
         train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
         val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
 
@@ -349,18 +362,18 @@ class MinistParser(DatasetParser):
         trian_dataset = FullDataset(train_data, train_labels, self.transforms)
         val_dataset = FullDataset(val_data, val_labels, self.transforms)
 
-        return {"train": trian_dataset, "val": val_dataset}
+        return {"train_dataset": trian_dataset, "val_dataset": val_dataset}
 
 
 @ParserFactory.register_parser("yolo")
 class YoloParser(DatasetParser):
-    r"""yolo格式数字集解析器"""
+    r"""Yolo format data set parser."""
 
     def __init__(self, parser_cfg: ParserCfg):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_config_from_path(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         dataset_name = metadata["dataset_name"]
         if metadata["dataset_type"] != "yolo":
@@ -373,7 +386,6 @@ class YoloParser(DatasetParser):
         print_dict(metadata)
         print_segmentation()
 
-        # 读取种类名称
         classes = list_from_txt(class_names_file)
 
         train_img_dir = os.path.join(self.dataset_dir, "images/val/")
@@ -382,14 +394,14 @@ class YoloParser(DatasetParser):
         val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
-        # 读取训练、验证图像列表
+        # train、 val imgs list
         train_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
 
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
 
-        # 添加绝对路径
+        # abs path
         train_img_paths = [train_img_dir + img for img in train_img_ls]
         val_img_paths = [val_img_dir + img for img in val_img_ls]
         train_labels_paths = [train_labels_dir + label for label in train_labels_ls]
@@ -397,22 +409,45 @@ class YoloParser(DatasetParser):
 
         return {
             "class_names": classes,
+            "class_nums": len(classes),
             "train_img_paths": train_img_paths,
             "val_img_paths": val_img_paths,
             "train_labels_paths": train_labels_paths,
             "val_labels_paths": val_labels_paths,
         }
 
-    def create(self) -> dict[str, Dataset]:
-        """根据YoloParser的配置信息创建数据集.
+    def create(self, img_size: int = 416, img_size_stride: int = 32, multiscale: bool = False) -> dict[str, Dataset]:
+        """Create a dataset based on the configuration information of YoloParser.
 
         Returns:
-            dict[str, Dataset]: 返回包含训练(train)和验证(val)数据集的字典.
+            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
         """
         # 解析类别和路径信息
         metadata = self.parse()
         class_names = metadata["class_names"]
-        trian_dataset = YoloDataset(metadata["train_img_paths"], metadata["train_labels_paths"], self.transforms)
-        val_dataset = YoloDataset(metadata["val_img_paths"], metadata["val_labels_paths"], self.transforms)
+        class_nums = metadata["class_nums"]
 
-        return {"class_names": class_names, "train": trian_dataset, "val": val_dataset}
+        trian_dataset = YoloDataset(
+            img_paths=metadata["train_img_paths"],
+            label_paths=metadata["train_labels_paths"],
+            transform=self.transforms,
+            img_size=img_size,
+            img_size_stride=img_size_stride,
+            multiscale=multiscale,
+        )
+        val_dataset = YoloDataset(
+            metadata["val_img_paths"],
+            metadata["val_labels_paths"],
+            self.transforms,
+            transform=self.transforms,
+            img_size=img_size,
+            img_size_stride=img_size_stride,
+            multiscale=multiscale,
+        )
+
+        return {
+            "class_nums": class_nums,
+            "class_names": class_names,
+            "train_dataset": trian_dataset,
+            "val_dataset": val_dataset,
+        }

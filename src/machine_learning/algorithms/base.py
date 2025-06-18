@@ -13,6 +13,7 @@ from machine_learning.utils.others import print_dict, print_segmentation
 
 
 YamlFilePath: TypeAlias = Path | str
+FilePath: TypeAlias = Path | str
 
 
 class AlgorithmBase(ABC):
@@ -121,7 +122,7 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    def _initialize_dependent_on_dataset(
+    def _initialize_dependent_on_data(
         self, train_loader: DataLoader, val_loader: DataLoader, batch_size: int, **kwargs
     ) -> None:
         """Initialize the training and validation data loaders and other dataset-specific parameters, need to be called
