@@ -6,9 +6,8 @@ class TrainCfg:
     log_dir: str
     model_dir: str
     seed: int = field(default=23)
-    train_batch_size: int = field(default=256)
-    val_batch_size: int = field(default=256)
-    test_batch_size: int | None = field(default=None)
+    batch_size: int = field(default=256)
+    subdevision: int = field(default=1)
     data_num_workers: int = field(default=4)
     data_shuffle: bool = field(default=True)
     epochs: int = field(default=100)

@@ -29,15 +29,14 @@ class Trainer:
         """
         self.cfg = cfg
         self._algorithm = algo
-        print(self.cfg.epochs)
+
         # ------------------ configure global random seed -----------------
         set_seed(self.cfg.seed)
         print(f"[INFO] Current seed: {self.cfg.seed}")
 
         # ---------------------- configure algo data ----------------------
-        self.train_batch_size = self.cfg.train_batch_size
-        self.val_batch_size = self.cfg.val_batch_size
-        self.test_batch_size = self.cfg.test_batch_size
+        self.batch_size = self.cfg.batch_size
+        self.mini_batch_size = self.batch_size // self.cfg.subdevision
         self._configure_data(parsed_data)
 
         # --------------------- configure algo logger ---------------------
@@ -55,14 +54,14 @@ class Trainer:
 
         train_loader = DataLoader(
             dataset=train_dataset,
-            batch_size=self.train_batch_size,
+            batch_size=self.batch_size,
             shuffle=self.cfg.data_shuffle,
             num_workers=self.cfg.data_num_workers,
             collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
         )
         val_loader = DataLoader(
             dataset=val_dataset,
-            batch_size=self.val_batch_size,
+            batch_size=self.mini_batch_size,
             shuffle=False,
             num_workers=self.cfg.data_num_workers,
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
@@ -73,14 +72,14 @@ class Trainer:
             test_dataset = data.pop("test_dataset")
             test_loader = DataLoader(
                 dataset=test_dataset,
-                batch_size=self.test_batch_size,
+                batch_size=self.mini_batch_size,
                 shuffle=False,
                 num_workers=self.cfg.data_num_workers,
                 collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
             )
 
         self._algorithm._initialize_dependent_on_data(
-            batch_size=self.cfg.train_batch_size,
+            batch_size=self.cfg.batch_size,
             train_loader=train_loader,
             val_loader=val_loader,
             test_loader=test_loader,
