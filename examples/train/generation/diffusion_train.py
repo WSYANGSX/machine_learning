@@ -37,10 +37,12 @@ def main():
     )
     trainer = Trainer(trainer_cfg, dataset, diffusion)
 
-    # Step 6: Train/Evaluate the model
+    # Step 6: Train the model
     trainer.train()
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/best_model.pth")
-    trainer.eval(5)
+
+    # Step 6: Evaluate the model
+    # diffusion.load("/home/yangxf/my_projects/machine_learning/checkpoints/diffusion/best_model.pth")
+    diffusion.eval(5)
 
 
 if __name__ == "__main__":

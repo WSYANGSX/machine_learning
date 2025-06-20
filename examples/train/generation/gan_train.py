@@ -40,10 +40,12 @@ def main():
     )
     trainer = Trainer(trainer_cfg, dataset, gan)
 
-    # Step 6: Train/Evaluate the model
+    # Step 6: Train the model
     trainer.train()
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")
-    trainer.eval(16)
+
+    # Step 7: Evaluate the model
+    # gan.load("/home/yangxf/my_projects/machine_learning/checkpoints/gan/checkpoint_epoch_999.pth")
+    gan.eval(16)
 
 
 if __name__ == "__main__":

@@ -40,9 +40,11 @@ def main():
     )
     trainer = Trainer(trainer_cfg, dataset, vq_vae)
 
-    # Step 6: Train/Evaluate the model
+    # Step 6: Train the model
     trainer.train()
-    trainer.eval()
+
+    # Step 7: Evaluate the model
+    vq_vae.eval()
 
 
 if __name__ == "__main__":
