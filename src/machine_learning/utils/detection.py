@@ -9,7 +9,7 @@ def rescale_padded_boxes(boxes: torch.Tensor, current_dim: int, original_shape: 
     将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
     [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
-    orig_h, orig_w = original_shape
+    _, orig_h, orig_w = original_shape
 
     # 计算增加的pad, 应对pad后放缩的情况
     pad_x = max(orig_h - orig_w, 0) * (current_dim / max(original_shape))

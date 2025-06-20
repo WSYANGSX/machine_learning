@@ -119,7 +119,7 @@ class AutoEncoder(AlgorithmBase):
         """Evaluate the model effect"""
         self.set_eval()
 
-        data, _ = next(iter(self.val_loader))
+        data, _ = next(iter(self.test_loader)) if hasattr(self, "test_loader") else next(iter(self.val_loader))
         sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
         data = data[sample_indices].to(self._device)
 

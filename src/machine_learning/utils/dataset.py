@@ -1,14 +1,13 @@
 from typing import Sequence, Any
 
+import torch
 import random
 import warnings
+import numpy as np
 from PIL import Image
 from copy import deepcopy
-
-import torch
-import numpy as np
-from torch.utils.data import Dataset
 from torchvision import transforms
+from torch.utils.data import Dataset
 
 from machine_learning.utils.image import resize
 from machine_learning.utils.transforms import BaseTransform
@@ -107,6 +106,7 @@ class YoloDataset(LazyDataset):
         img_size: int = 416,
         multiscale: bool = False,
         img_size_stride: int | None = 32,
+        augment: bool = True,
     ):
         """YoloDataset Inherits from LazyLoadDataset, used for loading the yolo detection data
 
@@ -118,11 +118,13 @@ class YoloDataset(LazyDataset):
             multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
             img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults
             to None.
+            augment: (bool): Whether to enable image augment. Defaults to True.
         """
         super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
 
         self.img_size = img_size
         self.multiscale = multiscale
+        self.augment = augment
 
         if self.multiscale:
             self.img_size_stride = img_size_stride
@@ -166,7 +168,7 @@ class YoloDataset(LazyDataset):
         #  Transform
         if self.transform:
             try:
-                img, bboxes, category_ids = self.transform((img, bboxes, category_ids))
+                img, bboxes, category_ids = self.transform(data=(img, bboxes, category_ids), augment=self.augment)
             except Exception:
                 print(f"Could not apply transform to image: {img_path}.")
                 return

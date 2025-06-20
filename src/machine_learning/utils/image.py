@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 
 
-def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> tuple:
+def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> torch.Tensor:
     c, h, w = img.shape
     dim_diff = np.abs(h - w)
     # 填充数值
@@ -13,7 +13,7 @@ def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> tuple:
 
     img = F.pad(img, pad, "constant", value=pad_value)
 
-    return img, pad
+    return img
 
 
 def resize(image: torch.Tensor, size) -> torch.Tensor:

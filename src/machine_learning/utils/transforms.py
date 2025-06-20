@@ -1,9 +1,9 @@
+from typing import Literal, Sequence
+
 import torch
 import numpy as np
 import albumentations as A
 from torchvision import transforms
-
-from typing import Literal, Sequence
 
 from machine_learning.utils.augmentations import DEFAULT_AUG, ENHANCED_AUG
 
@@ -23,7 +23,7 @@ class BaseTransform:
         else:
             self.augmentation = None
 
-    def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
+    def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """The specific logical implementation of data enhancement"""
         pass
 
@@ -32,10 +32,10 @@ class YoloTransform(BaseTransform):
     def __init__(
         self,
         augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
+        to_tensor: bool = True,
         normalize: bool | None = True,
         mean: Sequence[float] | None = None,
         std: Sequence[float] | None = None,
-        to_tensor: bool = True,
     ):
         """
         Implementation of data transform for Yolo object detection algorithm
@@ -57,7 +57,7 @@ class YoloTransform(BaseTransform):
         if to_tensor:
             self.to_tensor = transforms.ToTensor()  # It can only be applied in 2/3 dimensions
 
-    def __call__(self, data: Sequence[np.ndarray]) -> tuple[torch.Tensor]:
+    def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """
         Apply data augmentation.
 
@@ -69,7 +69,7 @@ class YoloTransform(BaseTransform):
         """
         img, bboxes, category_ids = data
 
-        if self.augmentation is not None:
+        if self.augmentation is not None and augment:
             auged_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
 
             img = auged_data["image"]

@@ -35,7 +35,9 @@ class Trainer:
         print(f"[INFO] Current seed: {self.cfg.seed}")
 
         # ---------------------- configure algo data ----------------------
-        self.batch_size = self.cfg.batch_size
+        self.train_batch_size = self.cfg.train_batch_size
+        self.val_batch_size = self.cfg.val_batch_size
+        self.test_batch_size = self.cfg.test_batch_size
         self._configure_data(parsed_data)
 
         # --------------------- configure algo logger ---------------------
@@ -53,21 +55,36 @@ class Trainer:
 
         train_loader = DataLoader(
             dataset=train_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.train_batch_size,
             shuffle=self.cfg.data_shuffle,
             num_workers=self.cfg.data_num_workers,
             collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
         )
         val_loader = DataLoader(
             dataset=val_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.val_batch_size,
             shuffle=False,
             num_workers=self.cfg.data_num_workers,
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
 
+        test_loader = None
+        if "test_dataset" in data and isinstance(data["test_dataset"], Dataset):
+            test_dataset = data.pop("test_dataset")
+            test_loader = DataLoader(
+                dataset=test_dataset,
+                batch_size=self.test_batch_size,
+                shuffle=False,
+                num_workers=self.cfg.data_num_workers,
+                collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
+            )
+
         self._algorithm._initialize_dependent_on_data(
-            train_loader=train_loader, val_loader=val_loader, batch_size=self.cfg.batch_size, **data
+            batch_size=self.cfg.train_batch_size,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loader=test_loader,
+            **data,
         )
 
     def _configure_writer(self):
@@ -135,8 +152,8 @@ class Trainer:
         start_epoch = state_dict["epoch"]
         self.train(start_epoch)
 
-    def eval(self, num_samples: int = 5):
-        self._algorithm.eval(num_samples)
+    def eval(self, *args, **kwargs):
+        self._algorithm.eval(*args, **kwargs)
 
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
         model_path = self.cfg.model_dir

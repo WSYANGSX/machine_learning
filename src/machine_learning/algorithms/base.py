@@ -119,7 +119,12 @@ class AlgorithmBase(ABC):
             model._initialize_weights()
 
     def _initialize_dependent_on_data(
-        self, train_loader: DataLoader, val_loader: DataLoader, batch_size: int, **kwargs
+        self,
+        batch_size: int,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        test_loader: DataLoader | None = None,
+        **kwargs,
     ) -> None:
         """Initialize the training and validation data loaders and other dataset-specific parameters, need to be called
         before training.
@@ -128,13 +133,15 @@ class AlgorithmBase(ABC):
             train_loader (DataLoader): train dataset loader.
             val_loader (DataLoader): val dataset loader.
         """
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-
         self.batch_size = batch_size
 
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        if test_loader:
+            self.test_loader = test_loader
+
         # Unique parameters of the data set
-        protected_attrs = {"train_loader", "val_loader", "batch_size"}
+        protected_attrs = {"train_loader", "val_loader", "batch_size", "test_loader"}
 
         if kwargs:
             self.cfg["data"] = {}

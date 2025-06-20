@@ -4,7 +4,6 @@ from itertools import chain
 
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -28,7 +27,8 @@ class YoloV3(AlgorithmBase):
             cfg (str, dict): Configuration of the algorithm, it can be yaml file path or cfg dict.
             models (dict[str, BaseNet]): Models required by the YOLOv3 algorithm, {"darknet": model1, "fpn": model2}.
             name (str): Name of the algorithm. Defaults to "yolo_v3".
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            "auto"-automatic selection by algorithm.
         """
         super().__init__(cfg=cfg, models=models, name=name, device=device)
 
@@ -36,13 +36,13 @@ class YoloV3(AlgorithmBase):
         self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
         self.anchor_sizes = self.cfg["algorithm"]["anchor_sizes"]
         self.default_img_size = self.cfg["algorithm"]["default_img_size"]
-        self.ignore_threshold = self.cfg["algorithm"]["ignore_threshold"]
+        self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
+        self.obj_exist_threshold = self.cfg["algorithm"]["obj_exist_threshold"]
         self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
         self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)
         self.c_weiget = self.cfg["algorithm"].get("c_weiget", 0.5)
 
         # parameters that varys due to difference of dataset
-        self.class_nums = None
         self.class_names = None
 
     def _configure_optimizers(self) -> None:
@@ -143,17 +143,69 @@ class YoloV3(AlgorithmBase):
 
         return {"yolo": avg_loss, "save": avg_loss}
 
-    # TODO
     @torch.no_grad()
-    def eval(self, img: torch.Tensor | np.ndarray) -> None:
+    def eval(self, img_path: FilePath) -> None:
+        from machine_learning.utils.image import pad_to_square
+        from machine_learning.utils.detection import rescale_padded_boxes
+        from machine_learning.utils.draw import visualize_img_with_bboxes
+
         self.set_eval()
 
-        skips = self.models["darknet"](img)
+        img, _, _, _ = next(iter(self.test_))
+
+        pad_img = pad_to_square(img)
+
+        skips = self.models["darknet"](pad_img)
         fimgs = self.models["fpn"](*skips)
 
-        # 特征图解码
-        det_ls, norm_anchors_ls = self.feature_decode(fimgs, img_size=img.shape[2])
-        ...
+        # decode feature map
+        det_ls, _ = self.feature_decode(fimgs, img_size=img.shape[2])
+
+        all_detections = []
+        for det in det_ls:
+            B, A, H, W, _ = det.shape
+            all_detections.append(det.view(B, A * H * W, -1))
+        detections = torch.cat(all_detections, dim=1)  # [1, total_anchors, 5+num_classes]
+
+        pred_boxes = detections[..., :4]  # (x, y, w, h)
+        pred_obj = detections[..., 4]  # obj
+        pred_cls = detections[..., 5:]  # cls
+
+        # fliter by obj confidence
+        mask = pred_obj > self.obj_exist_threshold
+        filtered_boxes = pred_boxes[mask]
+        filtered_obj = pred_obj[mask]
+        filtered_cls = pred_cls[mask]
+
+        if len(filtered_boxes) == 0:
+            return img.squeeze(0)
+
+        # (x, y, w, h) -> (x1, y1, x2, y2)
+        x1 = filtered_boxes[..., 0] - filtered_boxes[..., 2] / 2
+        y1 = filtered_boxes[..., 1] - filtered_boxes[..., 3] / 2
+        x2 = filtered_boxes[..., 0] + filtered_boxes[..., 2] / 2
+        y2 = filtered_boxes[..., 1] + filtered_boxes[..., 3] / 2
+        box_corners = torch.stack([x1, y1, x2, y2], dim=-1)
+
+        cls_conf, cls_ids = torch.max(filtered_cls, dim=-1)
+        scores = filtered_obj * cls_conf
+
+        # NMS
+        keep_indices = non_max_suppression(box_corners, scores, iou_threshold=self.iou_threshold)
+        final_boxes = box_corners[keep_indices]
+        final_scores = scores[keep_indices]
+        final_cls_ids = cls_ids[keep_indices]
+
+        # rescale
+        final_boxes = rescale_padded_boxes(final_boxes, pad_img.shape[1], img.shape)
+
+        # 可视化结果
+        visualize_img_with_bboxes(
+            img.cpu(),
+            bboxes=final_boxes.cpu().numpy(),
+            category_ids=final_cls_ids,
+            category_id_to_name={x: str(x) for x in self.class_names},
+        )
 
     def feature_decode(self, features: Iterable[torch.Tensor], img_size: int) -> tuple[list]:
         detection_ls, norm_anchors_ls = [], []
@@ -336,3 +388,41 @@ def check_data_integrity(img: torch.Tensor, bboxes: torch.Tensor, category_ids: 
         return True
 
     return False
+
+
+def non_max_suppression(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5) -> torch.Tensor:
+    """
+    Apply Non-Maximum Suppression (NMS) to filter overlapping boxes
+
+    Args:
+        boxes (torch.Tensor): [N, 4] tensor of boxes in (x1, y1, x2, y2) format
+        scores (torch.Tensor): [N] tensor of confidence scores
+        iou_threshold (float): IoU threshold for overlapping boxes
+
+    Returns:
+        torch.Tensor: Indices of boxes to keep
+    """
+    if boxes.numel() == 0:
+        return torch.empty((0,), dtype=torch.long, device=boxes.device)
+
+    # sort
+    sorted_scores, sort_idx = scores.sort(descending=True)
+    boxes_sorted = boxes[sort_idx]
+
+    # compute iou
+    ious = bbox_iou(boxes_sorted, boxes_sorted)
+
+    keep = []
+    while boxes_sorted.size(0) > 0:
+        keep.append(sort_idx[0].item())
+        if boxes_sorted.size(0) == 1:
+            break
+
+        iou_with_rest = ious[0, 1:]
+
+        mask = iou_with_rest <= iou_threshold
+        boxes_sorted = boxes_sorted[1:][mask]
+        sort_idx = sort_idx[1:][mask]
+        ious = ious[1:, 1:][mask][:, mask]
+
+    return torch.tensor(keep, dtype=torch.long, device=boxes.device)

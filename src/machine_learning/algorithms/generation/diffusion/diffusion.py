@@ -33,6 +33,9 @@ class Diffusion(AlgorithmBase):
         # main parameters of the algorithm
         self.time_steps = self.cfg["algorithm"].get("time_steps", 2000)
 
+        # parameters that varys due to difference of dataset
+        self.data_shape = None
+
         # ------------------------ configure algo parameters -----------------------
         self._configure_factors(self.cfg["algorithm"]["beta"]["method"])
 
@@ -192,7 +195,7 @@ class Diffusion(AlgorithmBase):
         """Evaluate the model effect by visualizing reconstruction results"""
         self.set_eval()
 
-        data = torch.randn(num_samples, *self.batch_data_shape[1:], device=self.device)
+        data = torch.randn(num_samples, *self.data_shape, device=self.device)
 
         print("[INFO] Start sampling...")
 
@@ -203,16 +206,6 @@ class Diffusion(AlgorithmBase):
             epoch += 1
 
         show_image(data, color_mode="gray")
-
-    def _initialize_data_loader(self, train_data_loader, val_data_loader):
-        super()._initialize_data_loader(train_data_loader, val_data_loader)
-
-        data, labels = next(iter(self.train_loader))
-        self.batch_data_shape = data.shape
-        self.batch_label_shape = labels.shape
-        print(
-            "[INFO] Batch data shape: ", self.batch_data_shape, " " * 5, "Batch labels shape: ", self.batch_label_shape
-        )
 
 
 """

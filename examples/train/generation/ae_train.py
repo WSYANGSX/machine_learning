@@ -29,7 +29,7 @@ def main():
 
     # Step 4: Parse the data
     dataset_dir = "./data/minist"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
     parser = ParserFactory().create_parser(parser_cfg)
     dataset = parser.create()
 

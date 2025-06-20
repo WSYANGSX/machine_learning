@@ -7,9 +7,12 @@ from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 
 def main():
-    # Step 1: Build the network
-    class_nums = 80
+    # Step 1: Parse configurations
+    dataset_cfg = load_config_from_yaml("./data/coco-2017/metadata.yaml")
     yolo_v3_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
+
+    # Step 2: Build networks
+    class_nums = dataset_cfg["class_nums"]
     default_image_size = yolo_v3_cfg["algorithm"]["default_img_size"]
     anchor_nums = yolo_v3_cfg["algorithm"]["anchor_nums"]
     darknet = Darknet(default_image_size)
@@ -42,14 +45,14 @@ def main():
 
     # Step 6: Train/Evaluate the model
     # train
-    trainer.train()
+    # trainer.train()
 
     # # train from checkpoint
     # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
 
-    # # eval
-    # trainer.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
-    # trainer.eval()
+    # eval
+    trainer.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
+    trainer.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
 
 
 if __name__ == "__main__":

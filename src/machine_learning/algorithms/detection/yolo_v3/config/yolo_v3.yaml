@@ -13,16 +13,17 @@ algorithm:
     - [116, 90]
     - [156, 198]
     - [373, 326]
-  ignore_threshold: 0.225
-  # loss权重
+  # loss
   b_weight : 0.05 # bboxes loss weight
   o_weight : 1.0  # object loss weight
   c_weight : 0.5  # cls loss weight
-  
+  # detection
+  iou_threshold: 0.5
+  obj_exist_threshold: 0.5
 
 optimizer:
   type: "Adam"
-  learning_rate: 1.0e-5
+  learning_rate: 1.0e-4
   beta1: 0.9
   beta2: 0.999
   eps: 1.0e-8

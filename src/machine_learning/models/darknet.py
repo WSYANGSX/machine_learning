@@ -125,6 +125,7 @@ class FPN(BaseNet):
 
         Args:
             skips (list[torch.Tensor]): the dim of skips : [(256, 52, 52),(512, 26, 26),(1024, 13, 13)].
+            trian (bool): train model or not. Default to True
 
         Returns:
             torch.Tensor: the fimg output.

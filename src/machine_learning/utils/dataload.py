@@ -2,8 +2,8 @@ from __future__ import annotations
 import os
 import sys
 import struct
-from typing import Callable, Any, Type
 from abc import ABC, abstractmethod
+from typing import Callable, Any, Type
 from dataclasses import dataclass, MISSING
 
 import numpy as np
@@ -238,9 +238,12 @@ class YoloParser(DatasetParser):
         val_img_dir = os.path.join(self.dataset_dir, "images/val/")
         val_labels_dir = os.path.join(self.dataset_dir, "labels/val/")
 
+        test_img_dir = os.path.join(self.dataset_dir, "images/test/")
+
         # train、 val imgs list
         train_img_ls = list_from_txt(self.dataset_dir + "/images_train.txt")
         val_img_ls = list_from_txt(self.dataset_dir + "/images_val.txt")
+        test_img_ls = list_from_txt(self.dataset_dir + "/images_test.txt")
 
         train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
         val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
@@ -248,14 +251,15 @@ class YoloParser(DatasetParser):
         # abs path
         train_img_paths = [train_img_dir + img for img in train_img_ls]
         val_img_paths = [val_img_dir + img for img in val_img_ls]
+        test_img_paths = [test_img_dir + img for img in test_img_ls]
         train_labels_paths = [train_labels_dir + label for label in train_labels_ls]
         val_labels_paths = [val_labels_dir + label for label in val_labels_ls]
 
         return {
             "class_names": classes,
-            "class_nums": len(classes),
             "train_img_paths": train_img_paths,
             "val_img_paths": val_img_paths,
+            "test_img_paths": test_img_paths,
             "train_labels_paths": train_labels_paths,
             "val_labels_paths": val_labels_paths,
         }
@@ -269,7 +273,6 @@ class YoloParser(DatasetParser):
         # 解析类别和路径信息
         metadata = self.parse()
         class_names = metadata["class_names"]
-        class_nums = metadata["class_nums"]
 
         trian_dataset = YoloDataset(
             img_paths=metadata["train_img_paths"],
@@ -278,6 +281,7 @@ class YoloParser(DatasetParser):
             img_size=self.cfg.img_size,
             multiscale=self.cfg.multiscale,
             img_size_stride=self.cfg.img_size_stride,
+            augment=True,
         )
         val_dataset = YoloDataset(
             metadata["val_img_paths"],
@@ -286,11 +290,21 @@ class YoloParser(DatasetParser):
             img_size=self.cfg.img_size,
             multiscale=self.cfg.multiscale,
             img_size_stride=self.cfg.img_size_stride,
+            augment=True,
+        )
+        test_dataset = YoloDataset(
+            img_paths=metadata["train_img_paths"],
+            label_paths=metadata["train_labels_paths"],
+            transform=self.transforms,
+            img_size=self.cfg.img_size,
+            multiscale=self.cfg.multiscale,
+            img_size_stride=self.cfg.img_size_stride,
+            augment=False,
         )
 
         return {
-            "class_nums": class_nums,
             "class_names": class_names,
             "train_dataset": trian_dataset,
             "val_dataset": val_dataset,
+            "test_dataset": test_dataset,
         }
