@@ -43,6 +43,10 @@ class Trainer:
         self._configure_writer()
         self.best_loss = torch.inf
 
+    @property
+    def algorithm(self) -> AlgorithmBase:
+        return self._algorithm
+
     def _configure_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
 
@@ -151,9 +155,6 @@ class Trainer:
         start_epoch = state_dict["epoch"]
         self.train(start_epoch)
 
-    def eval(self, *args, **kwargs):
-        self._algorithm.eval(*args, **kwargs)
-
     def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
         model_path = self.cfg.model_dir
         model_path = os.path.abspath(model_path)
@@ -169,6 +170,3 @@ class Trainer:
         save_path = os.path.join(model_path, filename)
 
         self._algorithm.save(epoch, loss, best_loss, save_path)
-
-    def load(self, checkpoint: str) -> dict[str:Any]:
-        return self._algorithm.load(checkpoint)

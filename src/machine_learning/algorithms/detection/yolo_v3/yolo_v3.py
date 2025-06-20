@@ -8,8 +8,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils.detection import bbox_iou
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils.detection import bbox_iou
 
 
 class YoloV3(AlgorithmBase):

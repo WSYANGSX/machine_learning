@@ -40,10 +40,12 @@ def main():
     )
     trainer = Trainer(trainer_cfg, dataset, auto_encoder)
 
-    # Step 6: Train/Evaluate the model
+    # Step 6: Train the model
     trainer.train()
-    # trainer.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
-    trainer.eval()
+
+    # Step 7: Evaluate the model
+    # auto_encoder.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+    auto_encoder.eval(5)
 
 
 if __name__ == "__main__":

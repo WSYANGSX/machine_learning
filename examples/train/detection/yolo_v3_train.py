@@ -43,16 +43,13 @@ def main():
     )
     trainer = Trainer(trainer_cfg, data, yolo_v3)
 
-    # Step 6: Train/Evaluate the model
-    # train
-    # trainer.train()
-
-    # # train from checkpoint
+    # Step 6: Train the model
+    trainer.train()
     # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
 
     # eval
-    trainer.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
-    trainer.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
+    yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
+    yolo_v3.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
 
 
 if __name__ == "__main__":
