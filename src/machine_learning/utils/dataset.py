@@ -108,7 +108,7 @@ class YoloDataset(LazyDataset):
         img_size_stride: int | None = 32,
         augment: bool = True,
     ):
-        """YoloDataset Inherits from LazyLoadDataset, used for loading the yolo detection data
+        """YoloDataset Inherits from LazyDataset, used for loading the yolo detection data
 
         Args:
             data_paths (Sequence[str]): Yolo data address list.

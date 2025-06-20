@@ -88,16 +88,16 @@ def add_bbox(
 
 
 def visualize_img_with_bboxes(
-    image: np.ndarray | torch.Tensor,
-    bboxes: np.ndarray | torch.Tensor,
+    image: np.ndarray,
+    bboxes: np.ndarray,
     category_ids: Sequence[int],
     category_id_to_name: Sequence[str] | Mapping[int, str],
 ) -> None:
     """显示添加边界框后的图像
 
     Args:
-        image (np.ndarray | torch.Tensor): 要添加边界框的图像.
-        bboxes (np.ndarray | torch.Tensor): 边界框, 以pascal_voc格式输入(x_min, y_min, x_max, y_max).
+        image (np.ndarray): 要添加边界框的图像.
+        bboxes (np.ndarray): 边界框, 以pascal_voc格式输入(x_min, y_min, x_max, y_max).
         category_ids (Sequence[int]): 边界框中物体的类别编号序列.
         category_id_to_name (Sequence[str]): 边界框中物体的类别编号对应的名称序列.
     """

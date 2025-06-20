@@ -2,7 +2,6 @@ algorithm:
   name: "yolo_v3"
   default_img_size: [3, 416, 416]
   anchor_nums: 3
-  class_nums: 80
   anchor_sizes: 
     - [10, 13]
     - [16, 30]

@@ -293,12 +293,9 @@ class YoloParser(DatasetParser):
             augment=True,
         )
         test_dataset = YoloDataset(
-            img_paths=metadata["train_img_paths"],
-            label_paths=metadata["train_labels_paths"],
+            img_paths=metadata["test_img_paths"],
+            label_paths=None,
             transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
             augment=False,
         )
 

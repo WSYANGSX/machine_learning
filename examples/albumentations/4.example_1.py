@@ -28,10 +28,10 @@ if __name__ == "__main__":
     aug = DEFAULT_AUG
     transformed = aug(image=image, bboxes=bboxes, category_ids=category_ids)
     transformed_img = transformed["image"]
-    print(type(transformed_img))
+    print(transformed_img.shape)
     transformed_bboxes = transformed["bboxes"]
-    print(type(transformed_bboxes))
+    print(transformed_bboxes.shape)
     transformed_category_ids = transformed["category_ids"]
-    print(transformed_category_ids)
+    print(transformed_category_ids.shape)
     transformed_bboxes_voc = yolo2voc(transformed_img, transformed_bboxes)
     visualize_img_with_bboxes(transformed_img, transformed_bboxes_voc, transformed["category_ids"], category_id_to_name)
