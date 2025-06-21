@@ -301,6 +301,7 @@ class YoloParser(DatasetParser):
 
         return {
             "class_names": class_names,
+            "class_nums": len(class_names),
             "train_dataset": trian_dataset,
             "val_dataset": val_dataset,
             "test_dataset": test_dataset,

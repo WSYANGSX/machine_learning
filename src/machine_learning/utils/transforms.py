@@ -14,6 +14,10 @@ class BaseTransform:
     def __init__(
         self,
         augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
+        to_tensor: bool = True,
+        normalize: bool | None = True,
+        mean: Sequence[float] | None = None,
+        std: Sequence[float] | None = None,
     ):
         if augmentation is not None:
             if isinstance(augmentation, str):
@@ -22,6 +26,12 @@ class BaseTransform:
                 self.augmentation = augmentation
         else:
             self.augmentation = None
+
+        if normalize:
+            self.normalize = transforms.Normalize(mean=mean, std=std)
+
+        if to_tensor:
+            self.to_tensor = transforms.ToTensor()  # It can only be applied in 2/3 dimensions
 
     def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """The specific logical implementation of data enhancement"""
@@ -49,13 +59,7 @@ class YoloTransform(BaseTransform):
             provided. Defaults to None.
             to_tensor (bool, optional): Whether to convert data to Tensor. Defaults to True.
         """
-        super().__init__(augmentation)
-
-        if normalize:
-            self.normalize = transforms.Normalize(mean=mean, std=std)
-
-        if to_tensor:
-            self.to_tensor = transforms.ToTensor()  # It can only be applied in 2/3 dimensions
+        super().__init__(augmentation, to_tensor, normalize, mean, std)
 
     def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """

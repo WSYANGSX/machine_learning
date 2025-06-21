@@ -134,19 +134,19 @@ class FPN(BaseNet):
 
         # ----- The first layer of detection -----
         x3 = self.fpn.conv_x3(deep_feature)  # (1024,13,13) -> (512,13,13)
-        detection3 = self.fpn.head_conv3(x3)  # (512,13,13) -> (255,13,13)
+        fmap3 = self.fpn.head_conv3(x3)  # (512,13,13) -> (255,13,13)
         x3_up = self.fpn.upsample(x3)  # (512,13,13) -> (512,26,26)
 
         # ----- The second layer of detection -----
         x2 = torch.cat([x3_up, self.fpn.conv_x2(mid_feature)], dim=1)  # (512,26,26) cat (256,26,26) -> (768,26,26)
-        detection2 = self.fpn.head_conv2(x2)  # (768,26,26) -> (255,26,26)
+        fmap2 = self.fpn.head_conv2(x2)  # (768,26,26) -> (255,26,26)
         x2_up = self.fpn.upsample(x2)  # (768,26,26) -> (768,52,52)
 
         # ----- The third layer of detection -----
         x1 = torch.cat([x2_up, self.fpn.conv_x1(shallow_feature)], dim=1)  # (768,52,52) cat (128,52,52) -> (896,52,52)
-        detection1 = self.fpn.head_conv1(x1)  # (896,52,52) -> (255,13,13)
+        fmap1 = self.fpn.head_conv1(x1)  # (896,52,52) -> (255,13,13)
 
-        return detection1, detection2, detection3  # 52x52, 26x26, 13x13
+        return fmap1, fmap2, fmap3  # 52x52, 26x26, 13x13
 
     def view_structure(self):
         from torchinfo import summary

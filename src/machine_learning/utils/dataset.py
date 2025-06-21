@@ -173,7 +173,7 @@ class YoloDataset(LazyDataset):
                 print(f"Could not apply transform to image: {img_path}.")
                 return
 
-        return img, bboxes, category_ids
+        return img, torch.cat([category_ids, bboxes], dim=-1)
 
     def collate_fn(self, batch) -> tuple:
         self.batch_count += 1
@@ -181,22 +181,18 @@ class YoloDataset(LazyDataset):
         # Drop invalid images
         batch = [data for data in batch if data is not None]
 
-        imgs, bboxes, category_ids = list(zip(*batch))
-        indices = deepcopy(category_ids)
+        imgs_ls, cls_bboxes_ls = list(zip(*batch))
 
         # Selects new image size every tenth batch
         if self.multiscale and self.batch_count % 10 == 0:
             self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_size_stride))
 
         # Resize images to input shape
-        imgs = torch.stack([resize(img, self.img_size) for img in imgs])
+        imgs = torch.stack([resize(img, self.img_size) for img in imgs_ls])
 
-        # Bboxes and category_ids may exist empty tensors.
-        bboxes = torch.cat(bboxes, 0)
-        category_ids = torch.cat(category_ids, 0)
+        for i, cls_bboxes in enumerate(cls_bboxes_ls):
+            id_col = torch.full((cls_bboxes.shape[0], 1), fill_value=i)
+            cls_bboxes = torch.cat([id_col, cls_bboxes], dim=-1)
+        iid_cls_bboxes = torch.cat(cls_bboxes_ls, 0)
 
-        for i, index in enumerate(indices):
-            index[:] = i
-        indices = torch.cat(indices, 0)
-
-        return imgs, bboxes, category_ids, indices
+        return imgs, iid_cls_bboxes
