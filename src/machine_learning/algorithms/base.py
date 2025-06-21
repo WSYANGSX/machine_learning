@@ -181,7 +181,12 @@ class AlgorithmBase(ABC):
         pass
 
     @abstractmethod
-    def eval(self, num_samples: int) -> None:
+    def eval(self, *args, **kwargs) -> None:
+        """
+        Evaluate the model of the algorithm
+
+        The parameters change according to the specific implementation logic of the subclass
+        """
         pass
 
     def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
