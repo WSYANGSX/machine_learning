@@ -107,7 +107,7 @@ class YoloV3(AlgorithmBase):
             decode2, norm_anchors2 = self.fmap_decode(fmap2, img_size=img.shape[2])
             decode3, norm_anchors3 = self.fmap_decode(fmap3, img_size=img.shape[2])
 
-            loss = self.criterion(
+            loss, loss_components = self.criterion(
                 decode_ls=[decode1, decode2, decode3],
                 norm_anchors_ls=[norm_anchors1, norm_anchors2, norm_anchors3],
                 iid_cls_bboxes=iid_cls_bboxes,
@@ -122,6 +122,15 @@ class YoloV3(AlgorithmBase):
 
             if batch_idx % log_interval == 0:
                 writer.add_scalar(
+                    "iou loss/train_batch", loss_components[0].item(), epoch * len(self.train_loader) + batch_idx
+                )  # IOU loss
+                writer.add_scalar(
+                    "object loss/train_batch", loss_components[1].item(), epoch * len(self.train_loader) + batch_idx
+                )  # batch loss
+                writer.add_scalar(
+                    "class loss/train_batch", loss_components[2].item(), epoch * len(self.train_loader) + batch_idx
+                )  # batch loss
+                writer.add_scalar(
                     "loss/train_batch", loss.item(), epoch * len(self.train_loader) + batch_idx
                 )  # batch loss
 
@@ -134,6 +143,9 @@ class YoloV3(AlgorithmBase):
         self.set_eval()
 
         total_loss = 0.0
+        total_iou_loss = 0.0
+        total_obj_loss = 0.0
+        total_cls_loss = 0.0
 
         for img, iid_cls_bboxes in self.train_loader:
             img = img.to(self.device, non_blocking=True)
@@ -146,15 +158,29 @@ class YoloV3(AlgorithmBase):
             decode2, norm_anchors2 = self.fmap_decode(fmap2, img_size=img.shape[2])
             decode3, norm_anchors3 = self.fmap_decode(fmap3, img_size=img.shape[2])
 
-            total_loss += self.criterion(
+            loss, loss_components = self.criterion(
                 decode_ls=[decode1, decode2, decode3],
                 norm_anchors_ls=[norm_anchors1, norm_anchors2, norm_anchors3],
-                cls_iids_bboxes=iid_cls_bboxes,
-            ).item()
+                iid_cls_bboxes=iid_cls_bboxes,
+            )
+
+            total_loss += loss.item()
+            total_iou_loss += loss_components[0].item()
+            total_obj_loss += loss_components[1].item()
+            total_cls_loss += loss_components[2].item()
 
         avg_loss = total_loss / len(self.val_loader)
+        avg_iou_loss = total_iou_loss / len(self.val_loader)
+        avg_obj_loss = total_obj_loss / len(self.val_loader)
+        avg_cls_loss = total_cls_loss / len(self.val_loader)
 
-        return {"yolo": avg_loss, "save": avg_loss}
+        return {
+            "yolo": avg_loss,
+            "save": avg_loss,
+            "iou loss": avg_iou_loss,
+            "object loss": avg_obj_loss,
+            "class loss": avg_cls_loss,
+        }
 
     @torch.no_grad()
     def eval(self, img_path: FilePath) -> None:
@@ -213,7 +239,7 @@ class YoloV3(AlgorithmBase):
         decode_ls: list[torch.Tensor],
         norm_anchors_ls: list[torch.Tensor],
         iid_cls_bboxes: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple:
         cls_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
         bbox_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
         obj_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
@@ -247,9 +273,10 @@ class YoloV3(AlgorithmBase):
             obj_preds = decode[..., 4]
             obj_loss += BCEobj(obj_preds, tobj)
 
+        loss_components = [bbox_loss, obj_loss, cls_loss]
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
-        return loss
+        return loss, loss_components
 
     @torch.no_grad()
     def prepare_target(
