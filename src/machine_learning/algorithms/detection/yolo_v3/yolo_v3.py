@@ -220,16 +220,14 @@ class YoloV3(AlgorithmBase):
         xy = fmap[..., :2]  # Center point offset
         # wh = fmap[..., 2:4].clamp(-10, 10)  # Width and height offset
         wh = fmap[..., 2:4]
-        obj = fmap[..., [4]]  # Target Confidence Level
-        cls = fmap[..., 5:]  # Classification Probability
+        obj_cls = fmap[..., 4:]  # Target Confidence Level and Classification Probability
 
         new_xy = torch.sigmoid(xy) + grid_xy  # The coordinates of center point on the coordinate system of feature map
         new_wh = norm_wh * torch.exp(wh)  # The width and height of bboxes on the feature map coordinate system
-        new_obj = torch.sigmoid(obj)  # Map the existence of obj to 0-1
-        new_cls = torch.sigmoid(cls)  # Whether the cls is correctly mapped to 0-1
+        new_obj_cls = torch.sigmoid(obj_cls)  # Map the existence of obj to 0-1
 
         # reshape tensor -> [B, A, H, W, (C/A)]
-        decode = torch.cat([new_xy, new_wh, new_obj, new_cls], dim=-1)
+        decode = torch.cat([new_xy, new_wh, new_obj_cls], dim=-1)
         decode = decode.permute(0, 3, 1, 2, 4).contiguous()  # [B, num_anchors, H, W, ...]
 
         return decode, norm_anchors

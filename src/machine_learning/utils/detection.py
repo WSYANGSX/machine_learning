@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Iterable
 
 import time
 import tqdm
@@ -202,7 +202,57 @@ def bbox_iou(
     return iou
 
 
-def ap_per_class(tp, conf, pred_cls, target_cls):
+def get_batch_statistics(outputs, targets, iou_threshold):
+    """Compute true positives, predicted scores and predicted labels per batch sample"""
+    batch_metrics = []
+
+    for i in range(len(outputs)):
+        if outputs[i] is None:
+            continue
+
+        output = outputs[i]
+        pred_boxes = output[:, :4]
+        pred_scores = output[:, 4]
+        pred_labels = output[:, -1]
+
+        true_positives = np.zeros(pred_boxes.shape[0])
+
+        annotations = targets[targets[:, 0] == i][:, 1:]
+        target_labels = annotations[:, 0] if len(annotations) else []
+        if len(annotations):
+            detected_boxes = []
+            target_boxes = annotations[:, 1:]
+
+            for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
+                # If targets are found break
+                if len(detected_boxes) == len(annotations):
+                    break
+
+                # Ignore if label is not one of the target labels
+                if pred_label not in target_labels:
+                    continue
+
+                # Filter target_boxes by pred_label so that we only match against boxes of our own label
+                filtered_target_position, filtered_targets = zip(
+                    *filter(lambda x: target_labels[x[0]] == pred_label, enumerate(target_boxes))
+                )
+
+                # Find the best matching target for our predicted box
+                iou, box_filtered_index = bbox_iou(pred_box.unsqueeze(0), torch.stack(filtered_targets)).max(0)
+
+                # Remap the index in the list of filtered targets for that label to the index in the list with all targets.
+                box_index = filtered_target_position[box_filtered_index]
+
+                # Check if the iou is above the min treshold and i
+                if iou >= iou_threshold and box_index not in detected_boxes:
+                    true_positives[pred_i] = 1
+                    detected_boxes += [box_index]
+        batch_metrics.append([true_positives, pred_scores, pred_labels])
+
+    return batch_metrics
+
+
+def average_precision_per_cls(tp, conf, pred_cls, target_cls):
     """Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
@@ -248,7 +298,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
             p.append(precision_curve[-1])
 
             # AP from recall-precision curve
-            ap.append(compute_ap(recall_curve, precision_curve))
+            ap.append(average_precision(recall_curve, precision_curve))
 
     # Compute F1 score (harmonic mean of precision and recall)
     p, r, ap = np.array(p), np.array(r), np.array(ap)
@@ -257,7 +307,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     return p, r, ap, f1, unique_classes.astype("int32")
 
 
-def compute_ap(recall, precision):
+def average_precision(recall, precision):
     """Compute the average precision, given the recall and precision curves.
     Code originally from https://github.com/rbgirshick/py-faster-rcnn.
 
@@ -285,69 +335,83 @@ def compute_ap(recall, precision):
     return ap
 
 
-def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None):
+def non_max_suppression(
+    predictions: torch.Tensor,
+    conf_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    classes_filter: Iterable[int] = None,
+    max_wh: int = 4096,
+    max_det: int = 300,
+    max_nms: int = 30000,
+    time_limit: float = 1.0,
+) -> torch.Tensor:
     """Performs Non-Maximum Suppression (NMS) on inference results
+
+    Args:
+        prediction (torch.Tensor): prediction output from Darknet network
+        conf_threshold (float): This threshold is used to filter out the prediction boxes whose confidence scores are
+        lower than this threshold. Defaults to 0.25.
+        iou_threshold (float): This threshold is used in the non-maximum suppression (NMS) process to determine which
+        boxes overlap and should be merged or discarded. Defaults to 0.45.
+        classes (list[str]): class filter. Defaults to None.
+        max_wh (int): minimum and maximum box width and height. Defaults to 4096.
+        max_det (int): maximum number of detections per image. Defaults to 300.
+        max_nms (int): maximum number of boxes into torchvision.ops.nms(). Defaults to 30000.
+        time_limit (float): seconds to quit after. Defaults to 1.0.
+
     Returns:
-         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+        torch.Tensor: detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
     """
-
-    nc = prediction.shape[2] - 5  # number of classes
-
-    # Settings
-    # (pixels) minimum and maximum box width and height
-    max_wh = 4096
-    max_det = 300  # maximum number of detections per image
-    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
-    time_limit = 1.0  # seconds to quit after
-    multi_label = nc > 1  # multiple labels per box (adds 0.5ms/img)
+    class_nums = predictions.shape[2] - 5  # number of classes
+    multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
 
     t = time.time()
-    output = [torch.zeros((0, 6), device="cpu")] * prediction.shape[0]
+    output = torch.zeros((predictions.shape[0], 6), device="cpu")
 
-    for xi, x in enumerate(prediction):  # image index, image inference
+    for i, prediction in enumerate(predictions):
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        x = x[x[..., 4] > conf_thres]  # confidence
+        prediction = prediction[prediction[..., 4] > conf_threshold]  # confidence
 
         # If none remain process next image
-        if not x.shape[0]:
+        if not prediction.shape[0]:
             continue
 
         # Compute conf
-        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+        prediction[:, 5:] *= prediction[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
-        box = xywh2xyxy(x[:, :4])
+        box = xywh2xyxy(prediction[:, :4])
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
-            i, j = (x[:, 5:] > conf_thres).nonzero(as_tuple=False).T
-            x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
+            i, j = (prediction[:, 5:] > conf_threshold).nonzero(as_tuple=False).T
+            prediction = torch.cat((box[i], prediction[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
-            conf, j = x[:, 5:].max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            conf, j = prediction[:, 5:].max(1, keepdim=True)
+            prediction = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_threshold]
 
         # Filter by class
-        if classes is not None:
-            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
+        if classes_filter is not None:
+            prediction = prediction[(prediction[:, 5:6] == torch.tensor(classes_filter, device=x.device)).any(1)]
 
         # Check shape
-        n = x.shape[0]  # number of boxes
+        n = prediction.shape[0]  # number of boxes
         if not n:  # no boxes
             continue
         elif n > max_nms:  # excess boxes
             # sort by confidence
-            x = x[x[:, 4].argsort(descending=True)[:max_nms]]
+            prediction = prediction[prediction[:, 4].argsort(descending=True)[:max_nms]]
 
         # Batched NMS
-        c = x[:, 5:6] * max_wh  # classes
+        c = prediction[:, 5:6] * max_wh  # classes
         # boxes (offset by class), scores
-        boxes, scores = x[:, :4] + c, x[:, 4]
-        i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+        boxes, scores = prediction[:, :4] + c, prediction[:, 4]
+        i = torchvision.ops.nms(boxes, scores, iou_threshold)  # NMS
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
 
-        output[xi] = to_cpu(x[i])
+        output[i] = prediction[i].cpu()
 
         if (time.time() - t) > time_limit:
             print(f"WARNING: NMS time limit {time_limit}s exceeded")

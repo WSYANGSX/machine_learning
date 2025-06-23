@@ -20,8 +20,7 @@ import torch
 # )
 # print(x[0:2, 0:2, 0:2])
 
-x = torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]])
-# x[:, [0, 1, 1, 2]] = 0
-# print(x)
-x[range(4), [0, 1, 2, 2]] = 0
-print(x)
+output = [torch.zeros((0, 6), device="cpu")] * 6
+output[0] = torch.tensor([1, 2, 3, 4, 5])
+for i in output:
+    print(i)
