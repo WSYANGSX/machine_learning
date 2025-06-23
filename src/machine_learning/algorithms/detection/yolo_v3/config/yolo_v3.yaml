@@ -12,6 +12,7 @@ algorithm:
     - [116, 90]
     - [156, 198]
     - [373, 326]
+  anchor_scale_threshold: 4
   # loss
   b_weight : 0.05 # bboxes loss weight
   o_weight : 1.0  # object loss weight

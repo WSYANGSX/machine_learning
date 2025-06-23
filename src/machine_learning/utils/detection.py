@@ -29,42 +29,43 @@ def rescale_padded_boxes(boxes: torch.Tensor, current_dim: int, original_shape: 
 
 
 def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
-    y = x.new(x.shape)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2
-    y[..., 1] = x[..., 1] - x[..., 3] / 2
-    y[..., 2] = x[..., 0] + x[..., 2] / 2
-    y[..., 3] = x[..., 1] + x[..., 3] / 2
+    new = x.new(x.shape)
+    new[..., 0] = x[..., 0] - x[..., 2] / 2
+    new[..., 1] = x[..., 1] - x[..., 3] / 2
+    new[..., 2] = x[..., 0] + x[..., 2] / 2
+    new[..., 3] = x[..., 1] + x[..., 3] / 2
 
-    return y
+    return new
 
 
 def xywh2xyxy_np(x):
-    y = np.zeros_like(x)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2
-    y[..., 1] = x[..., 1] - x[..., 3] / 2
-    y[..., 2] = x[..., 0] + x[..., 2] / 2
-    y[..., 3] = x[..., 1] + x[..., 3] / 2
-    return y
+    new = np.zeros_like(x)
+    new[..., 0] = x[..., 0] - x[..., 2] / 2
+    new[..., 1] = x[..., 1] - x[..., 3] / 2
+    new[..., 2] = x[..., 0] + x[..., 2] / 2
+    new[..., 3] = x[..., 1] + x[..., 3] / 2
+
+    return new
 
 
 def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
-    y = x.new(x.shape)
-    y[..., 0] = (x[..., 0] + x[..., 2]) / 2
-    y[..., 1] = (x[..., 1] + x[..., 3]) / 2
-    y[..., 2] = x[..., 2] - x[..., 0]
-    y[..., 3] = x[..., 3] - x[..., 1]
+    new = x.new(x.shape)
+    new[..., 0] = (x[..., 0] + x[..., 2]) / 2
+    new[..., 1] = (x[..., 1] + x[..., 3]) / 2
+    new[..., 2] = x[..., 2] - x[..., 0]
+    new[..., 3] = x[..., 3] - x[..., 1]
 
-    return y
+    return new
 
 
 def xyxy2xywh_np(x: torch.Tensor) -> torch.Tensor:
-    y = np.zeros_like(x)
-    y[..., 0] = (x[..., 0] + x[..., 2]) / 2
-    y[..., 1] = (x[..., 1] + x[..., 3]) / 2
-    y[..., 2] = x[..., 2] - x[..., 0]
-    y[..., 3] = x[..., 3] - x[..., 1]
+    new = np.zeros_like(x)
+    new[..., 0] = (x[..., 0] + x[..., 2]) / 2
+    new[..., 1] = (x[..., 1] + x[..., 3]) / 2
+    new[..., 2] = x[..., 2] - x[..., 0]
+    new[..., 3] = x[..., 3] - x[..., 1]
 
-    return y
+    return new
 
 
 def to_absolute_labels(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
@@ -95,34 +96,39 @@ def bbox_iou(
     eps: float = 1e-9,
     safe: bool = True,
 ) -> torch.Tensor:
-    """计算改进的 IoU, 增强数值稳定性"""
+    """Calculate the improved IoU to enhance numerical stability"""
 
-    # 0. 输入验证
+    # 0. Input validation
     if safe:
-        # 检查输入是否为有限值
+        # Check whether the input is a finite value
         if torch.isnan(bbox1).any():
-            raise ValueError("输入边界框 bbox1 包含非有限值(NaN)")
+            raise ValueError("The input bounding-box bbox1 contains non-finite values (NaN).")
         elif torch.isinf(bbox1).any():
-            raise ValueError("输入边界框 bbox1 包含非有限值(inf)")
+            raise ValueError("The input bounding-box bbox1 contains non-finite values (inf).")
 
         if torch.isnan(bbox2).any():
-            raise ValueError("输入边界框 bbox2 包含非有限值(NaN)")
+            raise ValueError("The input bounding-box bbox2 contains non-finite values (NaN).")
         elif torch.isinf(bbox2).any():
-            raise ValueError("输入边界框 bbox2 包含非有限值(inf)")
+            raise ValueError("The input bounding-box bbox2 contains non-finite values (inf).")
 
-        # 检查坐标有效性
+        # Check the validity of the coordinates
         if bbox_format == "pascal_voc":
             if (bbox1[2] < bbox1[0]).any() or (bbox1[3] < bbox1[1]).any():
-                raise ValueError("bbox1 包含无效坐标 (x2 < x1 或 y2 < y1)")
+                raise ValueError("bbox1 contains invalid coordinates (x2 < x1 or y2 < y1).")
             if (bbox2[2] < bbox2[0]).any() or (bbox2[3] < bbox2[1]).any():
-                raise ValueError("bbox2 包含无效坐标 (x2 < x1 或 y2 < y1)")
+                raise ValueError("bbox2 contains invalid coordinates (x2 < x1 or y2 < y1).")
+        else:
+            if (bbox1[2] < 0).any() or (bbox1[3] < 0).any():
+                raise ValueError("bbox1 contains invalid coordinates (w < 0 or h < 0).")
+            if (bbox2[2] < 0).any() or (bbox2[3] < 0).any():
+                raise ValueError("bbox2 contains invalid coordinates (w < 0 or h < 0).")
 
-    # 1. 格式转换
+    # 1. Format conversion
     if bbox_format == "coco":
         bbox1 = xywh2xyxy(bbox1)
         bbox2 = xywh2xyxy(bbox2)
 
-    # 2. 提取坐标 - 添加维度处理
+    # 2. Extract coordinates - Add dimension processing
     if bbox1.dim() == 1:
         bbox1 = bbox1.unsqueeze(0)
     if bbox2.dim() == 1:
@@ -131,7 +137,7 @@ def bbox_iou(
     bb1_x1, bb1_y1, bb1_x2, bb1_y2 = bbox1[:, 0], bbox1[:, 1], bbox1[:, 2], bbox1[:, 3]
     bb2_x1, bb2_y1, bb2_x2, bb2_y2 = bbox2[:, 0], bbox2[:, 1], bbox2[:, 2], bbox2[:, 3]
 
-    # 3. 计算交集区域 (添加保护性clamp)
+    # 3. Calculate the intersection area (add protective clamp)
     inter_x1 = torch.max(bb1_x1, bb2_x1)
     inter_y1 = torch.max(bb1_y1, bb2_y1)
     inter_x2 = torch.min(bb1_x2, bb2_x2)
@@ -141,7 +147,7 @@ def bbox_iou(
     inter_height = (inter_y2 - inter_y1).clamp(min=0)
     inter_area = inter_width * inter_height
 
-    # 4. 计算并集区域 (所有维度添加eps)
+    # 4. Calculate the union region (add eps to all dimensions)
     bb1_width = (bb1_x2 - bb1_x1).clamp(min=eps)
     bb1_height = (bb1_y2 - bb1_y1).clamp(min=eps)
     bb2_width = (bb2_x2 - bb2_x1).clamp(min=eps)
@@ -149,12 +155,11 @@ def bbox_iou(
 
     union_area = (bb1_width * bb1_height) + (bb2_width * bb2_height) - inter_area + eps
 
-    # 5. 基本IoU计算
+    # 5.  Calculate basic IoU
     iou = inter_area / union_area
 
-    # 6. 高级IoU变体
+    # 6. Advanced IoU Variants
     if iou_type != "default":
-        # 最小包围框
         c_x1 = torch.min(bb1_x1, bb2_x1)
         c_y1 = torch.min(bb1_y1, bb2_y1)
         c_x2 = torch.max(bb1_x2, bb2_x2)
@@ -165,7 +170,6 @@ def bbox_iou(
         c_area = c_width * c_height
 
         if iou_type in ["diou", "ciou"]:
-            # 中心点距离平方
             bb1_cx = (bb1_x1 + bb1_x2) / 2
             bb1_cy = (bb1_y1 + bb1_y2) / 2
             bb2_cx = (bb2_x1 + bb2_x2) / 2
@@ -177,22 +181,19 @@ def bbox_iou(
             diou_term = center_dist_sq / c_diagonal_sq
 
             if iou_type == "ciou":
-                # 改进的宽高比计算 (避免除零)
                 arctan_diff = torch.atan(bb2_width / bb2_height.clamp(min=eps)) - torch.atan(
                     bb1_width / bb1_height.clamp(min=eps)
                 )
 
-                # 更稳定的v计算
                 v = (4 / (torch.pi**2)) * arctan_diff.pow(2)
 
-                # 动态加权
                 with torch.no_grad():
                     alpha = v / ((1 + eps) - iou + v)
 
                 return iou - diou_term - v * alpha
             else:
                 return iou - diou_term
-        else:  # GIoU
+        else:
             return iou - (c_area - union_area) / c_area
 
     return iou

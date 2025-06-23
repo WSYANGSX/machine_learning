@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Iterable, Mapping, Any
+from typing import Literal, Mapping, Any
 from itertools import chain
 
 import torch
@@ -39,6 +39,7 @@ class YoloV3(AlgorithmBase):
 
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
         self.obj_exist_threshold = self.cfg["algorithm"]["obj_exist_threshold"]
+        self.anchor_scale_threshold = self.cfg["algorithm"]["anchor_scale_threshold"]
 
         self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
         self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)
@@ -191,7 +192,8 @@ class YoloV3(AlgorithmBase):
         # Decompose the original fmap tensor. In-place operations on the tensor will disrupt the
         # gradient and lead to calculation errors
         xy = fmap[..., :2]  # Center point offset
-        wh = fmap[..., 2:4].clamp(-10, 10)  # Width and height offset
+        # wh = fmap[..., 2:4].clamp(-10, 10)  # Width and height offset
+        wh = fmap[..., 2:4]
         obj = fmap[..., [4]]  # Target Confidence Level
         cls = fmap[..., 5:]  # Classification Probability
 
@@ -212,8 +214,6 @@ class YoloV3(AlgorithmBase):
         norm_anchors_ls: list[torch.Tensor],
         iid_cls_bboxes: torch.Tensor,
     ) -> torch.Tensor:
-        tcls, tbboxes, indices, _ = self.prepare_targets(decode_ls, norm_anchors_ls, iid_cls_bboxes)
-
         cls_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
         bbox_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
         obj_loss = torch.scalar_tensor(0, dtype=torch.float32, device=self.device)
@@ -222,45 +222,42 @@ class YoloV3(AlgorithmBase):
         BCEcls = nn.BCELoss()
         BCEobj = nn.BCELoss()
 
-        for i, decode in enumerate(decode_ls):
-            img_ids, anchor_ids, grid_j, grid_i = indices[i]
-            num_bboxes = img_ids.shape[0]
+        for i, (decode, norm_anchors) in enumerate(zip(decode_ls, norm_anchors_ls)):
+            tcls, tbboxes, indices = self.prepare_target(
+                decode, norm_anchors, iid_cls_bboxes
+            )  # indices means that there is a bbox
 
-            # Use detach() to create tobj to avoid gradient propagation issues.
-            tobj = torch.zeros_like(decode[..., 0], device=self.device)
+            num_bboxes = tbboxes.size(0)
+            tobj = torch.zeros_like(decode[..., 0], device=self.device)  # decode [B, A, H, W, (C / A)]
 
             if num_bboxes:
-                ps = decode[img_ids, anchor_ids, grid_j, grid_i]  # decode [B, A, H, W, (C / A)]
-                pxy, pwh = ps[:, :2], ps[:, 2:4]
-                pbox = torch.cat((pxy, pwh), 1)
+                pbox = decode[indices][:, :4]
                 iou = bbox_iou(pbox, tbboxes[i], bbox_format="coco", iou_type="ciou")
-
-                if torch.isnan(iou).any() or torch.isinf(iou).any():
-                    print("iou has nan value.")
-
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
-                tobj[img_ids, anchor_ids, grid_j, grid_i] = iou.detach().clamp(0.0, 1.0).type(tobj.dtype)
-                if ps.size(1) > 5:
-                    targets = torch.zeros_like(ps[:, 5:], device=self.device)
-                    targets[range(num_bboxes), tcls[i]] = 1.0
+                tobj[indices] = iou.detach().clamp(0.0, 1.0).type(tobj.dtype)
 
-                    class_preds = ps[:, 5:]
-                    cls_loss += BCEcls(class_preds, targets)
+                if decode.size(-1) > 5:
+                    pcls = decode[indices][:, 5:]  # pcls [num_bboxes, 80]
+                    cls = torch.zeros_like(pcls, device=self.device)  # cls [num_bboxes, 80]
+                    cls[range(num_bboxes), tcls[i]] = 1.0
+
+                    cls_loss += BCEcls(pcls, cls)
 
             obj_preds = decode[..., 4]
-            obj_loss += BCEobj(obj_preds, tobj.detach())
+            obj_loss += BCEobj(obj_preds, tobj)
 
         loss = self.b_weiget * bbox_loss + self.o_weiget * obj_loss + self.c_weiget * cls_loss
 
         return loss
 
-    def prepare_targets(
+    @torch.no_grad()
+    def prepare_target(
         self,
-        decode_ls: list[torch.Tensor],
-        norm_anchors_ls: list[torch.Tensor],
+        decode: torch.Tensor,
+        norm_anchors: torch.Tensor,
         iid_cls_bboxes: torch.Tensor,
-    ) -> tuple:
+    ) -> tuple[torch.Tensor]:
         """
         The target information of the original image is mapped to the fmap space to prepare for the loss calculation
 
@@ -268,48 +265,36 @@ class YoloV3(AlgorithmBase):
         the feature space is much larger than that in the target bounding box. For example, the number of bounding boxes
         in the 52*52 feature map is 52*52*3, and the computational complexity is high.
         """
-        tcls, tbboxes, indices, tanchors = [], [], [], []
-
         num_bboxes = iid_cls_bboxes.shape[0]  # number of bboxes(targets)
+        height, width = decode.shape[2], decode.shape[3]  # decode [B, A, H, W, (C / A)]
 
-        for _, (decode, norm_anchors) in enumerate(zip(decode_ls, norm_anchors_ls)):
-            height, width = decode.shape[2], decode.shape[3]  # det [B, A, H, W, (C / A)]
+        targets = iid_cls_bboxes.repeat(self.anchor_nums, 1, 1)  # targets [num_anchors, num_bboxes, 6]
+        targets[:, :, 2:6] *= iid_cls_bboxes.new([width, height]).repeat(num_bboxes, 2)
+        anchor_ids = (
+            torch.arange(self.anchor_nums, device=self.device)
+            .view(self.anchor_nums, 1)
+            .repeat(1, num_bboxes)
+            .view(self.anchor_nums, num_bboxes, 1)
+        )
+        targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, img_id, class_id, x, y, w, h)
 
-            targets = iid_cls_bboxes.repeat(self.anchor_nums, 1, 1)  # targets [num_anchors, num_bboxes, 6]
-            targets[:, :, 2:6] *= iid_cls_bboxes.new([width, height]).repeat(num_bboxes, 2)
+        # Filter the appropriate target box
+        if num_bboxes:
+            r = targets[:, :, 5:7] / norm_anchors[:, None]
+            j = torch.max(r, 1.0 / r).max(2)[0] < self.anchor_scale_threshold
+            targets = targets[j]
 
-            anchor_ids = (
-                torch.arange(self.anchor_nums, device=self.device)
-                .view(self.anchor_nums, 1)
-                .repeat(1, num_bboxes)
-                .view(self.anchor_nums, num_bboxes, 1)
-            )
+        anchor_ids, img_ids, tcls = targets[:, :3].long().T
 
-            targets = torch.cat(
-                [anchor_ids, targets], dim=-1
-            )  # targets [num_anchors, num_bboxes, 7] (anchor_ids, class_id, img_id, x, y, w, h)
+        # The center point coordinates of the target bboxes in the feature map coordinate system
+        gxy = targets[:, 3:5]
+        gji = gxy.long()
+        gj, gi = gji.T
 
-            # Filter the appropriate target box
-            if num_bboxes:
-                r = targets[:, :, 5:7] / norm_anchors[:, None]
-                j = torch.max(r, 1.0 / r).max(2)[0] < 4
-                targets = targets[j]
+        tbboxes = targets[3:7]  # box
+        indices = (img_ids, anchor_ids, gi.clamp_(0, height - 1), gj.clamp_(0, width - 1))
 
-            anchor_ids, cls_ids, img_ids = targets[:, :3].long().T
-
-            # The center point coordinates of the target bboxes in the feature map coordinate system
-            gxy = targets[:, 3:5]
-            # The width and height of the target bboxes in the coordinate system of the feature map
-            gwh = targets[:, 5:7]
-            gij = gxy.long()
-            gi, gj = gij.T
-
-            tbboxes.append(torch.cat((gxy, gwh), 1))  # box
-            tcls.append(cls_ids)
-            tanchors.append(norm_anchors[anchor_ids])
-            indices.append((img_ids, anchor_ids, gj.clamp_(0, height - 1), gi.clamp_(0, width - 1)))
-
-        return tcls, tbboxes, indices, tanchors
+        return tcls, tbboxes, indices
 
 
 """
