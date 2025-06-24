@@ -1,15 +1,18 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any
+from typing import Literal, Mapping, Any, Iterable
 from itertools import chain
 
+import time
 import torch
 import torch.nn as nn
+import torchvision
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.detection import bbox_iou
+from machine_learning.utils.detection import bbox_iou, xywh2xyxy, get_batch_statistics, average_precision_per_cls
 
 
 class YoloV3(AlgorithmBase):
@@ -38,7 +41,8 @@ class YoloV3(AlgorithmBase):
         self.default_img_size = self.cfg["algorithm"]["default_img_size"]
 
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
-        self.obj_exist_threshold = self.cfg["algorithm"]["obj_exist_threshold"]
+        self.conf_threshold = self.cfg["algorithm"]["conf_threshold"]
+        self.nms_threshold = self.cfg["algorithm"]["nms_threshold"]
         self.anchor_scale_threshold = self.cfg["algorithm"]["anchor_scale_threshold"]
 
         self.b_weiget = self.cfg["algorithm"].get("b_weiget", 0.05)
@@ -90,22 +94,23 @@ class YoloV3(AlgorithmBase):
 
         total_loss = 0.0
 
-        for batch_idx, (img, iid_cls_bboxes) in enumerate(self.train_loader):
-            if check_data_integrity(img, iid_cls_bboxes[:, 2:6], iid_cls_bboxes[:, 1], self.class_nums):
+        for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
+            if check_data_integrity(imgs, iid_cls_bboxes[:, 2:6], iid_cls_bboxes[:, 1], self.class_nums):
                 print(f"Epoch: {epoch}, Batch: {batch_idx}, invalid data detected, skipping.")
                 continue
 
-            img = img.to(self.device, non_blocking=True)
+            imgs = imgs.to(self.device, non_blocking=True)
             iid_cls_bboxes = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
+            img_size = imgs.shape[2]
 
             self._optimizers["yolo"].zero_grad()
 
-            skips = self.models["darknet"](img)
+            skips = self.models["darknet"](imgs)
             fmap1, fmap2, fmap3 = self.models["fpn"](*skips)  # 52x52, 26x26, 13x13
 
-            decode1, norm_anchors1 = self.fmap_decode(fmap1, img_size=img.shape[2])
-            decode2, norm_anchors2 = self.fmap_decode(fmap2, img_size=img.shape[2])
-            decode3, norm_anchors3 = self.fmap_decode(fmap3, img_size=img.shape[2])
+            decode1, norm_anchors1, _ = self.fmap_decode(fmap1, img_size)
+            decode2, norm_anchors2, _ = self.fmap_decode(fmap2, img_size)
+            decode3, norm_anchors3, _ = self.fmap_decode(fmap3, img_size)
 
             loss, loss_components = self.criterion(
                 decode_ls=[decode1, decode2, decode3],
@@ -142,21 +147,32 @@ class YoloV3(AlgorithmBase):
     def validate(self) -> dict[str, float]:
         self.set_eval()
 
-        total_loss = 0.0
-        total_iou_loss = 0.0
-        total_obj_loss = 0.0
-        total_cls_loss = 0.0
+        total_loss, total_iou_loss, total_obj_loss, total_cls_loss = 0.0, 0.0, 0.0, 0.0
 
-        for img, iid_cls_bboxes in self.train_loader:
-            img = img.to(self.device, non_blocking=True)
+        labels = []
+        sample_metrics = []
+
+        for imgs, iid_cls_bboxes in self.val_loader:
+            imgs = imgs.to(self.device, non_blocking=True)
             iid_cls_bboxes = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
+            img_size = imgs.shape[2]
+            labels += iid_cls_bboxes[:, 1].tolist()
 
-            skips = self.models["darknet"](img)
+            skips = self.models["darknet"](imgs)
             fmap1, fmap2, fmap3 = self.models["fpn"](*skips)  # 52x52, 26x26, 13x13
 
-            decode1, norm_anchors1 = self.fmap_decode(fmap1, img_size=img.shape[2])
-            decode2, norm_anchors2 = self.fmap_decode(fmap2, img_size=img.shape[2])
-            decode3, norm_anchors3 = self.fmap_decode(fmap3, img_size=img.shape[2])
+            decode1, norm_anchors1, stride1 = self.fmap_decode(fmap1, img_size)
+            decode2, norm_anchors2, stride2 = self.fmap_decode(fmap2, img_size)
+            decode3, norm_anchors3, stride3 = self.fmap_decode(fmap3, img_size)
+
+            detections = non_max_suppression(
+                decode_ls=[decode1, decode2, decode3],
+                stride_ls=[stride1, stride2, stride3],
+                conf_threshold=self.conf_threshold,
+                nms_threshold=self.nms_threshold,
+            )
+            targets = xywh2xyxy(iid_cls_bboxes[:, 2:]) * img_size
+            sample_metrics += get_batch_statistics(detections, targets, iou_threshold=self.iou_threshold)
 
             loss, loss_components = self.criterion(
                 decode_ls=[decode1, decode2, decode3],
@@ -174,23 +190,46 @@ class YoloV3(AlgorithmBase):
         avg_obj_loss = total_obj_loss / len(self.val_loader)
         avg_cls_loss = total_cls_loss / len(self.val_loader)
 
-        return {
-            "yolo": avg_loss,
+        if len(sample_metrics) == 0:  # No detections over whole validation set.
+            print("---- No detections over whole validation set ----")
+            return {
+                "yolo loss": avg_loss,
+                "save": avg_loss,
+                "iou loss": avg_iou_loss,
+                "object loss": avg_obj_loss,
+                "class loss": avg_cls_loss,
+                "mAP": 0.0,
+            }
+
+        # Concatenate sample statistics
+        true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
+        metrics_output = average_precision_per_cls(true_positives, pred_scores, pred_labels, labels)
+
+        result = {
+            "yolo loss": avg_loss,
             "save": avg_loss,
             "iou loss": avg_iou_loss,
             "object loss": avg_obj_loss,
             "class loss": avg_cls_loss,
         }
 
+        if metrics_output is not None:
+            precision, recall, AP, f1, ap_class = metrics_output
+            result.update(
+                {"precision": precision, "recall": recall, "ap": AP, "f1": f1, "ap_class": ap_class, "mAP": AP.mean()}
+            )
+
+        return result
+
     @torch.no_grad()
     def eval(self, img_path: FilePath) -> None:
         self.set_eval()
 
-    def fmap_decode(self, feature_map: torch.Tensor, img_dim: int) -> tuple[list]:
+    def fmap_decode(self, feature_map: torch.Tensor, img_size: int) -> tuple[list]:
         # [B,C,H,W] -> [B,H,W,C]
         fmap = feature_map.permute(0, 2, 3, 1).contiguous()
         B, H, W, _ = fmap.shape
-        stride = img_dim // H  # compute stride
+        stride = img_size // H  # compute stride
 
         # anchors choose, normalize to feature map coordinate
         if H == 52:
@@ -218,8 +257,7 @@ class YoloV3(AlgorithmBase):
         # Decompose the original fmap tensor. In-place operations on the tensor will disrupt the
         # gradient and lead to calculation errors
         xy = fmap[..., :2]  # Center point offset
-        # wh = fmap[..., 2:4].clamp(-10, 10)  # Width and height offset
-        wh = fmap[..., 2:4]
+        wh = fmap[..., 2:4].clamp(-10, 10)  # Width and height offset
         obj_cls = fmap[..., 4:]  # Target Confidence Level and Classification Probability
 
         new_xy = torch.sigmoid(xy) + grid_xy  # The coordinates of center point on the coordinate system of feature map
@@ -230,7 +268,7 @@ class YoloV3(AlgorithmBase):
         decode = torch.cat([new_xy, new_wh, new_obj_cls], dim=-1)
         decode = decode.permute(0, 3, 1, 2, 4).contiguous()  # [B, num_anchors, H, W, ...]
 
-        return decode, norm_anchors
+        return decode, norm_anchors, stride
 
     def criterion(
         self,
@@ -246,7 +284,7 @@ class YoloV3(AlgorithmBase):
         BCEcls = nn.BCELoss()
         BCEobj = nn.BCELoss()
 
-        for i, (decode, norm_anchors) in enumerate(zip(decode_ls, norm_anchors_ls)):
+        for _, (decode, norm_anchors) in enumerate(zip(decode_ls, norm_anchors_ls)):
             tcls, tbboxes, indices = self.prepare_target(
                 decode, norm_anchors, iid_cls_bboxes
             )  # indices means that there is a bbox
@@ -256,7 +294,7 @@ class YoloV3(AlgorithmBase):
 
             if num_bboxes:
                 pbox = decode[indices][:, :4]
-                iou = bbox_iou(pbox, tbboxes[i], bbox_format="coco", iou_type="ciou")
+                iou = bbox_iou(pbox, tbboxes, bbox_format="coco", iou_type="ciou")
                 bbox_loss += (1.0 - iou).mean()  # iou loss
 
                 tobj[indices] = iou.detach().clamp(0.0, 1.0).type(tobj.dtype)
@@ -264,7 +302,7 @@ class YoloV3(AlgorithmBase):
                 if decode.size(-1) > 5:
                     pcls = decode[indices][:, 5:]  # pcls [num_bboxes, 80]
                     cls = torch.zeros_like(pcls, device=self.device)  # cls [num_bboxes, 80]
-                    cls[range(num_bboxes), tcls[i]] = 1.0
+                    cls[range(num_bboxes), tcls] = 1.0
 
                     cls_loss += BCEcls(pcls, cls)
 
@@ -316,7 +354,7 @@ class YoloV3(AlgorithmBase):
         gji = gxy.long()
         gj, gi = gji.T
 
-        tbboxes = targets[3:7]  # box
+        tbboxes = targets[:, 3:7]  # box
         indices = (img_ids, anchor_ids, gi.clamp_(0, height - 1), gj.clamp_(0, width - 1))
 
         return tcls, tbboxes, indices
@@ -344,3 +382,95 @@ def check_data_integrity(img: torch.Tensor, bboxes: torch.Tensor, category_ids: 
         return True
 
     return False
+
+
+@torch.no_grad()
+def non_max_suppression(
+    decode_ls: list[torch.Tensor],
+    stride_ls: list[int],
+    conf_threshold: float = 0.25,
+    nms_threshold: float = 0.45,
+    classes_filter: Iterable[int] = None,
+    max_wh: int = 4096,
+    max_det: int = 300,
+    max_nms: int = 30000,
+    time_limit: float = 1.0,
+) -> torch.Tensor:
+    processed_decodes = []
+    for decode, stride in zip(decode_ls, stride_ls):
+        dec = decode.clone()
+        dec[..., :4] *= stride
+        processed_decodes.append(dec)
+
+    detections = torch.cat([dec.view(dec.shape[0], -1, dec.shape[-1]) for dec in processed_decodes], dim=1)
+
+    class_nums = detections.shape[2] - 5  # number of classes
+    multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
+
+    t = time.time()
+    output = [torch.zeros((0, 6), device="cpu")] * detections.shape[0]
+
+    for img_id, detection in enumerate(detections):  # img_id, detection
+        # Apply constraints
+        # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
+        detection = detection[detection[..., 4] > conf_threshold]  # confidence
+
+        # If none remain process next image
+        if not detection.shape[0]:
+            continue
+
+        # Compute conf
+        detection[:, 5:] *= detection[:, 4:5]  # conf = obj_conf * cls_conf
+
+        # Box (center x, center y, width, height) to (x1, y1, x2, y2)
+        box = xywh2xyxy(detection[:, :4])
+
+        # Detections matrix nx6 (x1, y1, x2, y2, conf, cls)
+        if multi_label:
+            i, j = (detection[:, 5:] > conf_threshold).nonzero(as_tuple=False).T  # i row indices, j col indices
+            detection = torch.cat((box[i], detection[i, j + 5, None], j[:, None].float()), 1)
+        else:  # best class only
+            conf, j = detection[:, 5:].max(1, keepdim=True)
+            detection = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_threshold]
+
+        # Filter by class
+        if classes_filter is not None:
+            detection = detection[(detection[:, 5:6] == torch.tensor(classes_filter, device=detection.device)).any(1)]
+
+        # Check shape
+        num_boxes = detection.shape[0]  # number of boxes
+        if not num_boxes:  # no boxes
+            continue
+        elif num_boxes > max_nms:  # excess boxes
+            # sort by confidence
+            detection = detection[detection[:, 4].argsort(descending=True)[:max_nms]]
+
+        # Batched NMS
+        c = detection[:, 5:6] * max_wh  # classes
+        # boxes (offset by class), scores
+        boxes, scores = detection[:, :4] + c, detection[:, 4]
+        j = torchvision.ops.nms(boxes, scores, nms_threshold)  # NMS
+        if j.shape[0] > max_det:  # limit detections
+            j = j[:max_det]
+
+        output[img_id] = detection[j].cpu()
+
+        if (time.time() - t) > time_limit:
+            print(f"WARNING: NMS time limit {time_limit}s exceeded")
+            break  # time limit exceeded
+
+    return output
+
+
+# def print_eval_stats(metrics_output, class_names, verbose):
+#     if metrics_output is not None:
+#         precision, recall, AP, f1, ap_class = metrics_output
+#         if verbose:
+#             # Prints class AP and mean AP
+#             ap_table = [["Index", "Class", "AP"]]
+#             for i, c in enumerate(ap_class):
+#                 ap_table += [[c, class_names[c], "%.5f" % AP[i]]]
+#             print(AsciiTable(ap_table).table)
+#         print(f"---- mAP {AP.mean():.5f} ----")
+#     else:
+#         print("---- mAP not measured (no detections found by model) ----")

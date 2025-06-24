@@ -47,9 +47,9 @@ def main():
     trainer.train()
     # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
 
-    # eval
-    yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
-    yolo_v3.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
+    # # Step 7: eval
+    # yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
+    # yolo_v3.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
 
 
 if __name__ == "__main__":

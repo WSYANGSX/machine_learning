@@ -19,7 +19,8 @@ algorithm:
   c_weight : 0.5  # cls loss weight
   # detection
   iou_threshold: 0.5
-  obj_exist_threshold: 0.5
+  conf_threshold: 0.5
+  nms_threshold: 0.5
 
 optimizer:
   type: "Adam"

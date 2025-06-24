@@ -99,7 +99,19 @@ def bbox_iou(
     eps: float = 1e-9,
     safe: bool = True,
 ) -> torch.Tensor:
-    """Calculate the improved IoU to enhance numerical stability"""
+    """Calculate the improved IoU to enhance numerical stability
+
+    Args:
+        bbox1 (torch.Tensor): bounding box1 with shape (N, 4) or (1, 4).
+        bbox2 (torch.Tensor): bounding box1 with shape (N, 4) or (1, 4).
+        bbox_format (Literal[&quot;pascal_voc&quot;, &quot;coco&quot;], optional): the format of bboxes, pascal_voc: [x_min, y_min, x_max, y_max] in absolute pixel coordinates, coco: [x_min, y_min, bbox_width, bbox_height] in absolute pixel coordinates..Defaults to "pascal_voc".
+        iou_type (Literal[&quot;default&quot;, &quot;giou&quot;, &quot;diou&quot;, &quot;ciou&quot;], optional): the calculation type of iou. Defaults to "default".
+        eps (float, optional): small positive numbers. Defaults to 1e-9.
+        safe (bool, optional): safe mode or not. Defaults to True.
+
+    Returns:
+        torch.Tensor: result with shape (N, 4) or (1, 4).
+    """
 
     # 0. Input validation
     if safe:
@@ -116,14 +128,14 @@ def bbox_iou(
 
         # Check the validity of the coordinates
         if bbox_format == "pascal_voc":
-            if (bbox1[2] < bbox1[0]).any() or (bbox1[3] < bbox1[1]).any():
+            if (bbox1[:, 2] < bbox1[:, 0]).any() or (bbox1[:, 3] < bbox1[:, 1]).any():
                 raise ValueError("bbox1 contains invalid coordinates (x2 < x1 or y2 < y1).")
-            if (bbox2[2] < bbox2[0]).any() or (bbox2[3] < bbox2[1]).any():
+            if (bbox2[:, 2] < bbox2[:, 0]).any() or (bbox2[:, 3] < bbox2[:, 1]).any():
                 raise ValueError("bbox2 contains invalid coordinates (x2 < x1 or y2 < y1).")
         else:
-            if (bbox1[2] < 0).any() or (bbox1[3] < 0).any():
+            if (bbox1[:, 2] < 0).any() or (bbox1[:, 3] < 0).any():
                 raise ValueError("bbox1 contains invalid coordinates (w < 0 or h < 0).")
-            if (bbox2[2] < 0).any() or (bbox2[3] < 0).any():
+            if (bbox2[:, 2] < 0).any() or (bbox2[:, 3] < 0).any():
                 raise ValueError("bbox2 contains invalid coordinates (w < 0 or h < 0).")
 
     # 1. Format conversion
@@ -202,15 +214,17 @@ def bbox_iou(
     return iou
 
 
-def get_batch_statistics(outputs, targets, iou_threshold):
-    """Compute true positives, predicted scores and predicted labels per batch sample"""
+def get_batch_statistics(detections, targets, iou_threshold):
+    """Compute true positives, predicted scores and predicted labels per batch sample
+    Source: https://https://github.com/eriklindernoren/PyTorch-YOLOv3
+    """
     batch_metrics = []
 
-    for i in range(len(outputs)):
-        if outputs[i] is None:
+    for i in range(len(detections)):
+        if detections[i] is None:  # empty
             continue
 
-        output = outputs[i]
+        output = detections[i]
         pred_boxes = output[:, :4]
         pred_scores = output[:, 4]
         pred_labels = output[:, -1]
@@ -219,12 +233,13 @@ def get_batch_statistics(outputs, targets, iou_threshold):
 
         annotations = targets[targets[:, 0] == i][:, 1:]
         target_labels = annotations[:, 0] if len(annotations) else []
+
         if len(annotations):
             detected_boxes = []
             target_boxes = annotations[:, 1:]
 
-            for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
-                # If targets are found break
+            for i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
+                # If all targets are found break
                 if len(detected_boxes) == len(annotations):
                     break
 
@@ -233,20 +248,23 @@ def get_batch_statistics(outputs, targets, iou_threshold):
                     continue
 
                 # Filter target_boxes by pred_label so that we only match against boxes of our own label
-                filtered_target_position, filtered_targets = zip(
+                filtered_target_indices, filtered_targets_boxes = zip(
                     *filter(lambda x: target_labels[x[0]] == pred_label, enumerate(target_boxes))
                 )
 
                 # Find the best matching target for our predicted box
-                iou, box_filtered_index = bbox_iou(pred_box.unsqueeze(0), torch.stack(filtered_targets)).max(0)
+                iou, box_filtered_index = bbox_iou(
+                    pred_box.unsqueeze(0), torch.stack(filtered_targets_boxes), bbox_format="coco"
+                ).max(0)
 
                 # Remap the index in the list of filtered targets for that label to the index in the list with all targets.
-                box_index = filtered_target_position[box_filtered_index]
+                box_index = filtered_target_indices[box_filtered_index]
 
                 # Check if the iou is above the min treshold and i
                 if iou >= iou_threshold and box_index not in detected_boxes:
-                    true_positives[pred_i] = 1
+                    true_positives[i] = 1
                     detected_boxes += [box_index]
+
         batch_metrics.append([true_positives, pred_scores, pred_labels])
 
     return batch_metrics
@@ -309,7 +327,7 @@ def average_precision_per_cls(tp, conf, pred_cls, target_cls):
 
 def average_precision(recall, precision):
     """Compute the average precision, given the recall and precision curves.
-    Code originally from https://github.com/rbgirshick/py-faster-rcnn.
+    Code originally from: https://github.com/rbgirshick/py-faster-rcnn.
 
     # Arguments
         recall:    The recall curve (list).
@@ -348,7 +366,7 @@ def non_max_suppression(
     """Performs Non-Maximum Suppression (NMS) on inference results
 
     Args:
-        prediction (torch.Tensor): prediction output from Darknet network
+        prediction (torch.Tensor): predictions output from Darknet network. [B, h1*w1+h2*w2+h3*w3, 5+class_nums]
         conf_threshold (float): This threshold is used to filter out the prediction boxes whose confidence scores are
         lower than this threshold. Defaults to 0.25.
         iou_threshold (float): This threshold is used in the non-maximum suppression (NMS) process to determine which
@@ -366,7 +384,7 @@ def non_max_suppression(
     multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
 
     t = time.time()
-    output = torch.zeros((predictions.shape[0], 6), device="cpu")
+    output = [torch.zeros((0, 6), device="cpu")] * predictions.shape[0]
 
     for i, prediction in enumerate(predictions):
         # Apply constraints
@@ -383,9 +401,9 @@ def non_max_suppression(
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(prediction[:, :4])
 
-        # Detections matrix nx6 (xyxy, conf, cls)
+        # Detections matrix nx6 (x1, y1, x2, y2, conf, cls)
         if multi_label:
-            i, j = (prediction[:, 5:] > conf_threshold).nonzero(as_tuple=False).T
+            i, j = (prediction[:, 5:] > conf_threshold).nonzero(as_tuple=False).T  # i row indices, j col indices
             prediction = torch.cat((box[i], prediction[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
             conf, j = prediction[:, 5:].max(1, keepdim=True)
@@ -393,13 +411,15 @@ def non_max_suppression(
 
         # Filter by class
         if classes_filter is not None:
-            prediction = prediction[(prediction[:, 5:6] == torch.tensor(classes_filter, device=x.device)).any(1)]
+            prediction = prediction[
+                (prediction[:, 5:6] == torch.tensor(classes_filter, device=prediction.device)).any(1)
+            ]
 
         # Check shape
-        n = prediction.shape[0]  # number of boxes
-        if not n:  # no boxes
+        num_boxes = prediction.shape[0]  # number of boxes
+        if not num_boxes:  # no boxes
             continue
-        elif n > max_nms:  # excess boxes
+        elif num_boxes > max_nms:  # excess boxes
             # sort by confidence
             prediction = prediction[prediction[:, 4].argsort(descending=True)[:max_nms]]
 
@@ -407,11 +427,11 @@ def non_max_suppression(
         c = prediction[:, 5:6] * max_wh  # classes
         # boxes (offset by class), scores
         boxes, scores = prediction[:, :4] + c, prediction[:, 4]
-        i = torchvision.ops.nms(boxes, scores, iou_threshold)  # NMS
-        if i.shape[0] > max_det:  # limit detections
-            i = i[:max_det]
+        j = torchvision.ops.nms(boxes, scores, iou_threshold)  # NMS
+        if j.shape[0] > max_det:  # limit detections
+            j = j[:max_det]
 
-        output[i] = prediction[i].cpu()
+        output[i] = prediction[j].cpu()
 
         if (time.time() - t) > time_limit:
             print(f"WARNING: NMS time limit {time_limit}s exceeded")

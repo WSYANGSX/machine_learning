@@ -119,11 +119,11 @@ class Trainer:
 
             # log the train loss
             for key, val in train_loss.items():
-                self.writer.add_scalar(f"{key} loss/train", val, epoch)
+                self.writer.add_scalar(f"{key}/train", val, epoch)
 
             # log the val loss
             for key, val in val_loss.items():
-                self.writer.add_scalar(f"{key} loss/val", val, epoch)
+                self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo

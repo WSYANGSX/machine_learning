@@ -173,7 +173,7 @@ class YoloDataset(LazyDataset):
                 print(f"Could not apply transform to image: {img_path}.")
                 return
 
-        return img, torch.cat([category_ids, bboxes], dim=-1)
+        return img, torch.cat([category_ids.view(-1, 1), bboxes], dim=-1)
 
     def collate_fn(self, batch) -> tuple:
         self.batch_count += 1
@@ -190,9 +190,12 @@ class YoloDataset(LazyDataset):
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs_ls])
 
-        for i, cls_bboxes in enumerate(cls_bboxes_ls):
-            id_col = torch.full((cls_bboxes.shape[0], 1), fill_value=i)
-            cls_bboxes = torch.cat([id_col, cls_bboxes], dim=-1)
-        iid_cls_bboxes = torch.cat(cls_bboxes_ls, 0)
+        iid_cls_bboxes = torch.cat(
+            [
+                torch.cat([torch.full((bboxes.shape[0], 1), i, device=bboxes.device), bboxes], dim=-1)
+                for i, bboxes in enumerate(cls_bboxes_ls)
+            ],
+            dim=0,
+        )
 
         return imgs, iid_cls_bboxes
