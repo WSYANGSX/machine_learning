@@ -123,6 +123,8 @@ class Trainer:
 
             # log the val loss
             for key, val in val_loss.items():
+                if key == "save":
+                    continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
