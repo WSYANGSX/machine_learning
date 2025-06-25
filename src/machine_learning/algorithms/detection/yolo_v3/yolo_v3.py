@@ -234,9 +234,14 @@ class YoloV3(AlgorithmBase):
 
         return result
 
-    @torch.no_grad()
-    def eval(self, img_path: FilePath) -> None:
-        self.set_eval()
+    def eval(self) -> None:
+        raise NotImplementedError(
+            "Eval method is not implemented in the yolo-series algorithms, "
+            + "please use detect method to detect objects in an image."
+        )
+
+    def detect(self, img_path: FilePath) -> None:
+        pass
 
     def fmap_decode(self, feature_map: torch.Tensor, img_size: int) -> tuple[list]:
         # [B,C,H,W] -> [B,H,W,C]

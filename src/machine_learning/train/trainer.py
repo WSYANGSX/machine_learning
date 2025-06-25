@@ -2,6 +2,7 @@ from typing import Any, Union, Mapping
 import os
 import torch
 from tqdm import trange
+from prettytable import PrettyTable
 
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -106,58 +107,51 @@ class Trainer:
         print("[INFO] Start training...")
 
         for epoch in trange(start_epoch, self.cfg.epochs):
-            train_loss = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
-            val_loss = self._algorithm.validate()
+            train_return = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+            val_return = self._algorithm.validate()
 
             # adjust the learning rate
             if self._algorithm._schedulers:
                 for key, val in self._algorithm._schedulers.items():
                     if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        val.step(val_loss[key + " loss"])
+                        val.step(val_return[key + " loss"])
                     else:
                         val.step()
 
             # log the train loss
-            for key, val in train_loss.items():
+            for key, val in train_return.items():
                 self.writer.add_scalar(f"{key}/train", val, epoch)
 
             # log the val loss
-            for key, val in val_loss.items():
+            for key, val in val_return.items():
                 if key == "save":
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo
-            if self.cfg.save_best and "save" in val_loss:
-                if val_loss["save"] < self.best_loss:
-                    self.best_loss = val_loss["save"]
-                    self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=True)
+            if self.cfg.save_best and "save" in val_return:
+                if val_return["save"] < self.best_loss:
+                    self.best_loss = val_return["save"]
+                    self.save_checkpoint(epoch, val_return, self.best_loss, is_best=True)
             else:
                 print("Saving of the best loss model skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
-                self.save_checkpoint(epoch, val_loss, self.best_loss, is_best=False)
+                self.save_checkpoint(epoch, val_return, self.best_loss, is_best=False)
 
             # print log information
-            print(f"Epoch: {epoch + 1:03d} | ", end="")
-            for key, val in train_loss.items():
-                print(f"Train: {key} {val:.4f} | ", end="")
-            for key, val in val_loss.items():
-                if key != "save":
-                    print(f"Val: {key} {val:.4f} | ", end="")
-                else:
-                    print(f"Val: {key} {val:.4f} | ", end="")
-            for key, opt in self._algorithm._optimizers.items():
-                print(f"{key} lr: {opt.param_groups[0]['lr']:.2e} | ")
+            self.log_epoch_info(epoch, train_return, val_return)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self.load(checkpoint)
-        start_epoch = state_dict["epoch"]
+        start_epoch = state_dict["epoch"] + 1
+        self.best_loss = state_dict.get("best_loss", float("inf"))
+
         self.train(start_epoch)
 
-    def save_checkpoint(self, epoch: int, loss: dict, best_loss: float, is_best: bool = False) -> None:
+    def save_checkpoint(self, epoch: int, val_return: dict, best_loss: float, is_best: bool = False) -> None:
         model_path = self.cfg.model_dir
         model_path = os.path.abspath(model_path)
 
@@ -171,4 +165,20 @@ class Trainer:
             filename = "best_model.pth"
         save_path = os.path.join(model_path, filename)
 
-        self._algorithm.save(epoch, loss, best_loss, save_path)
+        self._algorithm.save(epoch, val_return, best_loss, save_path)
+
+    def log_epoch_info(self, epoch: int, train_info: dict[Any], val_info: dict[Any]) -> None:
+        log_table = PrettyTable()
+        log_table.title = "Train information: " + f"Epoch {epoch + 1}"
+        log_table.field_names = ["Info name", "Value"]
+
+        rows = []
+        for key, val in train_info.items():
+            rows.append([f"Train {key}", val])
+        for key, val in val_info.items():
+            rows.append([f"Val {key}", val])
+        for key, opt in self._algorithm._optimizers.items():
+            rows.append([f"{key.capitalize()} learning rate", opt.param_groups[0]["lr"]])
+
+        log_table.add_rows(rows)
+        print(log_table)

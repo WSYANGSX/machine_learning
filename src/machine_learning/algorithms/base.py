@@ -189,38 +189,52 @@ class AlgorithmBase(ABC):
         """
         pass
 
-    def save(self, epoch: int, loss: dict, best_loss: float, save_path: str) -> None:
+    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str) -> None:
         """Save checkpoint"""
-        state = {"epoch": epoch, "cfg": self.cfg, "loss": loss, "best loss": best_loss, "models": {}, "optimizers": {}}
+        state = {
+            "epoch": epoch,
+            "cfg": self.cfg,
+            "best loss": best_loss,
+            "models": {},
+            "optimizers": {},
+        }
 
-        # save the model parameters
+        for key, val in val_info.items():
+            state.update({key: val})
+
+        # save the models' parameters
         for key, val in self.models.items():
             state["models"].update({key: val.state_dict()})
 
-        # save the optimizer parameters
+        # save the optimizers' parameters
         for key, val in self._optimizers.items():
             state["optimizers"].update({key: val.state_dict()})
+
+        # save the schedulers' parameters
+        if hasattr(self, "schedulers"):
+            state["schedulers"] = {k: v.state_dict() for k, v in self.schedulers.items()}
 
         torch.save(state, save_path)
         print(f"Saved checkpoint to {save_path}")
 
-    def load(self, checkpoint: str) -> tuple[Any]:
+    def load(self, checkpoint: str) -> dict:
         state = torch.load(checkpoint)
 
-        # load the model parameters
+        # load the models' parameters
         for key, val in self.models.items():
             val.load_state_dict(state["models"][key])
 
-        # load the optimizer parameters
+        # load the optimizers' parameters
         for key, val in self._optimizers.items():
             val.load_state_dict(state["optimizers"][key])
 
-        epoch = state["epoch"]
-        cfg = state["cfg"]
-        loss = state["loss"]
-        best_loss = state["best loss"]
+        # load the schedulers' parameters
+        if hasattr(self, "schedulers"):
+            for key, scheduler in self.schedulers.items():
+                if key in state.get("schedulers", {}):
+                    scheduler.load_state_dict(state["schedulers"][key])
 
-        return {"epoch": epoch, "cfg": cfg, "loss": loss, "best_loss": best_loss}
+        return state
 
     def set_train(self) -> None:
         """Set the pattern of all the models in the algorithm to training"""
