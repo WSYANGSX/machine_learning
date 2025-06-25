@@ -113,7 +113,7 @@ class Trainer:
             if self._algorithm._schedulers:
                 for key, val in self._algorithm._schedulers.items():
                     if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        val.step(val_loss[key])
+                        val.step(val_loss[key + " loss"])
                     else:
                         val.step()
 
@@ -143,12 +143,12 @@ class Trainer:
             # print log information
             print(f"Epoch: {epoch + 1:03d} | ", end="")
             for key, val in train_loss.items():
-                print(f"{key} train loss {val:.4f} | ", end="")
+                print(f"Train: {key} {val:.4f} | ", end="")
             for key, val in val_loss.items():
                 if key != "save":
-                    print(f"{key} val loss {val:.4f} | ", end="")
+                    print(f"Val: {key} {val:.4f} | ", end="")
                 else:
-                    print(f"{key} loss {val:.4f} | ", end="")
+                    print(f"Val: {key} {val:.4f} | ", end="")
             for key, opt in self._algorithm._optimizers.items():
                 print(f"{key} lr: {opt.param_groups[0]['lr']:.2e} | ")
 

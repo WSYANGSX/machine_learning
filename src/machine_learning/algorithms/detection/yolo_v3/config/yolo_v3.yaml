@@ -24,7 +24,7 @@ algorithm:
 
 optimizer:
   type: "Adam"
-  learning_rate: 1.0e-4
+  learning_rate: 3.0e-4
   beta1: 0.9
   beta2: 0.999
   eps: 1.0e-8

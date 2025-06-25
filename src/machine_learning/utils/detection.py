@@ -1,7 +1,6 @@
 from typing import Literal, Iterable
 
 import time
-import tqdm
 import torch
 import torchvision
 import numpy as np
@@ -214,42 +213,47 @@ def bbox_iou(
     return iou
 
 
-def get_batch_statistics(detections, targets, iou_threshold):
+def get_batch_statistics(detections: list[torch.Tensor], targets: torch.Tensor, iou_threshold: float) -> list:
     """Compute true positives, predicted scores and predicted labels per batch sample
     Source: https://https://github.com/eriklindernoren/PyTorch-YOLOv3
+
+    Args:
+        detections (torch.Tensor): list of detections after NMS of each imgs in the batch. detections (x1, y1, x2, y2, conf, cls)
+        targets (torch.Tensor): real label data
+        iou_threshold (float): iou threshold to filter true labels.
+
+    Returns:
+        list: statistics of the batch.
     """
     batch_metrics = []
 
     for i in range(len(detections)):
-        if detections[i] is None:  # empty
-            continue
+        detection = detections[i]
+        pred_boxes = detection[:, :4]
+        pred_scores = detection[:, 4]
+        pred_clses = detection[:, -1]
 
-        output = detections[i]
-        pred_boxes = output[:, :4]
-        pred_scores = output[:, 4]
-        pred_labels = output[:, -1]
+        true_positives = torch.zeros(pred_boxes.shape[0], device=detection.device)
 
-        true_positives = np.zeros(pred_boxes.shape[0])
-
-        annotations = targets[targets[:, 0] == i][:, 1:]
-        target_labels = annotations[:, 0] if len(annotations) else []
+        annotations = targets[targets[:, 0] == i][:, 1:]  # annotations [cls, xyxy]
+        target_cls = annotations[:, 0] if len(annotations) else []
 
         if len(annotations):
             detected_boxes = []
             target_boxes = annotations[:, 1:]
 
-            for i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
+            for i, (pred_box, pred_cls) in enumerate(zip(pred_boxes, pred_clses)):
                 # If all targets are found break
                 if len(detected_boxes) == len(annotations):
                     break
 
                 # Ignore if label is not one of the target labels
-                if pred_label not in target_labels:
+                if pred_cls not in target_cls:
                     continue
 
-                # Filter target_boxes by pred_label so that we only match against boxes of our own label
+                # Filter target_boxes by pred_cls so that we only match against boxes of our own cls label
                 filtered_target_indices, filtered_targets_boxes = zip(
-                    *filter(lambda x: target_labels[x[0]] == pred_label, enumerate(target_boxes))
+                    *filter(lambda x: target_cls[x[0]] == pred_cls, enumerate(target_boxes))
                 )
 
                 # Find the best matching target for our predicted box
@@ -265,7 +269,7 @@ def get_batch_statistics(detections, targets, iou_threshold):
                     true_positives[i] = 1
                     detected_boxes += [box_index]
 
-        batch_metrics.append([true_positives, pred_scores, pred_labels])
+        batch_metrics.append([true_positives, pred_scores, pred_clses])
 
     return batch_metrics
 
@@ -291,7 +295,7 @@ def average_precision_per_cls(tp, conf, pred_cls, target_cls):
 
     # Create Precision-Recall curve and compute AP for each class
     ap, p, r = [], [], []
-    for c in tqdm.tqdm(unique_classes, desc="Computing AP"):
+    for c in unique_classes:
         i = pred_cls == c
         n_gt = (target_cls == c).sum()  # Number of ground truth objects
         n_p = i.sum()  # Number of predicted objects
@@ -362,6 +366,7 @@ def non_max_suppression(
     max_det: int = 300,
     max_nms: int = 30000,
     time_limit: float = 1.0,
+    device: str | torch.device = "cuda",
 ) -> torch.Tensor:
     """Performs Non-Maximum Suppression (NMS) on inference results
 
@@ -372,7 +377,7 @@ def non_max_suppression(
         iou_threshold (float): This threshold is used in the non-maximum suppression (NMS) process to determine which
         boxes overlap and should be merged or discarded. Defaults to 0.45.
         classes (list[str]): class filter. Defaults to None.
-        max_wh (int): minimum and maximum box width and height. Defaults to 4096.
+        max_wh (int): maximum box width and height. Defaults to 4096.
         max_det (int): maximum number of detections per image. Defaults to 300.
         max_nms (int): maximum number of boxes into torchvision.ops.nms(). Defaults to 30000.
         time_limit (float): seconds to quit after. Defaults to 1.0.
@@ -384,7 +389,7 @@ def non_max_suppression(
     multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
 
     t = time.time()
-    output = [torch.zeros((0, 6), device="cpu")] * predictions.shape[0]
+    output = [torch.zeros((0, 6), device=device)] * predictions.shape[0]
 
     for i, prediction in enumerate(predictions):
         # Apply constraints

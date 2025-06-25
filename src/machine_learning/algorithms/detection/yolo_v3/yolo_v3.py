@@ -4,9 +4,8 @@ from itertools import chain
 
 import time
 import torch
-import torch.nn as nn
 import torchvision
-import numpy as np
+import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -141,7 +140,7 @@ class YoloV3(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo": avg_loss}
+        return {"yolo loss": avg_loss}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -155,6 +154,7 @@ class YoloV3(AlgorithmBase):
         for imgs, iid_cls_bboxes in self.val_loader:
             imgs = imgs.to(self.device, non_blocking=True)
             iid_cls_bboxes = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
+
             img_size = imgs.shape[2]
             labels += iid_cls_bboxes[:, 1].tolist()
 
@@ -165,25 +165,31 @@ class YoloV3(AlgorithmBase):
             decode2, norm_anchors2, stride2 = self.fmap_decode(fmap2, img_size)
             decode3, norm_anchors3, stride3 = self.fmap_decode(fmap3, img_size)
 
-            detections = non_max_suppression(
-                decode_ls=[decode1, decode2, decode3],
-                stride_ls=[stride1, stride2, stride3],
-                conf_threshold=self.conf_threshold,
-                nms_threshold=self.nms_threshold,
-            )
-            targets = xywh2xyxy(iid_cls_bboxes[:, 2:]) * img_size
-            sample_metrics += get_batch_statistics(detections, targets, iou_threshold=self.iou_threshold)
-
+            # loss
             loss, loss_components = self.criterion(
                 decode_ls=[decode1, decode2, decode3],
                 norm_anchors_ls=[norm_anchors1, norm_anchors2, norm_anchors3],
                 iid_cls_bboxes=iid_cls_bboxes,
             )
-
             total_loss += loss.item()
             total_iou_loss += loss_components[0].item()
             total_obj_loss += loss_components[1].item()
             total_cls_loss += loss_components[2].item()
+
+            # metrics
+            detections = non_max_suppression(
+                decode_ls=[decode1, decode2, decode3],
+                stride_ls=[stride1, stride2, stride3],
+                conf_threshold=self.conf_threshold,
+                nms_threshold=self.nms_threshold,
+                device=self.device,
+            )
+            iid_cls_bboxes[:, 2:] = xywh2xyxy(iid_cls_bboxes[:, 2:])
+            iid_cls_bboxes[:, 2:] *= img_size
+
+            sample_metrics += get_batch_statistics(
+                detections, iid_cls_bboxes, iou_threshold=self.iou_threshold
+            )  # [[true_positives, pred_scores, pred_clses], ...]
 
         avg_loss = total_loss / len(self.val_loader)
         avg_iou_loss = total_iou_loss / len(self.val_loader)
@@ -202,8 +208,10 @@ class YoloV3(AlgorithmBase):
             }
 
         # Concatenate sample statistics
-        true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
-        metrics_output = average_precision_per_cls(true_positives, pred_scores, pred_labels, labels)
+        true_positives, pred_scores, pred_labels = [torch.cat(x, 0) for x in list(zip(*sample_metrics))]
+        metrics_output = average_precision_per_cls(
+            true_positives.cpu().numpy(), pred_scores.cpu().numpy(), pred_labels.cpu().numpy(), labels
+        )
 
         result = {
             "yolo loss": avg_loss,
@@ -216,7 +224,12 @@ class YoloV3(AlgorithmBase):
         if metrics_output is not None:
             precision, recall, AP, f1, ap_class = metrics_output
             result.update(
-                {"precision": precision, "recall": recall, "ap": AP, "f1": f1, "ap_class": ap_class, "mAP": AP.mean()}
+                {
+                    "precision": precision.mean(),
+                    "recall": recall.mean(),
+                    "f1": f1.mean(),
+                    "mAP": AP.mean(),
+                }
             )
 
         return result
@@ -388,32 +401,54 @@ def check_data_integrity(img: torch.Tensor, bboxes: torch.Tensor, category_ids: 
 def non_max_suppression(
     decode_ls: list[torch.Tensor],
     stride_ls: list[int],
-    conf_threshold: float = 0.25,
-    nms_threshold: float = 0.45,
+    conf_threshold: float = 0.5,
+    nms_threshold: float = 0.5,
     classes_filter: Iterable[int] = None,
     max_wh: int = 4096,
     max_det: int = 300,
     max_nms: int = 30000,
     time_limit: float = 1.0,
-) -> torch.Tensor:
+    device: str | torch.device = None,
+) -> list[torch.Tensor]:
+    """Performs Non-Maximum Suppression (NMS) on decodes output from fmap decoder.
+
+    Args:
+        decode_ls (list[torch.Tensor]): decode list contians decodes from fmap decoder. [(xywh, obj, cls), ...]
+        stride_ls (list[int]): stride list contians strides of each decode to img_size in decode list.[(stride1, ...]
+        conf_threshold (float, optional): This threshold is used to filter out the prediction boxes whose confidence
+        scores are lower than this threshold. Defaults to 0.25.
+        nms_threshold (float, optional): This threshold is used in torchvision.ops.nms() todetermine which boxes overlap
+        and should be merged or discarded. Defaults to 0.45.
+        classes_filter (Iterable[int], optional): class filter. Defaults to None.
+        max_wh (int, optional): maximum box width and height used to Offset and separate the bounding boxes by classes.
+        Defaults to 4096.
+        max_det (int, optional): maximum number of detections per image. Defaults to 300.
+        max_nms (int, optional): maximum number of boxes into torchvision.ops.nms(). Defaults to 30000.
+        time_limit (float, optional): seconds to quit after. Defaults to 1.0.
+
+    Returns:
+        torch.Tensor: detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+    """
     processed_decodes = []
-    for decode, stride in zip(decode_ls, stride_ls):
+    for decode, stride in zip(decode_ls, stride_ls):  # decode [B, anchors, H, W, 85]
         dec = decode.clone()
         dec[..., :4] *= stride
         processed_decodes.append(dec)
 
-    detections = torch.cat([dec.view(dec.shape[0], -1, dec.shape[-1]) for dec in processed_decodes], dim=1)
+    detections = torch.cat(
+        [dec.view(dec.shape[0], -1, dec.shape[-1]) for dec in processed_decodes], dim=1
+    )  # detections [B, 3*(H1*W1+H2*W2+H3*W3), 85]
 
     class_nums = detections.shape[2] - 5  # number of classes
     multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
 
     t = time.time()
-    output = [torch.zeros((0, 6), device="cpu")] * detections.shape[0]
+    output = [torch.zeros((0, 6), device=device)] * detections.shape[0]
 
     for img_id, detection in enumerate(detections):  # img_id, detection
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        detection = detection[detection[..., 4] > conf_threshold]  # confidence
+        detection = detection[detection[..., 4] > conf_threshold]  # detections [k, 85]
 
         # If none remain process next image
         if not detection.shape[0]:
@@ -446,14 +481,14 @@ def non_max_suppression(
             detection = detection[detection[:, 4].argsort(descending=True)[:max_nms]]
 
         # Batched NMS
-        c = detection[:, 5:6] * max_wh  # classes
+        class_offset = detection[:, 5:6] * max_wh  # classes
         # boxes (offset by class), scores
-        boxes, scores = detection[:, :4] + c, detection[:, 4]
+        boxes, scores = detection[:, :4] + class_offset, detection[:, 4]
         j = torchvision.ops.nms(boxes, scores, nms_threshold)  # NMS
         if j.shape[0] > max_det:  # limit detections
             j = j[:max_det]
 
-        output[img_id] = detection[j].cpu()
+        output[img_id] = detection[j]
 
         if (time.time() - t) > time_limit:
             print(f"WARNING: NMS time limit {time_limit}s exceeded")
