@@ -218,7 +218,7 @@ class AlgorithmBase(ABC):
         print(f"Saved checkpoint to {save_path}")
 
     def load(self, checkpoint: str) -> dict:
-        state = torch.load(checkpoint)
+        state = torch.load(checkpoint, weights_only=False)
 
         # load the models' parameters
         for key, val in self.models.items():

@@ -1,4 +1,4 @@
-from typing import Literal, Iterable
+from typing import Literal, Iterable, Sequence
 
 import time
 import torch
@@ -66,20 +66,42 @@ def yolo2voc(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) 
     return to_absolute_labels(img, xywh2xyxy_np(bboxes))
 
 
-def rescale_padded_boxes(boxes: torch.Tensor, current_dim: int, original_shape: tuple[int]) -> torch.Tensor:
+def pad_to_square(img: np.ndarray, pad_values: int | Sequence[tuple[int]]):
+    h, w = img.shape[0], img.shape[1]
+    dim_diff = np.abs(h - w)
+    pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
+
+    # 处理不同维度的图像
+    if img.ndim == 2:  # 灰度图 (H, W)
+        pad_width = [(pad1, pad2), (0, 0)] if h <= w else [(0, 0), (pad1, pad2)]
+    elif img.ndim == 3:  # 彩色图 (H, W, C)
+        pad_width = [(pad1, pad2), (0, 0), (0, 0)] if h <= w else [(0, 0), (pad1, pad2), (0, 0)]
+    else:
+        raise ValueError(f"Unsupported image shape: {img.shape}")
+
+    # 确保pad_values兼容
+    if isinstance(pad_values, int):
+        constant_values = pad_values
+    else:
+        constant_values = pad_values
+
+    return np.pad(img, pad_width, "constant", constant_values=constant_values)
+
+
+def rescale_padded_boxes(boxes: torch.Tensor, cur_img_size: int, original_img_shape: tuple[int]) -> torch.Tensor:
     """
     将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
     [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
-    _, orig_h, orig_w = original_shape
+    _, orig_h, orig_w = original_img_shape
 
     # 计算增加的pad, 应对pad后放缩的情况
-    pad_x = max(orig_h - orig_w, 0) * (current_dim / max(original_shape))
-    pad_y = max(orig_w - orig_h, 0) * (current_dim / max(original_shape))
+    pad_x = max(orig_h - orig_w, 0) * (cur_img_size / max(original_img_shape))
+    pad_y = max(orig_w - orig_h, 0) * (cur_img_size / max(original_img_shape))
 
     # 移除pad后的尺寸
-    unpad_h = current_dim - pad_y
-    unpad_w = current_dim - pad_x
+    unpad_h = cur_img_size - pad_y
+    unpad_w = cur_img_size - pad_x
 
     # 重新映射边界框
     boxes[:, 0] = ((boxes[:, 0] - pad_x // 2) / unpad_w) * orig_w

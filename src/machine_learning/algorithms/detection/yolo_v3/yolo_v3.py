@@ -2,16 +2,29 @@ from __future__ import annotations
 from typing import Literal, Mapping, Any, Iterable
 from itertools import chain
 
+import cv2
 import time
 import torch
 import torchvision
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import ToTensor, Normalize, Compose
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.detection import bbox_iou, xywh2xyxy, get_batch_statistics, average_precision_per_cls
+from machine_learning.utils.draw import visualize_img_with_bboxes
+from machine_learning.utils.detection import (
+    bbox_iou,
+    xywh2xyxy,
+    get_batch_statistics,
+    average_precision_per_cls,
+    pad_to_square,
+    rescale_padded_boxes,
+)
+from machine_learning.utils.image import resize
+
+torch.set_printoptions(threshold=torch.inf)
 
 
 class YoloV3(AlgorithmBase):
@@ -240,14 +253,59 @@ class YoloV3(AlgorithmBase):
             + "please use detect method to detect objects in an image."
         )
 
+    @torch.no_grad()
     def detect(self, img_path: FilePath) -> None:
-        pass
+        # read image
+        img = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
+        origin_img_shape = img.shape
+
+        # scale to square
+        pad_img = pad_to_square(img=img, pad_values=0.1)
+        pad_img_size = pad_img.shape[0]
+
+        # to tensor / normalize
+        tfs = Compose([ToTensor(), Normalize(mean=[0.471, 0.448, 0.408], std=[0.234, 0.239, 0.242])])
+        pad_img = tfs(pad_img)
+        pad_img = resize(pad_img, size=self.default_img_size[1]).unsqueeze(0).to(self.device)
+
+        # input image to model
+        skips = self.models["darknet"](pad_img)
+        fmap1, fmap2, fmap3 = self.models["fpn"](*skips)  # 52x52, 26x26, 13x13
+
+        # decode
+        decode1, _, stride1 = self.fmap_decode(fmap1, pad_img_size)
+        decode2, _, stride2 = self.fmap_decode(fmap2, pad_img_size)
+        decode3, _, stride3 = self.fmap_decode(fmap3, pad_img_size)
+
+        # NMS
+        detections = non_max_suppression(
+            decode_ls=[decode1, decode2, decode3],
+            stride_ls=[stride1, stride2, stride3],
+            conf_threshold=self.conf_threshold,
+            nms_threshold=self.nms_threshold,
+            device=self.device,
+        )  # (x1, y1, x2, y2, conf, cls)
+
+        # rescale to img coordiante
+        detection = detections[0]
+        print(detection)
+        detection[:, :4] = rescale_padded_boxes(detection[:, :4], pad_img_size, origin_img_shape)
+
+        bboxes = detection[:, :4]
+        conf = detection[:, 4]
+        cls = detection[:, 5].int()
+
+        # visiualization
+        visualize_img_with_bboxes(img, bboxes.cpu().numpy(), cls.cpu().numpy(), self.class_names)
 
     def fmap_decode(self, feature_map: torch.Tensor, img_size: int) -> tuple[list]:
         # [B,C,H,W] -> [B,H,W,C]
         fmap = feature_map.permute(0, 2, 3, 1).contiguous()
         B, H, W, _ = fmap.shape
-        stride = img_size // H  # compute stride
+
+        stride = round(img_size / H)
+        if stride == 0:
+            raise ValueError(f"stride is 0 (img_size={img_size}, H={H}).")
 
         # anchors choose, normalize to feature map coordinate
         if H == 52:
