@@ -89,9 +89,6 @@ DEFAULT_AUG = A.Compose(
     ],
     bbox_params=A.BboxParams(
         format="yolo",
-        min_width=0.02,
-        min_height=0.02,
-        min_visibility=0.3,
         label_fields=["category_ids"],
         clip=True,
     ),

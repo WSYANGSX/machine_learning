@@ -1,8 +1,9 @@
-from typing import Literal, Mapping, Any
+from typing import Literal, Mapping, Any, Union
 from tqdm import trange
 
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -16,6 +17,7 @@ class Diffusion(AlgorithmBase):
         self,
         cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
+        data: Mapping[str, Union[Dataset, Any]],
         name: str | None = "diffusion",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ):
@@ -25,16 +27,16 @@ class Diffusion(AlgorithmBase):
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
             models (Mapping[str, BaseNet]): Models required by the Diffusion algorithm, {"noise_predictor": model}.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
             name (str, optional): Name of the algorithm. Defaults to "diffusion".
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg, models, name, device)
+        super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
 
         # main parameters of the algorithm
         self.time_steps = self.cfg["algorithm"].get("time_steps", 2000)
-
-        # parameters that varys due to difference of dataset
-        self.data_shape = None
 
         # ------------------------ configure algo parameters -----------------------
         self._configure_factors(self.cfg["algorithm"]["beta"]["method"])
@@ -113,6 +115,9 @@ class Diffusion(AlgorithmBase):
 
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device, non_blocking=True)
+            if not hasattr(self, "data_shape"):
+                self.data_shape = data.shape[1:]
+
             noise = torch.randn_like(data)
             time_step = torch.randint(1, self.time_steps + 1, (data.shape[0],), device=self.device)
             noisey_data_t = self.noisey_data_t(data, time_step, noise)
@@ -138,7 +143,7 @@ class Diffusion(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"noise_predictor": avg_loss}
+        return {"noise_predictor loss": avg_loss}
 
     def validate(self) -> float:
         """Validate after a single train epoch"""
@@ -157,11 +162,11 @@ class Diffusion(AlgorithmBase):
                 noise_ = self._models["noise_predictor"](noisey_data_t, time_step)
 
                 loss = criterion(noise, noise_)
-                total_loss += loss
+                total_loss += loss.item()
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"noise_predictor": avg_loss, "save": avg_loss}
+        return {"noise_predictor loss": avg_loss, "save": avg_loss}
 
     @torch.no_grad()
     def sample(self, data: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

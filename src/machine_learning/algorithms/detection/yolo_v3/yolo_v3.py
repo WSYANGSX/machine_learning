@@ -8,7 +8,6 @@ import torch
 import torchvision
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.transforms import ToTensor, Normalize, Compose
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
@@ -23,8 +22,6 @@ from machine_learning.utils.detection import (
     rescale_padded_boxes,
 )
 from machine_learning.utils.image import resize
-
-torch.set_printoptions(threshold=torch.inf)
 
 
 class YoloV3(AlgorithmBase):
