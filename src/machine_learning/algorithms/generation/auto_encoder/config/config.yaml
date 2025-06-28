@@ -17,3 +17,9 @@ scheduler:
 
 model:
   initialize_weights: True
+
+data_loader:
+  num_workers: 4
+  shuffle: True
+  batch_size: 256
+  subdevision: 1

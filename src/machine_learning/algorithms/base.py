@@ -1,10 +1,11 @@
+from typing import Literal, Mapping, Any, Union
+
 import os
 import yaml
-from typing import Literal, Mapping, Any
 from abc import ABC, abstractmethod
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -17,6 +18,7 @@ class AlgorithmBase(ABC):
         self,
         cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
+        data: Mapping[str, Union[Dataset, Any]],
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ):
@@ -25,8 +27,11 @@ class AlgorithmBase(ABC):
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             models (Mapping[str, BaseNet]): Models required by the algorithm, {"net1": BaseNet1, "net2": BaseNet2}.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
             name (str, optional): Name of the algorithm. Defaults to None.
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            "auto"-automatic selection by algorithm.
         """
         super().__init__()
 
@@ -41,6 +46,9 @@ class AlgorithmBase(ABC):
         self._cfg = self._load_config(cfg)
         self._validate_config()
 
+        self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
+        self.mini_batch_size = self.batch_size // self.cfg["data_loader"].get("subdevision", 1)
+
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
@@ -54,6 +62,9 @@ class AlgorithmBase(ABC):
 
         # --------------------- configure schedulers ----------------------
         self._configure_schedulers()
+
+        # ------------------------ configure data -------------------------
+        self._initialize_dependent_on_data(data)
 
     @property
     def name(self) -> str:
@@ -102,7 +113,7 @@ class AlgorithmBase(ABC):
 
     def _validate_config(self):
         """Validate the config of the algorithm"""
-        required_sections = ["algorithm", "model", "optimizer", "scheduler"]
+        required_sections = ["algorithm", "model", "optimizer", "scheduler", "data_loader"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
@@ -118,46 +129,49 @@ class AlgorithmBase(ABC):
         for model in self._models.values():
             model._initialize_weights()
 
-    def _initialize_dependent_on_data(
-        self,
-        batch_size: int,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        test_loader: DataLoader | None = None,
-        **kwargs,
-    ) -> None:
-        """Initialize the training and validation data loaders and other dataset-specific parameters, need to be called
-        before training.
+    def _initialize_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+        """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
 
         Args:
-            train_loader (DataLoader): train dataset loader.
-            val_loader (DataLoader): val dataset loader.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
         """
-        self.batch_size = batch_size
+        self.cfg["data"] = {}
 
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        if test_loader:
-            self.test_loader = test_loader
+        _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
+        for key, type in _necessary_key_type_couples_.items():
+            if key not in data or not isinstance(data[key], type):
+                raise ValueError(f"Input data mapping has no {key} or {key} is not Dataset type.")
 
-        # Unique parameters of the data set
-        protected_attrs = {"train_loader", "val_loader", "batch_size", "test_loader"}
+        train_dataset, val_dataset = data.pop("train_dataset"), data.pop("val_dataset")
 
-        if kwargs:
-            self.cfg["data"] = {}
+        self.train_loader = DataLoader(
+            dataset=train_dataset,
+            batch_size=self.batch_size,
+            shuffle=self.cfg["data_loader"].get("data_shuffle", True),
+            num_workers=self.cfg["data_loader"].get("num_workers", 4),
+            collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
+        )
+        self.val_loader = DataLoader(
+            dataset=val_dataset,
+            batch_size=self.mini_batch_size,
+            shuffle=False,
+            num_workers=self.cfg["data_loader"].get("num_workers", 4),
+            collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
+        )
 
-            for key, val in kwargs.items():
-                if key in protected_attrs:
-                    print(f"Attempted to override protected attribute '{key}'. Ignored.")
-                    continue
+        if "test_dataset" in data and isinstance(data["test_dataset"], Dataset):
+            test_dataset = data.pop("test_dataset")
+            self.test_loader = DataLoader(
+                dataset=test_dataset,
+                batch_size=self.mini_batch_size,
+                shuffle=False,
+                num_workers=self.cfg["data_loader"].get("num_workers", 4),
+                collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
+            )
 
-                if hasattr(self, key):
-                    setattr(self, key, val)
-                    print(f"[INFO] Set {key} attribute of {self.__class__.__name__} to new value.")
-                else:
-                    setattr(self, key, val)
-                    print(f"[INFO] {self.__class__.__name__.capitalize()} set new attribute: {key}")
-
+        if data:
+            for key, val in data.items():
                 self.cfg["data"][key] = val
 
     @abstractmethod
@@ -219,6 +233,9 @@ class AlgorithmBase(ABC):
 
     def load(self, checkpoint: str) -> dict:
         state = torch.load(checkpoint, weights_only=False)
+
+        # cfg
+        self._cfg = state["cfg"]
 
         # load the models' parameters
         for key, val in self.models.items():

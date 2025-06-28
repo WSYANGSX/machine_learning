@@ -1,8 +1,9 @@
-from typing import Literal, Mapping, Any
+from typing import Literal, Mapping, Any, Union
 from itertools import chain
 
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -16,6 +17,7 @@ class AutoEncoder(AlgorithmBase):
         self,
         cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
+        data: Mapping[str, Union[Dataset, Any]],
         name: str | None = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -24,11 +26,15 @@ class AutoEncoder(AlgorithmBase):
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
-            models (Mapping[str, BaseNet]): Models required by the AutoEncoder algorithm, {"encoder": model1, "decoder": model2}.
+            models (Mapping[str, BaseNet]): Models required by the AutoEncoder algorithm, {"encoder": model1, "decoder":
+            model2}.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
             name (str, optional): Name of the algorithm. Defaults to "auto_encoder".
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
+            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg=cfg, models=models, name=name, device=device)
+        super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
@@ -95,7 +101,7 @@ class AutoEncoder(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"ae": avg_loss}  # use dict to unify interface
+        return {"ae loss": avg_loss}  # use dict to unify interface
 
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
@@ -113,7 +119,7 @@ class AutoEncoder(AlgorithmBase):
 
         avg_loss = total_loss / len(self.val_loader)
 
-        return {"ae": avg_loss, "save": avg_loss}  # use dict to unify interface
+        return {"ae loss": avg_loss, "save": avg_loss}  # use dict to unify interface
 
     def eval(self, num_samples: int = 5) -> None:
         """Evaluate the model effect"""

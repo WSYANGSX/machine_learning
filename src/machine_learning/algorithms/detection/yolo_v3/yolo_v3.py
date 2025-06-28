@@ -61,11 +61,6 @@ class YoloV3(AlgorithmBase):
         self.o_weiget = self.cfg["algorithm"].get("o_weiget", 1.0)
         self.c_weiget = self.cfg["algorithm"].get("c_weiget", 0.5)
 
-        # parameters that varys due to difference of dataset
-        # if the algorithm needs info from dataset, you need to return them from data parser
-        self.class_names = None
-        self.class_nums = None
-
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
 
@@ -296,7 +291,7 @@ class YoloV3(AlgorithmBase):
         cls = detection[:, 5].int()
 
         # visiualization
-        visualize_img_with_bboxes(img, bboxes.cpu().numpy(), cls.cpu().numpy(), self.class_names)
+        visualize_img_with_bboxes(img, bboxes.cpu().numpy(), cls.cpu().numpy(), self.cfg["data"]["class_names"])
 
     def fmap_decode(self, feature_map: torch.Tensor, img_size: int) -> tuple[list]:
         # [B,C,H,W] -> [B,H,W,C]

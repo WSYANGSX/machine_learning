@@ -1,10 +1,9 @@
-from typing import Any, Union, Mapping
+from typing import Any
 import os
 import torch
 from tqdm import trange
 from prettytable import PrettyTable
 
-from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
@@ -13,19 +12,12 @@ from machine_learning.utils.others import set_seed
 
 
 class Trainer:
-    def __init__(
-        self,
-        cfg: TrainCfg,
-        parsed_data: Mapping[str, Union[Dataset, Any]],
-        algo: AlgorithmBase,
-    ) -> None:
+    def __init__(self, cfg: TrainCfg, algo: AlgorithmBase) -> None:
         """
         The trainer of all machine learning algorithm
 
         Args:
             cfg (TrainCfg): The configuration of the trainer.
-            parsed_data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train_dataset and
-            val_dataset, may contain data information of the specific dataset.
             algo (AlgorithmBase): The algorithm to be trained.
         """
         self.cfg = cfg
@@ -35,61 +27,13 @@ class Trainer:
         set_seed(self.cfg.seed)
         print(f"[INFO] Current seed: {self.cfg.seed}")
 
-        # ---------------------- configure algo data ----------------------
-        self.batch_size = self.cfg.batch_size
-        self.mini_batch_size = self.batch_size // self.cfg.subdevision
-        self._configure_data(parsed_data)
-
-        # --------------------- configure algo logger ---------------------
+        # ------------------------ configure logger -----------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
-
-    def _configure_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
-        _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
-
-        for key, type in _necessary_key_type_couples_.items():
-            if key not in data or not isinstance(data[key], type):
-                raise ValueError(f"Input data mapping has no {key} or {key} is not Dataset type.")
-
-        train_dataset, val_dataset = data.pop("train_dataset"), data.pop("val_dataset")
-
-        train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.batch_size,
-            shuffle=self.cfg.data_shuffle,
-            num_workers=self.cfg.data_num_workers,
-            collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
-        )
-        val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=self.mini_batch_size,
-            shuffle=False,
-            num_workers=self.cfg.data_num_workers,
-            collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
-        )
-
-        test_loader = None
-        if "test_dataset" in data and isinstance(data["test_dataset"], Dataset):
-            test_dataset = data.pop("test_dataset")
-            test_loader = DataLoader(
-                dataset=test_dataset,
-                batch_size=self.mini_batch_size,
-                shuffle=False,
-                num_workers=self.cfg.data_num_workers,
-                collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
-            )
-
-        self._algorithm._initialize_dependent_on_data(
-            batch_size=self.cfg.batch_size,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            test_loader=test_loader,
-            **data,
-        )
 
     def _configure_writer(self):
         log_path = self.cfg.log_dir
