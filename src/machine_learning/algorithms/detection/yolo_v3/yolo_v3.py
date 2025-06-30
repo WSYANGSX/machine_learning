@@ -209,7 +209,7 @@ class YoloV3(AlgorithmBase):
             print("---- No detections over whole validation set ----")
             return {
                 "yolo loss": avg_loss,
-                "save": avg_loss,
+                "save metric": avg_loss,
                 "iou loss": avg_iou_loss,
                 "object loss": avg_obj_loss,
                 "class loss": avg_cls_loss,

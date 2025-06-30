@@ -48,8 +48,8 @@ def main():
     trainer = Trainer(trainer_cfg, yolo_v3)
 
     # Step 6: Train the model
-    trainer.train()
-    # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
+    # trainer.train()
+    trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/checkpoint_epoch_19.pth")
 
     # # Step 7: eval
     # yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")

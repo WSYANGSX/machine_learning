@@ -89,7 +89,7 @@ class Trainer:
             self.log_epoch_info(epoch, train_return, val_return)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
-        state_dict = self.load(checkpoint)
+        state_dict = self._algorithm.load(checkpoint)
         start_epoch = state_dict["epoch"] + 1
         self.best_loss = state_dict.get("best_loss", float("inf"))
 
