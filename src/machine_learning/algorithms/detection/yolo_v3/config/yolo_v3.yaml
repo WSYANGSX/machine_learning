@@ -40,8 +40,8 @@ model:
   initialize_weights: True
 
 data_loader:
-  num_workers: 4
+  num_workers: 6
   shuffle: True
-  batch_size: 256
+  batch_size: 64
   subdevision: 1
   

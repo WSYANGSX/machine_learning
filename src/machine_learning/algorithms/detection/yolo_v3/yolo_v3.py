@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any, Iterable
+from typing import Literal, Mapping, Any, Iterable, Union
 from itertools import chain
 
 import cv2
@@ -7,6 +7,7 @@ import time
 import torch
 import torchvision
 import torch.nn as nn
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.models import BaseNet
@@ -29,6 +30,7 @@ class YoloV3(AlgorithmBase):
         self,
         cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
+        data: Mapping[str, Union[Dataset, Any]],
         name: str | None = "yolo_v3",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -38,11 +40,13 @@ class YoloV3(AlgorithmBase):
         Args:
             cfg (str, dict): Configuration of the algorithm, it can be yaml file path or cfg dict.
             models (dict[str, BaseNet]): Models required by the YOLOv3 algorithm, {"darknet": model1, "fpn": model2}.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
             name (str): Name of the algorithm. Defaults to "yolo_v3".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg=cfg, models=models, name=name, device=device)
+        super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
 
         # main parameters of the algorithm
         self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
@@ -99,7 +103,7 @@ class YoloV3(AlgorithmBase):
         total_loss = 0.0
 
         for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
-            if check_data_integrity(imgs, iid_cls_bboxes[:, 2:6], iid_cls_bboxes[:, 1], self.class_nums):
+            if check_data_integrity(imgs, iid_cls_bboxes[:, 2:6], iid_cls_bboxes[:, 1], self.cfg["data"]["class_nums"]):
                 print(f"Epoch: {epoch}, Batch: {batch_idx}, invalid data detected, skipping.")
                 continue
 

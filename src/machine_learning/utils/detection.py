@@ -46,7 +46,7 @@ def xyxy2xywh_np(x: torch.Tensor) -> torch.Tensor:
     return new
 
 
-def to_absolute_labels(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+def to_absolute_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
     img, bboxes = img, bboxes
     h, w, _ = img.shape
     bboxes[:, [0, 2]] *= w
@@ -54,7 +54,7 @@ def to_absolute_labels(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np
     return bboxes
 
 
-def to_relative_labels(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+def to_relative_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
     img, bboxes = img, bboxes
     h, w, _ = img.shape
     bboxes[:, [0, 2]] /= w
@@ -62,7 +62,7 @@ def to_relative_labels(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np
     return bboxes
 
 
-def yolo2voc(img: torch.Tensor | np.ndarray, bboxes: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+def yolo2voc(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
     return to_absolute_labels(img, xywh2xyxy_np(bboxes))
 
 
@@ -88,12 +88,12 @@ def pad_to_square(img: np.ndarray, pad_values: int | Sequence[tuple[int]]):
     return np.pad(img, pad_width, "constant", constant_values=constant_values)
 
 
-def rescale_padded_boxes(boxes: torch.Tensor, cur_img_size: int, original_img_shape: tuple[int]) -> torch.Tensor:
+def rescale_padded_boxes(boxes: np.ndarray, cur_img_size: int, original_img_shape: tuple[int]) -> np.ndarray:
     """
     将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
     [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
-    _, orig_h, orig_w = original_img_shape
+    orig_h, orig_w, _ = original_img_shape
 
     # 计算增加的pad, 应对pad后放缩的情况
     pad_x = max(orig_h - orig_w, 0) * (cur_img_size / max(original_img_shape))

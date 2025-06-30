@@ -10,7 +10,6 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from machine_learning.utils.transforms import BaseTransform
 from machine_learning.utils.dataset import FullDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
@@ -257,6 +256,7 @@ class YoloParser(DatasetParser):
 
         return {
             "class_names": classes,
+            "calss_nums": len(classes),
             "train_img_paths": train_img_paths,
             "val_img_paths": val_img_paths,
             "test_img_paths": test_img_paths,

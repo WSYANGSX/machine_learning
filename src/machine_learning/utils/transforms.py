@@ -1,47 +1,39 @@
-from typing import Literal, Sequence
+from typing import Sequence
 
 import torch
 import numpy as np
 import albumentations as A
 from torchvision import transforms
 
-from machine_learning.utils.augmentations import DEFAULT_AUG, ENHANCED_AUG
 
-
-class BaseTransform:
+class TransformBase:
     r"""Base transform class to encapsulate the interfaces of albumentations.Compose and transforms.Compose."""
 
     def __init__(
         self,
-        augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
+        augmentation: A.Compose | None = None,
         to_tensor: bool = True,
         normalize: bool | None = True,
         mean: Sequence[float] | None = None,
         std: Sequence[float] | None = None,
     ):
-        if augmentation is not None:
-            if isinstance(augmentation, str):
-                self.augmentation = DEFAULT_AUG if augmentation == "default" else ENHANCED_AUG
-            else:
-                self.augmentation = augmentation
-        else:
-            self.augmentation = None
-
-        if normalize:
-            self.normalize = transforms.Normalize(mean=mean, std=std)
+        self.augmentation = augmentation
 
         if to_tensor:
             self.to_tensor = transforms.ToTensor()  # It can only be applied in 2/3 dimensions
 
-    def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
+        if normalize:
+            self.normalize = transforms.Normalize(mean=mean, std=std)
+
+    def __call__(self, data: dict[str, np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """The specific logical implementation of data enhancement"""
         pass
 
 
-class YoloTransform(BaseTransform):
+class YoloTransform(TransformBase):
     def __init__(
         self,
-        augmentation: Literal["default", "enhanced"] | A.Compose | None = None,
+        augmentation: A.Compose | None = None,
         to_tensor: bool = True,
         normalize: bool | None = True,
         mean: Sequence[float] | None = None,
@@ -61,17 +53,19 @@ class YoloTransform(BaseTransform):
         """
         super().__init__(augmentation, to_tensor, normalize, mean, std)
 
-    def __call__(self, data: Sequence[np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
+    def __call__(self, data: dict[str, np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """
         Apply data augmentation.
 
         Args:
-            data: Tuples containing (image, bboxes, category_ids)
+            data: dict containing {"image": image, "bboxes": bboxes, "category_ids": category_ids}
 
         Returns:
-            Converted tensors (image_tensor, bboxes_tensor, category_ids)
+            Converted tensors dict {"image": image, "bboxes": bboxes, "category_ids": category_ids}
         """
-        img, bboxes, category_ids = data
+        img = data["image"]
+        bboxes = data["bboxes"]
+        category_ids = data["category_ids"]
 
         if self.augmentation is not None and augment:
             auged_data = self.augmentation(image=img, bboxes=bboxes, category_ids=category_ids)
@@ -82,14 +76,14 @@ class YoloTransform(BaseTransform):
                 "category_ids"
             ]  # augementation will convert other unregistered data types to list types
 
-        # 转化为Tensor
+        # convert to tensor
         if self.to_tensor:
             img = self.to_tensor(img)
-            bboxes = torch.from_numpy(bboxes)
+            bboxes = torch.tensor(bboxes)
             category_ids = torch.tensor(category_ids)
 
-        # 归一化
+        # normalize
         if self.normalize:
             img = self.normalize(img)
 
-        return img, bboxes, category_ids
+        return {"image": img, "bboxes": bboxes, "category_ids": category_ids}

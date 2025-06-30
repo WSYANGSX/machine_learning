@@ -5,12 +5,11 @@ import random
 import warnings
 import numpy as np
 from PIL import Image
-from copy import deepcopy
 from torchvision import transforms
 from torch.utils.data import Dataset
 
+from machine_learning.utils.transforms import TransformBase
 from machine_learning.utils.image import resize
-from machine_learning.utils.transforms import BaseTransform
 
 
 class FullDataset(Dataset):
@@ -24,7 +23,7 @@ class FullDataset(Dataset):
         self,
         data: np.ndarray | torch.Tensor,
         labels: np.ndarray | torch.Tensor | None = None,
-        tansform: transforms.Compose | BaseTransform | None = None,
+        tansform: TransformBase | None = None,
     ) -> None:
         """
         Initialize the fully load dataset
@@ -67,7 +66,7 @@ class LazyDataset(Dataset):
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: transforms.Compose | BaseTransform | None = None,
+        transform: TransformBase | None = None,
     ):
         """
         Initialize the Lazily load dataset
@@ -102,11 +101,11 @@ class YoloDataset(LazyDataset):
         self,
         img_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: BaseTransform = None,
+        transform: TransformBase = None,
         img_size: int = 416,
         multiscale: bool = False,
         img_size_stride: int | None = 32,
-        augment: bool = True,
+        augment: bool = False,
     ):
         """YoloDataset Inherits from LazyDataset, used for loading the yolo detection data
 
@@ -168,7 +167,13 @@ class YoloDataset(LazyDataset):
         #  Transform
         if self.transform:
             try:
-                img, bboxes, category_ids = self.transform(data=(img, bboxes, category_ids), augment=self.augment)
+                transformed_data = self.transform(
+                    data={"image": img, "bboxes": bboxes, "category_ids": category_ids}, augment=self.augment
+                )
+                img = transformed_data["image"]
+                bboxes = transformed_data["bboxes"]
+                category_ids = transformed_data["category_ids"]
+
             except Exception:
                 print(f"Could not apply transform to image: {img_path}.")
                 return

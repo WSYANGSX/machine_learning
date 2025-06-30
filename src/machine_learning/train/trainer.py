@@ -68,15 +68,15 @@ class Trainer:
 
             # log the val loss
             for key, val in val_return.items():
-                if key == "save":
+                if key == "save metric":
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo
-            if self.cfg.save_best and "save" in val_return:
-                if val_return["save"] < self.best_loss:
-                    self.best_loss = val_return["save"]
+            if self.cfg.save_best and "save metric" in val_return:
+                if val_return["save metric"] < self.best_loss:
+                    self.best_loss = val_return["save metric"]
                     self.save_checkpoint(epoch, val_return, self.best_loss, is_best=True)
             else:
                 print("Saving of the best loss model skipped.")
@@ -113,14 +113,14 @@ class Trainer:
 
     def log_epoch_info(self, epoch: int, train_info: dict[Any], val_info: dict[Any]) -> None:
         log_table = PrettyTable()
-        log_table.title = "Train information: " + f"Epoch {epoch + 1}"
-        log_table.field_names = ["Info name", "Value"]
+        log_table.title = "Evaluation indicators: " + f"Epoch {epoch + 1}"
+        log_table.field_names = ["Indicator name", "Value"]
 
         rows = []
         for key, val in train_info.items():
-            rows.append([f"Train {key}", val])
+            rows.append([f"Train: {key}", val])
         for key, val in val_info.items():
-            rows.append([f"Val {key}", val])
+            rows.append([f"Val: {key}", val])
         for key, opt in self._algorithm._optimizers.items():
             rows.append([f"{key.capitalize()} learning rate", opt.param_groups[0]["lr"]])
 
