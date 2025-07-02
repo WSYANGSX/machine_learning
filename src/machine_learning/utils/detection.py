@@ -112,26 +112,26 @@ def rescale_padded_boxes(boxes: np.ndarray, cur_img_size: int, original_img_shap
     return boxes
 
 
-def bbox_iou(
+def couple_bboxes_iou(
     bbox1: torch.Tensor,
     bbox2: torch.Tensor,
     bbox_format: Literal["pascal_voc", "coco"] = "pascal_voc",
     iou_type: Literal["default", "giou", "diou", "ciou"] = "default",
-    eps: float = 1e-9,
+    eps: float = 1e-5,
     safe: bool = True,
 ) -> torch.Tensor:
     """Calculate the improved IoU to enhance numerical stability
 
     Args:
-        bbox1 (torch.Tensor): bounding box1 with shape (N, 4) or (1, 4).
-        bbox2 (torch.Tensor): bounding box1 with shape (N, 4) or (1, 4).
+        bbox1 (torch.Tensor): bounding box1 with shape (N, 4).
+        bbox2 (torch.Tensor): bounding box1 with shape (N, 4).
         bbox_format (Literal[&quot;pascal_voc&quot;, &quot;coco&quot;], optional): the format of bboxes, pascal_voc: [x_min, y_min, x_max, y_max] in absolute pixel coordinates, coco: [x_min, y_min, bbox_width, bbox_height] in absolute pixel coordinates..Defaults to "pascal_voc".
         iou_type (Literal[&quot;default&quot;, &quot;giou&quot;, &quot;diou&quot;, &quot;ciou&quot;], optional): the calculation type of iou. Defaults to "default".
         eps (float, optional): small positive numbers. Defaults to 1e-9.
         safe (bool, optional): safe mode or not. Defaults to True.
 
     Returns:
-        torch.Tensor: result with shape (N, 4) or (1, 4).
+        torch.Tensor: result with shape (N, 4).
     """
 
     # 0. Input validation
@@ -235,6 +235,39 @@ def bbox_iou(
     return iou
 
 
+def bbox_iou(box1, box2, x1y1x2y2=True):
+    """
+    Returns the IoU of two bounding boxes
+    """
+    if not x1y1x2y2:
+        # Transform from center and width to exact coordinates
+        b1_x1, b1_x2 = box1[:, 0] - box1[:, 2] / 2, box1[:, 0] + box1[:, 2] / 2
+        b1_y1, b1_y2 = box1[:, 1] - box1[:, 3] / 2, box1[:, 1] + box1[:, 3] / 2
+        b2_x1, b2_x2 = box2[:, 0] - box2[:, 2] / 2, box2[:, 0] + box2[:, 2] / 2
+        b2_y1, b2_y2 = box2[:, 1] - box2[:, 3] / 2, box2[:, 1] + box2[:, 3] / 2
+    else:
+        # Get the coordinates of bounding boxes
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
+
+    # get the corrdinates of the intersection rectangle
+    inter_rect_x1 = torch.max(b1_x1, b2_x1)
+    inter_rect_y1 = torch.max(b1_y1, b2_y1)
+    inter_rect_x2 = torch.min(b1_x2, b2_x2)
+    inter_rect_y2 = torch.min(b1_y2, b2_y2)
+    # Intersection area
+    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(
+        inter_rect_y2 - inter_rect_y1 + 1, min=0
+    )
+    # Union Area
+    b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
+    b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
+
+    iou = inter_area / (b1_area + b2_area - inter_area + 1e-16)
+
+    return iou
+
+
 def get_batch_statistics(detections: list[torch.Tensor], targets: torch.Tensor, iou_threshold: float) -> list:
     """Compute true positives, predicted scores and predicted labels per batch sample
     Source: https://https://github.com/eriklindernoren/PyTorch-YOLOv3
@@ -279,9 +312,7 @@ def get_batch_statistics(detections: list[torch.Tensor], targets: torch.Tensor, 
                 )
 
                 # Find the best matching target for our predicted box
-                iou, box_filtered_index = bbox_iou(
-                    pred_box.unsqueeze(0), torch.stack(filtered_targets_boxes), bbox_format="coco"
-                ).max(0)
+                iou, box_filtered_index = bbox_iou(pred_box.unsqueeze(0), torch.stack(filtered_targets_boxes)).max(0)
 
                 # Remap the index in the list of filtered targets for that label to the index in the list with all targets.
                 box_index = filtered_target_indices[box_filtered_index]

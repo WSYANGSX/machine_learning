@@ -1,5 +1,5 @@
 from machine_learning.algorithms import YoloV3
-from machine_learning.models import Darknet, FPN
+from machine_learning.models import DarkNet53
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.transforms import YoloTransform
 from machine_learning.utils.augmentations import DEFAULT_YOLO_AUG
@@ -23,18 +23,18 @@ def main():
     data = parser.create()  # (class_names, train_dataset, val_dataset)
 
     # Step 1: Parse configurations
-    dataset_cfg = load_config_from_yaml("./data/coco-2017/metadata.yaml")
     yolo_v3_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
 
     # Step 2: Build networks
-    class_nums = dataset_cfg["class_nums"]
-    default_image_size = yolo_v3_cfg["algorithm"]["default_img_size"]
-    anchor_nums = yolo_v3_cfg["algorithm"]["anchor_nums"]
-    darknet = Darknet(default_image_size)
-    fpn = FPN(anchor_nums, class_nums)
+    num_classes = data["class_nums"]
+    default_img_size = yolo_v3_cfg["algorithm"]["default_img_size"]
+    num_anchors = yolo_v3_cfg["algorithm"]["anchor_nums"]
+    darknet = DarkNet53(
+        default_img_shape=(3, default_img_size, default_img_size), num_anchors=num_anchors, num_classes=num_classes
+    )
 
     # Step 2: Build the algorithm
-    yolo_v3 = YoloV3(cfg=yolo_v3_cfg, data=data, models={"darknet": darknet, "fpn": fpn})
+    yolo_v3 = YoloV3(cfg=yolo_v3_cfg, data=data, models={"darknet": darknet})
 
     # Step 5: Configure the trainer
     trainer_cfg = TrainCfg(
@@ -48,8 +48,8 @@ def main():
     trainer = Trainer(trainer_cfg, yolo_v3)
 
     # Step 6: Train the model
-    # trainer.train()
-    trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/checkpoint_epoch_19.pth")
+    trainer.train()
+    # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/checkpoint_epoch_19.pth")
 
     # # Step 7: eval
     # yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")

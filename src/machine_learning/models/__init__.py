@@ -1,6 +1,6 @@
 from .base import BaseNet, AttentionBlock, ResidualBlock1D, ResidualBlock2D
 from .unet import UNet
-from .darknet import Darknet, FPN
+from .darknet import DarkNet53
 from .ae import Encoder, Decoder
 from .gan import Generator, Discriminator
 
@@ -10,8 +10,7 @@ __all__ = [
     "AttentionBlock",
     "ResidualBlock1D",
     "ResidualBlock2D",
-    "FPN",
-    "Darknet",
+    "DarkNet53",
     "Encoder",
     "Decoder",
     "Generator",

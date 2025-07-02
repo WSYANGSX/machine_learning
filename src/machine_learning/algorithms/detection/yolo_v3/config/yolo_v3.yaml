@@ -1,8 +1,8 @@
 algorithm: 
   name: "yolo_v3"
-  default_img_size: [3, 416, 416]
+  default_img_size: 416
   anchor_nums: 3
-  anchor_sizes: 
+  anchors: 
     - [10, 13]
     - [16, 30]
     - [33, 23]
@@ -19,7 +19,7 @@ algorithm:
   c_weight : 0.5  # cls loss weight
   # detection
   iou_threshold: 0.5
-  conf_threshold: 0.5
+  conf_threshold: 0.1
   nms_threshold: 0.5
 
 optimizer:
@@ -42,6 +42,6 @@ model:
 data_loader:
   num_workers: 6
   shuffle: True
-  batch_size: 64
+  batch_size: 256
   subdevision: 1
   

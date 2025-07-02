@@ -155,11 +155,6 @@ class YoloDataset(LazyDataset):
                 bboxes = labels[:, 1:5]
                 category_ids = labels[:, 0]
 
-                # Filter out effective bounding boxes
-                valid_indices = (bboxes[:, 2] > 0) & (bboxes[:, 3] > 0)
-                bboxes = bboxes[valid_indices]
-                category_ids = category_ids[valid_indices]
-
         except Exception:
             print(f"Could not read label '{label_path}'.")
             return
@@ -173,6 +168,29 @@ class YoloDataset(LazyDataset):
                 img = transformed_data["image"]
                 bboxes = transformed_data["bboxes"]
                 category_ids = transformed_data["category_ids"]
+
+                # Filter out effective bounding boxes
+                x = bboxes[:, 0]
+                y = bboxes[:, 1]
+                w = bboxes[:, 2]
+                h = bboxes[:, 3]
+
+                valid_indices = (
+                    (x >= 0)
+                    & (x <= 1)
+                    & (y >= 0)
+                    & (y <= 1)
+                    & (w > 1e-5)
+                    & (w <= 1)
+                    & (h > 1e-5)
+                    & (h <= 1)
+                    & (x - w / 2 >= 0)
+                    & (x + w / 2 <= 1)
+                    & (y - h / 2 >= 0)
+                    & (y + h / 2 <= 1)
+                )
+                bboxes = bboxes[valid_indices]
+                category_ids = category_ids[valid_indices]
 
             except Exception:
                 print(f"Could not apply transform to image: {img_path}.")

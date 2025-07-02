@@ -38,6 +38,7 @@ class AlgorithmBase(ABC):
         self._models = models
         self._optimizers = {}
         self._schedulers = {}
+        self.training = False
 
         # ------------------------ configure device -----------------------
         self._device = self._configure_device(device)
@@ -257,8 +258,10 @@ class AlgorithmBase(ABC):
         """Set the pattern of all the models in the algorithm to training"""
         for model in self.models.values():
             model.train()
+        self.training = True
 
     def set_eval(self) -> None:
         """Set the pattern of all the models in the algorithm to eval"""
         for model in self.models.values():
             model.eval()
+        self.training = False

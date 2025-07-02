@@ -21,32 +21,35 @@ class ConvBNLeaky(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    """Residual block (containing two convolutional layers)"""
-
     def __init__(self, channels: int):
         super().__init__()
-        self.conv1 = ConvBNLeaky(channels, channels * 2, 1)
-        self.conv2 = ConvBNLeaky(channels * 2, channels, 3, padding=1)
+        self.conv1 = ConvBNLeaky(channels, channels, 1)
+        self.conv2 = ConvBNLeaky(channels, channels, 3, padding=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        residual = x
-        out = self.conv1(x)
-        out = self.conv2(out)
-        return out + residual
+        return self.conv2(self.conv1(x)) + x
 
 
-class Darknet(BaseNet):
-    def __init__(self, input_size: Sequence[int]):
+class DarkNet53(BaseNet):
+    def __init__(
+        self,
+        default_img_shape: Sequence[int],
+        num_anchors: int,
+        num_classes: int,
+    ):
         """yolo_v3 backbone network
 
         Args:
-            input_size (Sequence[int]): the size of input image.
+            default_img_shape (Sequence[int]): the shape of input image.
         """
         super().__init__()
-        self.input_size = input_size  # (3, 416, 416)
+        self.default_img_shape = default_img_shape  # (3, 416, 416) use to show the structre of the net
+        self.num_anchors = num_anchors
+        self.num_classes = num_classes
+        self.channels = (5 + self.num_classes) * self.num_anchors
 
-        # Define the network layer
-        self.layers = nn.ModuleList(
+        # Define the network backbone layers
+        self.backbone_layers = nn.ModuleList(
             [
                 # Initial Downsampling
                 ConvBNLeaky(3, 32, 3, padding=1),  # (32, 416, 416)
@@ -68,41 +71,7 @@ class Darknet(BaseNet):
             ]
         )
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
-        skips = []
-
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i in [6, 15, 24]:
-                skips.append(x)
-
-        deep_feature = skips.pop()
-        mid_feature = skips.pop()
-        shallow_feature = skips.pop()
-
-        return shallow_feature, mid_feature, deep_feature
-
-    def view_structure(self) -> None:
-        from torchinfo import summary
-
-        dummy_input = torch.randn(1, *self.input_size, device=self.device)
-
-        summary(self, input_data=dummy_input)
-
-
-class FPN(BaseNet):
-    def __init__(self, num_anchors: int, num_classes: int) -> None:
-        """Feature Pyramid network
-
-        Args:
-            skips (list[torch.Tensor]): skips output from the darknet backbone network.
-        """
-        super().__init__()
-
-        self.num_anchors = num_anchors
-        self.num_classes = num_classes
-        self.channels = (5 + self.num_classes) * self.num_anchors
-
+        # fpn
         self.fpn = nn.ModuleDict(
             {
                 # convolutional layers for feature fusion
@@ -118,45 +87,32 @@ class FPN(BaseNet):
             }
         )
 
-    def forward(
-        self, shallow_feature: torch.Tensor, mid_feature: torch.Tensor, deep_feature: torch.Tensor
-    ) -> tuple[torch.Tensor]:
-        """Feature pyramid network forward propagation
-
-        Args:
-            skips (list[torch.Tensor]): the dim of skips : [(256, 52, 52),(512, 26, 26),(1024, 13, 13)].
-            trian (bool): train model or not. Default to True
-
-        Returns:
-            torch.Tensor: the fimg output.
-        """
-        # skips: [(256,52,52),(512,26,26),(1024,13,13)]
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        skips = []
+        for i, layer in enumerate(self.backbone_layers):
+            x = layer(x)
+            if i in [6, 15, 24]:
+                skips.append(x)
 
         # ----- The first layer of detection -----
-        x3 = self.fpn.conv_x3(deep_feature)  # (1024,13,13) -> (512,13,13)
-        fmap3 = self.fpn.head_conv3(x3)  # (512,13,13) -> (255,13,13)
-        x3_up = self.fpn.upsample(x3)  # (512,13,13) -> (512,26,26)
+        x3 = self.fpn.conv_x3(skips.pop())
+        fmap3 = self.fpn.head_conv3(x3)
+        x3_up = self.fpn.upsample(x3)
 
         # ----- The second layer of detection -----
-        x2 = torch.cat([x3_up, self.fpn.conv_x2(mid_feature)], dim=1)  # (512,26,26) cat (256,26,26) -> (768,26,26)
-        fmap2 = self.fpn.head_conv2(x2)  # (768,26,26) -> (255,26,26)
-        x2_up = self.fpn.upsample(x2)  # (768,26,26) -> (768,52,52)
+        x2 = torch.cat([x3_up, self.fpn.conv_x2(skips.pop())], dim=1)
+        fmap2 = self.fpn.head_conv2(x2)
+        x2_up = self.fpn.upsample(x2)
 
         # ----- The third layer of detection -----
-        x1 = torch.cat([x2_up, self.fpn.conv_x1(shallow_feature)], dim=1)  # (768,52,52) cat (128,52,52) -> (896,52,52)
-        fmap1 = self.fpn.head_conv1(x1)  # (896,52,52) -> (255,13,13)
+        x1 = torch.cat([x2_up, self.fpn.conv_x1(skips.pop())], dim=1)
+        fmap1 = self.fpn.head_conv1(x1)
 
-        return fmap1, fmap2, fmap3  # 52x52, 26x26, 13x13
+        return fmap1, fmap2, fmap3
 
-    def view_structure(self):
+    def view_structure(self) -> None:
         from torchinfo import summary
 
-        # When the network forward function has multiple parameter inputs, create a virtual data pass that conforms to
-        # the input structure
-        dummy_input = [
-            torch.randn(1, 256, 52, 52, device=self.device),  # corresponding to the shallow feature map
-            torch.randn(1, 512, 26, 26, device=self.device),  # corresponding to the middle feature map
-            torch.randn(1, 1024, 13, 13, device=self.device),  # # Corresponding to the deep feature map
-        ]
+        dummy_input = torch.randn(1, *self.default_img_shape, device=self.device)
 
         summary(self, input_data=dummy_input)

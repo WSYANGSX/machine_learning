@@ -12,7 +12,9 @@ DEFAULT_YOLO_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-20, 20), sat_shift_limit=(-20, 20), val_shift_limit=(-20, 20), p=0.5),
         A.PadIfNeeded(min_height=416, min_width=416, position="center"),
     ],
-    bbox_params=A.BboxParams(format="yolo", label_fields=["category_ids"], clip=True),
+    bbox_params=A.BboxParams(
+        format="yolo", label_fields=["category_ids"], min_visibility=0.1, min_height=0.01, min_width=0.01, clip=True
+    ),
     strict=True,
 )
 
@@ -30,6 +32,8 @@ ENHANCED_YOLO_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-30, 30), sat_shift_limit=(-30, 30), val_shift_limit=(-30, 30), p=0.8),
         A.PadIfNeeded(min_height=416, min_width=416, position="center"),
     ],
-    bbox_params=A.BboxParams(format="yolo", label_fields=["category_ids"], clip=True),
+    bbox_params=A.BboxParams(
+        format="yolo", label_fields=["category_ids"], min_visibility=0.1, min_height=0.01, min_width=0.01, clip=True
+    ),
     strict=True,
 )
