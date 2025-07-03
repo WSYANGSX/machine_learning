@@ -2,7 +2,7 @@ from machine_learning.algorithms import YoloV3
 from machine_learning.models import DarkNet53
 from machine_learning.utils.transforms import YoloTransform
 from machine_learning.utils.others import load_config_from_yaml
-from machine_learning.utils.dataload import ParserCfg, ParserFactory
+from machine_learning.utils.data_parser import ParserCfg, ParserFactory
 
 
 def main():

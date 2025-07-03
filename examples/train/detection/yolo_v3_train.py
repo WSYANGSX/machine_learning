@@ -1,10 +1,10 @@
-from machine_learning.algorithms import YoloV3
 from machine_learning.models import DarkNet53
+from machine_learning.algorithms import YoloV3
 from machine_learning.train import Trainer, TrainCfg
+from machine_learning.utils.data_parser import ParserCfg
 from machine_learning.utils.transforms import YoloTransform
 from machine_learning.utils.augmentations import DEFAULT_YOLO_AUG
 from machine_learning.utils.others import load_config_from_yaml
-from machine_learning.utils.dataload import ParserCfg, ParserFactory
 
 
 def main():
@@ -13,14 +13,12 @@ def main():
         augmentation=DEFAULT_YOLO_AUG,
         to_tensor=True,
         normalize=True,
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
+        mean=[0, 0, 0],
+        std=[1, 1, 1],
     )
 
-    dataset_dir = "./data/coco-2017"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
-    parser = ParserFactory().create_parser(parser_cfg)
-    data = parser.create()  # (class_names, train_dataset, val_dataset)
+    parser_cfg = ParserCfg(dataset_dir="./data/coco-2017", labels=True, tfs=tfs)
+    data =   # (class_names, train_dataset, val_dataset)
 
     # Step 1: Parse configurations
     yolo_v3_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v3/config/yolo_v3.yaml")
@@ -50,10 +48,6 @@ def main():
     # Step 6: Train the model
     trainer.train()
     # trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/checkpoint_epoch_19.pth")
-
-    # # Step 7: eval
-    # yolo_v3.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/yolov3/best_model.pth")
-    # yolo_v3.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000000001.jpg")
 
 
 if __name__ == "__main__":

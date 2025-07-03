@@ -1,82 +1,19 @@
 from __future__ import annotations
+from typing import Any
+
 import os
-import sys
 import struct
 from abc import ABC, abstractmethod
-from typing import Callable, Any, Type
+
 from dataclasses import dataclass, MISSING
 
 import numpy as np
-from torch.utils.data import Dataset
 from torchvision import transforms
+from torch.utils.data import Dataset
 
+from machine_learning.utils.transforms import TransformBase
 from machine_learning.utils.dataset import FullDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
-
-
-class ParserFactory:
-    r"""The factory class is used to generate specific data parsers and follows the open-closed principle."""
-
-    _parser_registry: dict[str, Type[DatasetParser]] = {}
-    _cfg_registry: dict[str, Type[ParserCfg]] = {}
-
-    def __init__(self):
-        pass
-
-    @property
-    def parsers(self) -> list[str]:
-        return list(self._parser_registry.keys())
-
-    @classmethod
-    def register_parser(cls, dataset_type: str) -> Callable:
-        def parser_wrapper(parser_cls: Type[DatasetParser]) -> Type[DatasetParser]:
-            cls._parser_registry[dataset_type] = parser_cls
-
-            # Automatic association configuration class: ParserNameCfg
-            cfg_cls_name = f"{parser_cls.__name__}Cfg"
-            if hasattr(sys.modules[__name__], cfg_cls_name):
-                cfg_cls = getattr(sys.modules[__name__], cfg_cls_name)
-                cls._cfg_registry[dataset_type] = cfg_cls
-            else:
-                cls._cfg_registry[dataset_type] = ParserCfg
-
-            print(f"Regoster parser: '{parser_cls.__name__}' config: '{cfg_cls_name}'")
-            return parser_cls
-
-        return parser_wrapper
-
-    def create_parser(self, parser_cfg: ParserCfg) -> DatasetParser:
-        dataset_dir = os.path.abspath(parser_cfg.dataset_dir)
-        metadata = self._load_metadata(dataset_dir)
-        dataset_type: str = metadata["dataset_type"]
-
-        # Dynamically obtain the parser
-        if dataset_type not in self._parser_registry:
-            raise ValueError(f"Unsupported dataset type: {dataset_type}")
-
-        specific_cfg = self._create_specific_config(parser_cfg, dataset_type)
-        parser_cls = self._parser_registry[dataset_type]
-
-        return parser_cls(specific_cfg)
-
-    def _create_specific_config(self, base_cfg: ParserCfg, dataset_type: str) -> ParserCfg:
-        "Convert the basic configuration to a specific type of configuration"
-        cfg_cls = self._cfg_registry[dataset_type]
-
-        if isinstance(base_cfg, cfg_cls):
-            return base_cfg
-
-        specific_cfg = cfg_cls(**base_cfg.__dict__)
-
-        return specific_cfg
-
-    def _load_metadata(self, dataset_dir: str) -> dict:
-        "Load the metadata file"
-        metadata_path = os.path.join(dataset_dir, "metadata.yaml")
-        return load_config_from_yaml(metadata_path)
-
-    def __str__(self):
-        return f"DataLoaderFactory(parsers={self.parsers})"
 
 
 @dataclass
@@ -85,7 +22,7 @@ class ParserCfg:
 
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    tfs: transforms.Compose | BaseTransform | None = None
+    tfs: transforms.Compose | TransformBase | None = None
 
 
 @dataclass
@@ -136,7 +73,6 @@ class DatasetParser(ABC):
         )
 
 
-@ParserFactory.register_parser("minist")
 class MinistParser(DatasetParser):
     r"""
     The minist handwritten digit set data parser, due to the small volume of misit data sets, adopts a full data loading
@@ -208,7 +144,6 @@ class MinistParser(DatasetParser):
         return {"train_dataset": trian_dataset, "val_dataset": val_dataset}
 
 
-@ParserFactory.register_parser("yolo")
 class YoloParser(DatasetParser):
     r"""Yolo format data set parser."""
 

@@ -3,7 +3,7 @@ from torchvision import transforms
 from machine_learning.algorithms import GAN
 from machine_learning.models import Generator, Discriminator
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils.dataload import ParserCfg, ParserFactory
+from machine_learning.utils.data_parser import ParserCfg, ParserFactory
 
 
 def main():
