@@ -2,8 +2,8 @@ import albumentations as A
 
 
 # basic enhancer
-DEFAULT_YOLO_AUG = A.Compose(
-    [
+DEFAULT_YOLO_AUG = {
+    "transforms": [
         A.LongestMaxSize(max_size=416, area_for_downscale="image"),
         A.HorizontalFlip(p=0.5),
         A.Affine(translate_percent=(-0.08, 0.08), scale=(0.8, 1.5), p=0.8, keep_ratio=True),
@@ -12,11 +12,11 @@ DEFAULT_YOLO_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-20, 20), sat_shift_limit=(-20, 20), val_shift_limit=(-20, 20), p=0.5),
         A.PadIfNeeded(min_height=416, min_width=416, position="center"),
     ],
-    bbox_params=A.BboxParams(
+    "bbox_params": A.BboxParams(
         format="yolo", label_fields=["category_ids"], min_visibility=0.1, min_height=0.01, min_width=0.01, clip=True
     ),
-    strict=True,
-)
+}
+
 
 # strong enhancer
 ENHANCED_YOLO_AUG = A.Compose(

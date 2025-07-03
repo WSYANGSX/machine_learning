@@ -6,8 +6,7 @@ import warnings
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
-
-from machine_learning.utils.transforms import TransformBase
+from machine_learning.utils.transforms import CustomTransform
 from machine_learning.utils.image import resize
 
 
@@ -22,7 +21,7 @@ class FullDataset(Dataset):
         self,
         data: np.ndarray | torch.Tensor,
         labels: np.ndarray | torch.Tensor | None = None,
-        tansform: TransformBase | None = None,
+        tansform: CustomTransform | None = None,
     ) -> None:
         """
         Initialize the fully load dataset
@@ -49,7 +48,7 @@ class FullDataset(Dataset):
             labels_sample = self.labels[index]
 
         if self.transform:
-            data_sample, labels_sample = self.transform(data_sample)
+            data_sample, labels_sample = self.transform({"data": data_sample, "labels": labels_sample})
 
         return data_sample, labels_sample
 
@@ -65,7 +64,7 @@ class LazyDataset(Dataset):
         self,
         data_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: TransformBase | None = None,
+        transform: CustomTransform | None = None,
     ):
         """
         Initialize the Lazily load dataset
@@ -100,7 +99,7 @@ class YoloDataset(LazyDataset):
         self,
         img_paths: Sequence[str],
         label_paths: Sequence[int],
-        transform: TransformBase = None,
+        transform: CustomTransform = None,
         img_size: int = 416,
         multiscale: bool = False,
         img_size_stride: int | None = 32,
@@ -165,8 +164,11 @@ class YoloDataset(LazyDataset):
                     data={"image": img, "bboxes": bboxes, "category_ids": category_ids}, augment=self.augment
                 )
                 img = transformed_data["image"]
+                print(img)
                 bboxes = transformed_data["bboxes"]
+                print(bboxes)
                 category_ids = transformed_data["category_ids"]
+                print(category_ids)
 
             except Exception:
                 print(f"Could not apply transform to image: {img_path}.")

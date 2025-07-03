@@ -4,14 +4,11 @@ from typing import Any
 import os
 import struct
 from abc import ABC, abstractmethod
-
 from dataclasses import dataclass, MISSING
 
 import numpy as np
-from torchvision import transforms
 from torch.utils.data import Dataset
-
-from machine_learning.utils.transforms import TransformBase
+from machine_learning.utils.transforms import CustomTransform
 from machine_learning.utils.dataset import FullDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
@@ -22,7 +19,7 @@ class ParserCfg:
 
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    tfs: transforms.Compose | TransformBase | None = None
+    tfs: CustomTransform | None = None
 
 
 @dataclass
@@ -34,7 +31,7 @@ class YoloParserCfg(ParserCfg):
     img_size_stride: int | None = 32
 
 
-class DatasetParser(ABC):
+class ParserBase(ABC):
     """Dataset parser abstract base class."""
 
     def __init__(self, parser_cfg: ParserCfg) -> None:
@@ -73,7 +70,7 @@ class DatasetParser(ABC):
         )
 
 
-class MinistParser(DatasetParser):
+class MinistParser(ParserBase):
     r"""
     The minist handwritten digit set data parser, due to the small volume of misit data sets, adopts a full data loading
     method.
@@ -144,7 +141,7 @@ class MinistParser(DatasetParser):
         return {"train_dataset": trian_dataset, "val_dataset": val_dataset}
 
 
-class YoloParser(DatasetParser):
+class YoloParser(ParserBase):
     r"""Yolo format data set parser."""
 
     def __init__(self, parser_cfg: ParserCfg):
@@ -153,8 +150,8 @@ class YoloParser(DatasetParser):
     def parse(self) -> dict[str, Any]:
         metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
-        dataset_name = metadata["dataset_name"]
-        if metadata["dataset_type"] != "yolo":
+        dataset_name = metadata["name"]
+        if metadata["data_type"] != "yolo":
             raise TypeError(f"Dataset {dataset_name} is not the type of yolo.")
 
         class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])

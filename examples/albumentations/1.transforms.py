@@ -5,10 +5,10 @@ import albumentations as A
 img = np.array(Image.open("./1.jpg").convert("RGB"), dtype=np.uint8)
 Image.fromarray(img).show()
 
-# # 水平翻转
-# flip_h_transform = A.HorizontalFlip(p=0.5)
-# img1 = flip_h_transform(image=img)
-# Image.fromarray(img1["image"]).show()
+# 水平翻转
+flip_h_transform = A.HorizontalFlip(p=0.5)
+img1 = flip_h_transform(img)
+Image.fromarray(img1["image"]).show()
 
 # # 垂直翻转
 # flip_v_transform = A.VerticalFlip(p=0.5)

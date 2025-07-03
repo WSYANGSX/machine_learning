@@ -1,23 +1,23 @@
-from torchvision import transforms
-
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.models.ae import Encoder, Decoder
-from machine_learning.utils.data_parser import ParserFactory, ParserCfg
+from machine_learning.utils.transforms import CustomTransform
+from machine_learning.utils.data_parser import ParserCfg, MinistParser
 
 
 def main():
     # Step 1: Configure the augmentator/converter and parse the data
-    tfs = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.1307], std=[0.3081]),
-        ]
+    tfs = tfs = CustomTransform(
+        augmentation=None,
+        to_tensor=True,
+        normalize=True,
+        mean=[0.1307],
+        std=[0.3081],
     )
 
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
-    parser = ParserFactory().create_parser(parser_cfg)
+    parser = MinistParser(parser_cfg)
     data = parser.create()
 
     # Step 2: Build the network
