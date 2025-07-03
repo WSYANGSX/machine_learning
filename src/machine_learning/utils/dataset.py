@@ -5,7 +5,6 @@ import random
 import warnings
 import numpy as np
 from PIL import Image
-from torchvision import transforms
 from torch.utils.data import Dataset
 
 from machine_learning.utils.transforms import TransformBase
@@ -50,7 +49,7 @@ class FullDataset(Dataset):
             labels_sample = self.labels[index]
 
         if self.transform:
-            data_sample = self.transform(data_sample)
+            data_sample, labels_sample = self.transform(data_sample)
 
         return data_sample, labels_sample
 
@@ -168,29 +167,6 @@ class YoloDataset(LazyDataset):
                 img = transformed_data["image"]
                 bboxes = transformed_data["bboxes"]
                 category_ids = transformed_data["category_ids"]
-
-                # Filter out effective bounding boxes
-                x = bboxes[:, 0]
-                y = bboxes[:, 1]
-                w = bboxes[:, 2]
-                h = bboxes[:, 3]
-
-                valid_indices = (
-                    (x >= 0)
-                    & (x <= 1)
-                    & (y >= 0)
-                    & (y <= 1)
-                    & (w > 1e-5)
-                    & (w <= 1)
-                    & (h > 1e-5)
-                    & (h <= 1)
-                    & (x - w / 2 >= 0)
-                    & (x + w / 2 <= 1)
-                    & (y - h / 2 >= 0)
-                    & (y + h / 2 <= 1)
-                )
-                bboxes = bboxes[valid_indices]
-                category_ids = category_ids[valid_indices]
 
             except Exception:
                 print(f"Could not apply transform to image: {img_path}.")

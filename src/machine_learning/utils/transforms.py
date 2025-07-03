@@ -27,7 +27,22 @@ class TransformBase:
 
     def __call__(self, data: dict[str, np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
         """The specific logical implementation of data enhancement"""
-        pass
+        data = data["image"]
+        labels = data["labels"]
+
+        if self.augmentation is not None and augment:
+            data = self.augmentation(data)
+
+        # convert to tensor
+        if self.to_tensor:
+            data = self.to_tensor(data)
+            labels = torch.tensor(labels)
+
+        # normalize
+        if self.normalize:
+            data = self.normalize(data)
+
+        return {"data": data, "labels": labels}
 
 
 class YoloTransform(TransformBase):
@@ -54,15 +69,6 @@ class YoloTransform(TransformBase):
         super().__init__(augmentation, to_tensor, normalize, mean, std)
 
     def __call__(self, data: dict[str, np.ndarray], augment: bool = True) -> tuple[torch.Tensor]:
-        """
-        Apply data augmentation.
-
-        Args:
-            data: dict containing {"image": image, "bboxes": bboxes, "category_ids": category_ids}
-
-        Returns:
-            Converted tensors dict {"image": image, "bboxes": bboxes, "category_ids": category_ids}
-        """
         img = data["image"]
         bboxes = data["bboxes"]
         category_ids = data["category_ids"]
