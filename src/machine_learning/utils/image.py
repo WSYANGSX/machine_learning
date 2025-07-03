@@ -27,6 +27,6 @@ def pad_to_square(img: torch.Tensor, pad_value: float | None = None) -> torch.Te
     return img
 
 
-def resize(image: torch.Tensor, size) -> torch.Tensor:
+def resize(image: torch.Tensor, size: int) -> torch.Tensor:
     image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
     return image
