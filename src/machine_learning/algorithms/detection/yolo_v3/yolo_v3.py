@@ -62,6 +62,8 @@ class YoloV3(AlgorithmBase):
         self.o_weight = self.cfg["algorithm"].get("o_weight", 1.0)
         self.c_weight = self.cfg["algorithm"].get("c_weight", 0.5)
 
+        if "anchors" not in self.cfg["algorithm"]:
+            raise ValueError("Configuration must contain 'anchors' field in 'algorithm' section.")
         self.anchors = torch.tensor(self.cfg["algorithm"]["anchors"], device=self.device).view(3, 3, 2)
 
     def _configure_optimizers(self) -> None:
@@ -82,7 +84,7 @@ class YoloV3(AlgorithmBase):
                 }
             )
         else:
-            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
+            raise ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sch_config = self._cfg["scheduler"]
@@ -105,16 +107,17 @@ class YoloV3(AlgorithmBase):
                 def fn(current_step):
                     if current_step < warmup_steps:
                         return current_step / warmup_steps
-                    elif current_step in decay_steps:
-                        return decay_scales
-                    else:
-                        return 1.0
-
-                return fn
+                    for i, step in enumerate(decay_steps):
+                        if current_step >= step:
+                            return decay_scales ** (i + 1)
+                    return 1.0
 
             self._schedulers.update(
                 {"yolo": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo"], lr_lambda=make_warmup_fn())}
             )
+
+        else:
+            print(f"Warning: Unknown scheduler type '{sch_config.get('type')}', no scheduler configured.")
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         self.set_train()
@@ -123,8 +126,6 @@ class YoloV3(AlgorithmBase):
         scaler = GradScaler()
 
         for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
-            batches = epoch * len(self.train_loader) + batch_idx
-
             imgs = imgs.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
             self.img_size = imgs.size(2)
@@ -142,6 +143,7 @@ class YoloV3(AlgorithmBase):
 
             total_loss += loss.item()
 
+            batches = epoch * len(self.train_loader) + batch_idx
             if batch_idx % log_interval == 0:
                 writer.add_scalar("iou loss/train_batch", loss_components[0].item(), batches)  # IOU loss
                 writer.add_scalar("object loss/train_batch", loss_components[1].item(), batches)  # batch loss
@@ -150,7 +152,7 @@ class YoloV3(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo loss": avg_loss, "batches": batches}
+        return {"yolo loss": avg_loss}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
