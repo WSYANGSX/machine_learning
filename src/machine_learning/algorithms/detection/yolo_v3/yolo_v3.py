@@ -26,9 +26,6 @@ from machine_learning.utils.detection import (
 )
 
 
-torch.set_printoptions(threshold=torch.inf)
-
-
 class YoloV3(AlgorithmBase):
     def __init__(
         self,
@@ -102,6 +99,23 @@ class YoloV3(AlgorithmBase):
                 }
             )
 
+        if sch_config.get("type") == "custom":
+
+            def make_warmup_fn(warmup_steps=15, decay_steps=[50, 100, 150], decay_scales=0.1):
+                def fn(current_step):
+                    if current_step < warmup_steps:
+                        return current_step / warmup_steps
+                    elif current_step in decay_steps:
+                        return decay_scales
+                    else:
+                        return 1.0
+
+                return fn
+
+            self._schedulers.update(
+                {"yolo": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo"], lr_lambda=make_warmup_fn())}
+            )
+
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         self.set_train()
 
@@ -109,6 +123,8 @@ class YoloV3(AlgorithmBase):
         scaler = GradScaler()
 
         for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
+            batches = epoch * len(self.train_loader) + batch_idx
+
             imgs = imgs.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
             self.img_size = imgs.size(2)
@@ -127,22 +143,14 @@ class YoloV3(AlgorithmBase):
             total_loss += loss.item()
 
             if batch_idx % log_interval == 0:
-                writer.add_scalar(
-                    "iou loss/train_batch", loss_components[0].item(), epoch * len(self.train_loader) + batch_idx
-                )  # IOU loss
-                writer.add_scalar(
-                    "object loss/train_batch", loss_components[1].item(), epoch * len(self.train_loader) + batch_idx
-                )  # batch loss
-                writer.add_scalar(
-                    "class loss/train_batch", loss_components[2].item(), epoch * len(self.train_loader) + batch_idx
-                )  # batch loss
-                writer.add_scalar(
-                    "loss/train_batch", loss.item(), epoch * len(self.train_loader) + batch_idx
-                )  # batch loss
+                writer.add_scalar("iou loss/train_batch", loss_components[0].item(), batches)  # IOU loss
+                writer.add_scalar("object loss/train_batch", loss_components[1].item(), batches)  # batch loss
+                writer.add_scalar("class loss/train_batch", loss_components[2].item(), batches)  # batch loss
+                writer.add_scalar("loss/train_batch", loss.item(), batches)  # batch loss
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo loss": avg_loss}
+        return {"yolo loss": avg_loss, "batches": batches}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:

@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils.others import set_seed
+from machine_learning.utils.learning_schedulers import LRWarmDampingScheduler
 
 
 class Trainer:
@@ -51,42 +52,44 @@ class Trainer:
         print("[INFO] Start training...")
 
         for epoch in trange(start_epoch, self.cfg.epochs):
-            train_return = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
-            val_return = self._algorithm.validate()
+            train_res = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+            val_res = self._algorithm.validate()
 
             # adjust the learning rate
             if self._algorithm._schedulers:
                 for key, val in self._algorithm._schedulers.items():
                     if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        val.step(val_return[key + " loss"])
+                        val.step(val_res[key + " loss"])
+                    if isinstance(val, LRWarmDampingScheduler):
+                        val.step(epoch)
                     else:
                         val.step()
 
             # log the train loss
-            for key, val in train_return.items():
+            for key, val in train_res.items():
                 self.writer.add_scalar(f"{key}/train", val, epoch)
 
             # log the val loss
-            for key, val in val_return.items():
+            for key, val in val_res.items():
                 if key == "save metric":
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo
-            if self.cfg.save_best and "save metric" in val_return:
-                if val_return["save metric"] < self.best_loss:
-                    self.best_loss = val_return["save metric"]
-                    self.save_checkpoint(epoch, val_return, self.best_loss, is_best=True)
+            if self.cfg.save_best and "save metric" in val_res:
+                if val_res["save metric"] < self.best_loss:
+                    self.best_loss = val_res["save metric"]
+                    self.save_checkpoint(epoch, val_res, self.best_loss, is_best=True)
             else:
                 print("Saving of the best loss model skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
-                self.save_checkpoint(epoch, val_return, self.best_loss, is_best=False)
+                self.save_checkpoint(epoch, val_res, self.best_loss, is_best=False)
 
             # print log information
-            self.log_epoch_info(epoch, train_return, val_return)
+            self.log_epoch_info(epoch, train_res, val_res)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)

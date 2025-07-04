@@ -48,7 +48,6 @@ class AlgorithmBase(ABC):
         self._validate_config()
 
         self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
-        self.mini_batch_size = self.batch_size // self.cfg["data_loader"].get("subdevision", 1)
 
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
@@ -155,7 +154,7 @@ class AlgorithmBase(ABC):
         )
         self.val_loader = DataLoader(
             dataset=val_dataset,
-            batch_size=self.mini_batch_size,
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.cfg["data_loader"].get("num_workers", 4),
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
@@ -165,7 +164,7 @@ class AlgorithmBase(ABC):
             test_dataset = data.pop("test_dataset")
             self.test_loader = DataLoader(
                 dataset=test_dataset,
-                batch_size=self.mini_batch_size,
+                batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.cfg["data_loader"].get("num_workers", 4),
                 collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,

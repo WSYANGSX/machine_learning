@@ -14,7 +14,7 @@ algorithm:
     - [373, 326]
   anchor_scale_threshold: 4
   # loss
-  b_weight : 0.05 # bboxes loss weight
+  b_weight : 0.5 # bboxes loss weight
   o_weight : 1.0  # object loss weight
   c_weight : 0.5  # cls loss weight
   # detection
@@ -24,7 +24,7 @@ algorithm:
 
 optimizer:
   type: "Adam"
-  learning_rate: 1.0e-4
+  learning_rate: 3.0e-4
   beta1: 0.9
   beta2: 0.999
   eps: 1.0e-8
@@ -32,9 +32,11 @@ optimizer:
   grad_clip: 1.0
   
 scheduler:
-  type: ReduceLROnPlateau
-  factor: 0.5
-  patience: 5  
+  # type: "ReduceLROnPlateau"
+  # factor: 0.5
+  # patience: 5 
+  
+  type: custom
 
 model:
   initialize_weights: True
