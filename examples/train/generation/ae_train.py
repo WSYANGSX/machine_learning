@@ -1,19 +1,13 @@
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.models.ae import Encoder, Decoder
-from machine_learning.utils.transforms import CustomTransform
+from machine_learning.utils.transforms import ImgTransform
 from machine_learning.utils.data_parser import ParserCfg, MinistParser
 
 
 def main():
     # Step 1: Configure the augmentator/converter and parse the data
-    tfs = tfs = CustomTransform(
-        augmentation=None,
-        to_tensor=True,
-        normalize=True,
-        mean=[0.1307],
-        std=[0.3081],
-    )
+    tfs = tfs = ImgTransform(augmentation=None, to_tensor=True, normalize=True, mean=[0.1307], std=[0.3081])
 
     dataset_dir = "./data/minist"
     parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
@@ -21,9 +15,9 @@ def main():
     data = parser.create()
 
     # Step 2: Build the network
-    input_size = (1, 28, 28)
+    image_shape = data["image_shape"]
     output_size = 128
-    encoder = Encoder(input_size, output_size)
+    encoder = Encoder(image_shape, output_size)
     decoder = Decoder(output_size)
 
     # Step 3: Build the algorithm

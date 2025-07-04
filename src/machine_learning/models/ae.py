@@ -3,17 +3,17 @@ from machine_learning.models import BaseNet
 
 
 class Encoder(BaseNet):
-    def __init__(self, input_size: tuple[int], z_dim: int) -> None:
+    def __init__(self, image_shape: tuple[int], z_dim: int) -> None:
         """
          Encoder network
 
         Args:
-            input_size (tuple[int]): the size of input data (channels, height, width).
+            image_shape (tuple[int]): the shape of input data (channels, height, width).
             z_dim (int): Output the dimension of the encoder output.
         """
         super().__init__()
 
-        self.input_size = input_size
+        self.image_shape = image_shape
         self.z_dim = z_dim
 
         self.layer1 = nn.Sequential(nn.Conv2d(1, 3, 2, 2, 0), nn.BatchNorm2d(3), nn.ReLU())  # (3,14,14)
@@ -32,7 +32,7 @@ class Encoder(BaseNet):
     def view_structure(self):
         from torchinfo import summary
 
-        summary(self, input_size=(1, *self.input_size))
+        summary(self, input_size=(1, *self.image_shape))
 
 
 class Decoder(BaseNet):

@@ -8,8 +8,8 @@ from dataclasses import dataclass, MISSING
 
 import numpy as np
 from torch.utils.data import Dataset
-from machine_learning.utils.transforms import CustomTransform
-from machine_learning.utils.dataset import FullDataset, YoloDataset
+from machine_learning.utils.transforms import TransformBase
+from machine_learning.utils.dataset import EagerDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
 
@@ -19,7 +19,7 @@ class ParserCfg:
 
     dataset_dir: str = MISSING
     labels: bool = MISSING
-    tfs: CustomTransform | None = None
+    tfs: TransformBase | None = None
 
 
 @dataclass
@@ -118,7 +118,7 @@ class MinistParser(ParserBase):
         Returns:
             dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
         """
-        self.parse()
+        metadata = self.parse()
 
         train_data_dir = os.path.join(self.dataset_dir, "train")
         val_data_dir = os.path.join(self.dataset_dir, "test")
@@ -135,10 +135,14 @@ class MinistParser(ParserBase):
         else:
             train_labels, val_labels = None, None
 
-        trian_dataset = FullDataset(train_data, train_labels, self.transforms)
-        val_dataset = FullDataset(val_data, val_labels, self.transforms)
+        trian_dataset = EagerDataset(train_data, train_labels, self.transforms, augment=False)
+        val_dataset = EagerDataset(val_data, val_labels, self.transforms, augment=False)
 
-        return {"train_dataset": trian_dataset, "val_dataset": val_dataset}
+        return {
+            "image_shape": metadata["image_shape"],
+            "train_dataset": trian_dataset,
+            "val_dataset": val_dataset,
+        }
 
 
 class YoloParser(ParserBase):

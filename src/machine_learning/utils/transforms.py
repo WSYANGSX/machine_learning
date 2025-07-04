@@ -6,7 +6,15 @@ import albumentations as A
 from torchvision import transforms as T
 
 
-class CustomTransform:
+class TransformBase:
+    def __init__(self):
+        pass
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        pass
+
+
+class ImgTransform(TransformBase):
     "Unified data transformation base class, supporting classification and detection tasks"
 
     def __init__(
@@ -92,7 +100,7 @@ class CustomTransform:
             if "mask" in transformed:
                 data["mask"] = transformed["mask"]
 
-            fields_to_convert = ["labels", "bboxes", "category_ids", "keypoints"]
+            fields_to_convert = ["label", "bboxes", "category_ids", "keypoints"]
             for field in fields_to_convert:
                 if field in data and not isinstance(data[field], torch.Tensor):
                     dtype = torch.float32 if field in ["bboxes", "keypoints"] else torch.int64

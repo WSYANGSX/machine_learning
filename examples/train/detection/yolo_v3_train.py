@@ -1,25 +1,17 @@
-import albumentations as A
 from machine_learning.models import DarkNet53
 from machine_learning.algorithms import YoloV3
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils.data_parser import YoloParserCfg, YoloParser
-from machine_learning.utils.transforms import CustomTransform
+from machine_learning.utils.transforms import ImgTransform
 from machine_learning.utils.augmentations import DEFAULT_YOLO_AUG
+from machine_learning.utils.data_parser import YoloParserCfg, YoloParser
 from machine_learning.utils.others import load_config_from_yaml
 
 
 def main():
     # Step 1: Parse the data
-    tfs = CustomTransform(
+    tfs = ImgTransform(
         augmentation=DEFAULT_YOLO_AUG["transforms"],
-        bbox_params=A.BboxParams(
-            format="yolo",
-            label_fields=["category_ids"],
-            min_visibility=0.1,
-            min_height=0.01,
-            min_width=0.01,
-            clip=True,
-        ),
+        bbox_params=DEFAULT_YOLO_AUG["bbox_params"],
         to_tensor=True,
         normalize=True,
         mean=[0, 0, 0],
@@ -34,10 +26,10 @@ def main():
 
     # Step 2: Build networks
     num_classes = data["class_nums"]
-    default_img_size = yolo_v3_cfg["algorithm"]["default_img_size"]
+    img_size = yolo_v3_cfg["algorithm"]["default_img_size"]
     num_anchors = yolo_v3_cfg["algorithm"]["anchor_nums"]
     darknet = DarkNet53(
-        default_img_shape=(3, default_img_size, default_img_size), num_anchors=num_anchors, num_classes=num_classes
+        default_img_shape=(3, img_size, img_size), num_anchors=num_anchors, num_classes=num_classes
     )
 
     # Step 2: Build the algorithm

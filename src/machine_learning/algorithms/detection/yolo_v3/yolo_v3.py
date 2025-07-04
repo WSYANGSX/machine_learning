@@ -295,7 +295,7 @@ class YoloV3(AlgorithmBase):
         grid_xy = torch.stack((grid_x, grid_y), dim=-1).view(1, 1, H, W, 2).float()  # [H, W, 2]
 
         fmap[..., :2] = (torch.sigmoid(fmap[..., :2]) + grid_xy) * stride
-        fmap[..., 2:4] = anchors * torch.exp(fmap[..., 2:4])
+        fmap[..., 2:4] = anchors * torch.exp(fmap[..., 2:4].clamp(-10, 10))
         fmap[..., 4:] = torch.sigmoid(fmap[..., 4:])
 
         return fmap.view(B, -1, self.cfg["data"]["class_nums"] + 5)
@@ -323,7 +323,7 @@ class YoloV3(AlgorithmBase):
             if tboxes.size(0) > 0:
                 ps = fmap[indices]
                 pxy = ps[:, :2].sigmoid()
-                pwh = torch.exp(ps[:, 2:4]) * norm_anchors
+                pwh = torch.exp(ps[:, 2:4].clamp(-10, 10)) * norm_anchors
                 pboxes = torch.cat([pxy, pwh], dim=1)
 
                 iou = couple_bboxes_iou(pboxes, tboxes, bbox_format="coco", iou_type="ciou")
@@ -437,7 +437,6 @@ def non_max_suppression(
         torch.Tensor: detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
     """
     detections = torch.cat(decodes, dim=1)  # detections [B, 3*(H1*W1+H2*W2+H3*W3), 85]
-    print(detections.shape)
     class_nums = detections.shape[2] - 5  # number of classes
     multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
 
@@ -462,7 +461,6 @@ def non_max_suppression(
         # Detections matrix nx6 (x1, y1, x2, y2, conf, cls)
         if multi_label:
             i, j = (detection[:, 5:] > conf_threshold).nonzero(as_tuple=False).T  # i row indices, j col indices
-            print(i, j)
             detection = torch.cat((box[i], detection[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
             conf, j = detection[:, 5:].max(1, keepdim=True)

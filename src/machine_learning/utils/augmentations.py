@@ -13,14 +13,19 @@ DEFAULT_YOLO_AUG = {
         A.PadIfNeeded(min_height=416, min_width=416, position="center"),
     ],
     "bbox_params": A.BboxParams(
-        format="yolo", label_fields=["category_ids"], min_visibility=0.1, min_height=0.01, min_width=0.01, clip=True
+        format="yolo",
+        label_fields=["category_ids"],
+        min_visibility=0.1,
+        min_height=0.01,
+        min_width=0.01,
+        clip=True,
     ),
 }
 
 
 # strong enhancer
-ENHANCED_YOLO_AUG = A.Compose(
-    [
+ENHANCED_YOLO_AUG = {
+    "transforms": [
         A.LongestMaxSize(max_size=416, area_for_downscale="image"),
         A.HorizontalFlip(p=0.5),
         A.CoarseDropout(
@@ -32,8 +37,12 @@ ENHANCED_YOLO_AUG = A.Compose(
         A.HueSaturationValue(hue_shift_limit=(-30, 30), sat_shift_limit=(-30, 30), val_shift_limit=(-30, 30), p=0.8),
         A.PadIfNeeded(min_height=416, min_width=416, position="center"),
     ],
-    bbox_params=A.BboxParams(
-        format="yolo", label_fields=["category_ids"], min_visibility=0.1, min_height=0.01, min_width=0.01, clip=True
+    "bbox_params": A.BboxParams(
+        format="yolo",
+        label_fields=["category_ids"],
+        min_visibility=0.1,
+        min_height=0.01,
+        min_width=0.01,
+        clip=True,
     ),
-    strict=True,
-)
+}
