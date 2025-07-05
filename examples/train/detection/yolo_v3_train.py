@@ -28,9 +28,7 @@ def main():
     num_classes = data["class_nums"]
     img_size = yolo_v3_cfg["algorithm"]["default_img_size"]
     num_anchors = yolo_v3_cfg["algorithm"]["anchor_nums"]
-    darknet = DarkNet53(
-        default_img_shape=(3, img_size, img_size), num_anchors=num_anchors, num_classes=num_classes
-    )
+    darknet = DarkNet53(default_img_shape=(3, img_size, img_size), num_anchors=num_anchors, num_classes=num_classes)
 
     # Step 2: Build the algorithm
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, data=data, models={"darknet": darknet})
