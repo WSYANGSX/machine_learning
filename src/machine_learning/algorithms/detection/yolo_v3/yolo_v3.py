@@ -113,6 +113,8 @@ class YoloV3(AlgorithmBase):
                                 return decay_scales[i]
                     return 1.0
 
+                return fn
+
             self._schedulers.update(
                 {"yolo": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo"], lr_lambda=make_warmup_fn())}
             )
