@@ -24,7 +24,7 @@ algorithm:
 
 optimizer:
   type: "Adam"
-  learning_rate: 3.0e-4
+  learning_rate: 2.0e-4
   beta1: 0.9
   beta2: 0.999
   eps: 1.0e-8
@@ -36,7 +36,9 @@ scheduler:
   # factor: 0.5
   # patience: 5 
   
-  type: custom
+  type: LRWarnupDecay
+  epochs: [50, 100]
+  scales: [0.1, 0.01]
 
 model:
   initialize_weights: True

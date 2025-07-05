@@ -1,0 +1,60 @@
+在 PyTorch 的学习率调度器中，不同调度器有不同的行为，但所有调度器最终都会直接改变优化器中的学习率值。不过，它们计算新学习率的方式可以分为两大类：
+
+1. 基于初始学习率的调度器
+这类调度器使用初始学习率作为计算基础：
+
+调度器	计算方式	特点
+LambdaLR	new_lr = initial_lr * lambda_fn(step)	每次基于初始值重新计算
+StepLR	new_lr = initial_lr * gamma^(step // step_size)	指数衰减基于初始值
+MultiStepLR	new_lr = initial_lr * gamma^(里程碑数量)	基于初始值计算
+CosineAnnealingLR	new_lr = initial_lr * 余弦函数(step)	基于初始值振荡
+ConstantLR	new_lr = initial_lr * factor	简单比例基于初始值
+共同特点：
+
+初始化时保存 base_lrs（初始学习率）
+
+计算时不考虑当前学习率
+
+公式中始终包含 initial_lr
+
+2. 基于当前学习率的调度器
+这类调度器使用当前学习率作为计算基础：
+
+调度器	计算方式	特点
+MultiplicativeLR	new_lr = current_lr * lambda_fn(step)	累积变化
+ReduceLROnPlateau	new_lr = current_lr * factor	根据验证指标动态调整
+CyclicLR	new_lr = 当前值 ± 步长	在边界内循环变化
+OneCycleLR	new_lr = 预设曲线值	复杂策略，但实质修改当前值
+共同特点：
+
+计算基于 optimizer.param_groups[0]['lr']（当前值）
+
+实现累积式衰减/增长
+
+没有显式的初始值保存
+
+核心区别对比：
+特性	基于初始值	基于当前值
+计算基础	初始学习率	当前学习率
+数学性质	f(initial, step)	g(current, step)
+状态依赖	无状态	有状态（依赖前次结果）
+典型代表	LambdaLR, StepLR	MultiplicativeLR, ReduceLROnPlateau
+衰减效果	相对衰减（与初始值相关）	绝对衰减（与前值相关）
+重置影响	重置后恢复初始行为	重置后行为可能改变
+
+
+如何判断调度器类型？
+查看文档中的计算公式
+
+检查 get_lr() 方法源码：
+
+python
+# 基于初始值（如 StepLR）
+def get_lr(self):
+    return [base_lr * self.gamma ** (self.last_epoch // self.step_size)
+            for base_lr in self.base_lrs]
+
+# 基于当前值（如 MultiplicativeLR）
+def get_lr(self):
+    return [group['lr'] * lmbda(self.last_epoch)
+            for lmbda, group in zip(self.lr_lambdas, self.optimizer.param_groups)]

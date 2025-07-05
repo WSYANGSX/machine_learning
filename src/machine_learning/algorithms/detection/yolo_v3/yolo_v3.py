@@ -51,7 +51,7 @@ class YoloV3(AlgorithmBase):
 
         # main parameters of the algorithm
         self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
-        self.img_size = self.cfg["algorithm"].get("img_size", None)
+        self.default_img_size = self.cfg["algorithm"].get("default_img_size", None)
 
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
         self.conf_threshold = self.cfg["algorithm"]["conf_threshold"]
@@ -101,15 +101,16 @@ class YoloV3(AlgorithmBase):
                 }
             )
 
-        if sch_config.get("type") == "custom":
+        if sch_config.get("type") == "LRWarnupDecay":
 
-            def make_warmup_fn(warmup_steps=15, decay_steps=[50, 100, 150], decay_scales=0.1):
-                def fn(current_step):
-                    if current_step < warmup_steps:
-                        return current_step / warmup_steps
-                    for i, step in enumerate(decay_steps):
-                        if current_step >= step:
-                            return decay_scales ** (i + 1)
+            def make_warmup_fn(warmup_epoch=15, decay_epochs=sch_config["epochs"], decay_scales=sch_config["scales"]):
+                def fn(current_epoch):
+                    if current_epoch < warmup_epoch:
+                        return (current_epoch + 1) / warmup_epoch
+                    else:
+                        for i, epoch in enumerate(decay_epochs):
+                            if current_epoch >= epoch:
+                                return decay_scales[i]
                     return 1.0
 
             self._schedulers.update(
@@ -128,13 +129,15 @@ class YoloV3(AlgorithmBase):
         for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
             imgs = imgs.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
-            self.img_size = imgs.size(2)
+            img_size = imgs.size(2)
 
             self._optimizers["yolo"].zero_grad()
 
-            with autocast(device_type=str(self.device)):
+            with autocast(
+                device_type=str(self.device)
+            ):  # Ensure that the autocast scope correctly covers the forward computation
                 fmap1, fmap2, fmap3 = self.models["darknet"](imgs)
-                loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets)
+                loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets, img_size=img_size)
 
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -171,14 +174,16 @@ class YoloV3(AlgorithmBase):
             fmap1, fmap2, fmap3 = self.models["darknet"](imgs)
 
             # loss
-            loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets)
+            loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets, img_size=imgs.size(2))
             total_loss += loss.item()
             total_iou_loss += loss_components[0].item()
             total_obj_loss += loss_components[1].item()
             total_cls_loss += loss_components[2].item()
 
             # metrics
-            decodes = [self.fmap_decode(fmap, self.anchors[i]) for i, fmap in enumerate([fmap1, fmap2, fmap3])]
+            decodes = [
+                self.fmap_decode(fmap, self.anchors[i], imgs.size(2)) for i, fmap in enumerate([fmap1, fmap2, fmap3])
+            ]
             detections = non_max_suppression(
                 decodes=decodes,
                 conf_threshold=self.conf_threshold,
@@ -186,7 +191,7 @@ class YoloV3(AlgorithmBase):
                 device=self.device,
             )
             targets[:, 2:] = xywh2xyxy(targets[:, 2:])
-            targets[:, 2:] *= self.img_size
+            targets[:, 2:] *= imgs.size(2)
 
             sample_metrics += get_batch_statistics(
                 detections, targets, iou_threshold=self.iou_threshold
@@ -244,8 +249,6 @@ class YoloV3(AlgorithmBase):
     @torch.no_grad()
     def detect(self, img_path: FilePath, img_size: int, conf_threshold, nms_threshold) -> None:
         # read image
-        self.img_size = img_size
-
         img = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
         origin_img_shape = img.shape
 
@@ -255,13 +258,15 @@ class YoloV3(AlgorithmBase):
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0.471, 0.448, 0.408], std=[0.234, 0.239, 0.242])])
         pad_img = tfs(pad_img)
-        pad_img = resize(pad_img, size=self.img_size).unsqueeze(0).to(self.device)
+        pad_img = resize(pad_img, size=img_size).unsqueeze(0).to(self.device)
 
         # input image to model
         fmap1, fmap2, fmap3 = self.models["darknet"](pad_img)
 
         # decode
-        decodes = [self.fmap_decode(fmap, self.anchors[i]) for i, fmap in enumerate([fmap1, fmap2, fmap3])]
+        decodes = [
+            self.fmap_decode(fmap, self.anchors[i], pad_img.size(2)) for i, fmap in enumerate([fmap1, fmap2, fmap3])
+        ]
         detections = non_max_suppression(
             decodes=decodes,
             conf_threshold=conf_threshold,
@@ -280,7 +285,7 @@ class YoloV3(AlgorithmBase):
         # visiualization
         visualize_img_with_bboxes(img, bboxes.cpu().numpy(), cls.cpu().numpy(), self.cfg["data"]["class_names"])
 
-    def fmap_decode(self, fmap: torch.Tensor, anchors: torch.Tensor) -> torch.Tensor:
+    def fmap_decode(self, fmap: torch.Tensor, anchors: torch.Tensor, img_size: int) -> torch.Tensor:
         """
         Decode the features output by the yolo detection net and map them to the image coordinate system (x, y, w, h).
 
@@ -293,7 +298,7 @@ class YoloV3(AlgorithmBase):
             torch.Tensor: decode.
         """
         B, C, H, W = fmap.shape
-        stride = self.img_size // H
+        stride = img_size // H
         fmap = fmap.view(B, self.anchor_nums, -1, H, W).permute(0, 1, 3, 4, 2).contiguous()
         anchors = anchors.view(1, self.anchor_nums, 1, 1, 2)
 
@@ -310,7 +315,7 @@ class YoloV3(AlgorithmBase):
 
         return fmap.view(B, -1, self.cfg["data"]["class_nums"] + 5)
 
-    def criterion(self, fmaps: list[torch.Tensor], targets: torch.Tensor) -> tuple:
+    def criterion(self, fmaps: list[torch.Tensor], targets: torch.Tensor, img_size: int) -> tuple:
         # 初始化损失
         cls_loss = torch.zeros(1, device=self.device)
         box_loss = torch.zeros(1, device=self.device)
@@ -324,7 +329,7 @@ class YoloV3(AlgorithmBase):
             # fmap [B, C, H, W] -> [B, A, H, W, 85]
             B, _, H, W = fmap.shape
             fmap = fmap.view(B, self.anchor_nums, -1, H, W).permute(0, 1, 3, 4, 2).contiguous()
-            stride = self.img_size // H
+            stride = img_size // H
 
             norm_anchors = self.anchors[i] / stride
             tcls, tboxes, indices, norm_anchors = self.prepare_target(targets, H, W, norm_anchors)
@@ -376,15 +381,11 @@ class YoloV3(AlgorithmBase):
             torch.Tensor: decode.
         """
         num_bboxes = targets.shape[0]  # number of bboxes(targets)
-
         targets = targets.repeat(self.anchor_nums, 1, 1)  # targets [num_anchors, num_bboxes, 6]
-        targets[:, :, 2:6] *= targets.new([fw, fh]).repeat(num_bboxes, 2)
-        anchor_ids = (
-            torch.arange(self.anchor_nums, device=self.device)
-            .view(self.anchor_nums, 1)
-            .repeat(1, num_bboxes)
-            .view(self.anchor_nums, num_bboxes, 1)
-        )
+
+        scale_tensor = torch.tensor([fw, fh, fw, fh], device=targets.device, dtype=torch.float32)
+        targets[:, :, 2:6] *= scale_tensor
+        anchor_ids = torch.arange(self.anchor_nums, device=self.device).repeat(num_bboxes, 1).T.view(-1, num_bboxes, 1)
         targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, img_id, class_id, x, y, w, h)
 
         # Filter the appropriate target box
@@ -399,7 +400,7 @@ class YoloV3(AlgorithmBase):
 
         # The center point coordinates of the target bboxes in the feature map coordinate system
         gxy = targets[:, 3:5]
-        gwh = targets[:, 4:6]
+        gwh = targets[:, 5:7]
         gji = gxy.long()
         gj, gi = gji.T
 

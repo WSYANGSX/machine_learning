@@ -9,7 +9,6 @@ from torch.utils.tensorboard import SummaryWriter
 from .trainer_cfg import TrainCfg
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils.others import set_seed
-from machine_learning.utils.learning_schedulers import LRWarmDampingScheduler
 
 
 class Trainer:
@@ -60,8 +59,6 @@ class Trainer:
                 for key, val in self._algorithm._schedulers.items():
                     if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         val.step(val_res[key + " loss"])
-                    if isinstance(val, LRWarmDampingScheduler):
-                        val.step(epoch)
                     else:
                         val.step()
 
@@ -116,7 +113,7 @@ class Trainer:
 
     def log_epoch_info(self, epoch: int, train_info: dict[Any], val_info: dict[Any]) -> None:
         log_table = PrettyTable()
-        log_table.title = "Evaluation indicators: " + f"Epoch {epoch + 1}"
+        log_table.title = "Evaluation indicators: " + f"Epoch {epoch}"
         log_table.field_names = ["Indicator name", "Value"]
 
         rows = []
