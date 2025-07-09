@@ -14,7 +14,7 @@ algorithm:
     - [373, 326]
   anchor_scale_threshold: 4
   # loss
-  b_weight : 0.5 # bboxes loss weight
+  b_weight : 0.05 # bboxes loss weight
   o_weight : 1.0  # object loss weight
   c_weight : 0.5  # cls loss weight
   # detection
@@ -37,7 +37,7 @@ scheduler:
   # patience: 5 
   
   type: LRWarnupDecay
-  epochs: [50, 100]
+  epochs: [100, 200]
   scales: [0.1, 0.01]
 
 model:
