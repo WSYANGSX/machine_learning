@@ -35,8 +35,8 @@ def main():
     yolo_v3 = YoloV3(cfg=yolo_v3_cfg, data=data, models={"darknet": darknet})
 
     # Step 3: detect
-    yolo_v3.load("./checkpoints/yolov3/checkpoint_epoch_299.pth")
-    yolo_v3.detect("./data/coco-2017/images/test/000000581823.jpg", default_img_size, 0.5, 0.5)
+    yolo_v3.load("./checkpoints/yolov3/best_model.pth")
+    yolo_v3.detect("./data/coco-2017/images/val/000000575357.jpg", default_img_size, 0.02, 0.5)
 
 
 if __name__ == "__main__":

@@ -7,43 +7,33 @@ import torch
 import torchvision
 import torch.nn as nn
 from torch.utils.data import Dataset
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.models import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.image import resize
-from machine_learning.utils.draw import visualize_img_with_bboxes
-from machine_learning.utils.detection import (
-    couple_bboxes_iou,
-    xywh2xyxy,
-    get_batch_statistics,
-    average_precision_per_cls,
-    pad_to_square,
-    rescale_padded_boxes,
-)
 
 
-class YoloV3(AlgorithmBase):
+class YoloMM(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
         models: Mapping[str, BaseNet],
         data: Mapping[str, Union[Dataset, Any]],
-        name: str | None = "yolo_v3",
+        name: str | None = "yolo_mm",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
-        Implementation of YoloV3 object detection algorithm
+        Implementation of YoloMM object detection algorithm
 
         Args:
             cfg (str, dict): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            models (dict[str, BaseNet]): Models required by the YOLOv3 algorithm, {"darknet": model}.
+            models (dict[str, BaseNet]): Models required by the YOLOMM algorithm, {"net": model}.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
-            name (str): Name of the algorithm. Defaults to "yolo_v3".
+            name (str): Name of the algorithm. Defaults to "yolo_mm".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """

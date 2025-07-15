@@ -9,7 +9,7 @@ from dataclasses import dataclass, MISSING
 import numpy as np
 from torch.utils.data import Dataset
 from machine_learning.utils.transforms import TransformBase
-from machine_learning.utils.dataset import EagerDataset, YoloDataset
+from machine_learning.utils.dataset import ImgEagerDataset, YoloDataset
 from machine_learning.utils.others import print_dict, load_config_from_yaml, print_segmentation, list_from_txt
 
 
@@ -135,8 +135,8 @@ class MinistParser(ParserBase):
         else:
             train_labels, val_labels = None, None
 
-        trian_dataset = EagerDataset(train_data, train_labels, self.transforms, augment=False)
-        val_dataset = EagerDataset(val_data, val_labels, self.transforms, augment=False)
+        trian_dataset = ImgEagerDataset(train_data, train_labels, self.transforms, augment=False)
+        val_dataset = ImgEagerDataset(val_data, val_labels, self.transforms, augment=False)
 
         return {
             "image_shape": metadata["image_shape"],

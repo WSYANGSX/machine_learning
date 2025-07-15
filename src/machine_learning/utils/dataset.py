@@ -101,13 +101,14 @@ class ImgEagerDataset(EagerDataset):
             labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
             tansforms (Compose, BaseTransform, optional): Data converter. Defaults to None.
         """
-        super().__init__()
+        super().__init__(data=imgs, labels=labels, tansform=tansform)
 
-        self.imgs = imgs
-        self.labels = labels
         self.augment = augment
-
         self.transform = tansform
+
+    @property
+    def imgs(self):
+        return self.data
 
     def __len__(self) -> int:
         return len(self.imgs)

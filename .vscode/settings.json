@@ -8,6 +8,7 @@
     "flake8.args": ["--max-line-length=120"],
     "python.terminal.executeInFileDir": true,
     "python.analysis.extraPaths": [
-        "${workspaceFolder}/src"
+        "${workspaceFolder}/src",
+        "/home/yangxf/WorkSpace/ultralytics"
     ],
 }
