@@ -40,7 +40,6 @@ class YoloMM(AlgorithmBase):
         super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
 
         # main parameters of the algorithm
-        self.anchor_nums = self.cfg["algorithm"]["anchor_nums"]
         self.default_img_size = self.cfg["algorithm"].get("default_img_size", None)
 
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]

@@ -1,22 +1,7 @@
 algorithm: 
-  name: "yolo_v3"
-  default_img_size: 416
-  anchor_nums: 3
-  anchors: 
-    - [10, 13]
-    - [16, 30]
-    - [33, 23]
-    - [30, 61]
-    - [62, 45]
-    - [59, 119]
-    - [116, 90]
-    - [156, 198]
-    - [373, 326]
-  anchor_scale_threshold: 4
-  # loss
-  b_weight : 0.05 # bboxes loss weight
-  o_weight : 1.0  # object loss weight
-  c_weight : 0.5  # cls loss weight
+  name: "yolo_mm"
+  default_img_size: 640
+
   # detection
   iou_threshold: 0.5
   conf_threshold: 0.1

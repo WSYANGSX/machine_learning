@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 
 from machine_learning.models import BaseNet
-from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat
 from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH
+from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, Detect
 
 
 class CFuseModule(nn.Module):
@@ -74,8 +74,7 @@ class NblityNet(BaseNet):
         self,
         img_shape: Sequence[int],
         thermal_shape: Sequence[int],
-        num_anchors: int = 3,
-        num_classes: int = 1,
+        nc: int = 1,
     ):
         """multimodal object detection network.
 
@@ -88,12 +87,10 @@ class NblityNet(BaseNet):
         super().__init__()
         self.img_shape = img_shape  # (3, height, width)
         self.thermal_shape = thermal_shape  # (1, height, width)
-        self.num_anchors = num_anchors
-        self.num_classes = num_classes
+        self.nc = nc
 
         self.img_in_channels = self.img_shape[0]
         self.the_in_channels = self.thermal_shape[0]
-        self.out_channels = (5 + self.num_classes) * self.num_anchors
 
         # backbones
         self.img_backbone = nn.ModuleDict(
@@ -153,13 +150,7 @@ class NblityNet(BaseNet):
         )  # small size
 
         # head
-        self.heads = nn.ModuleDict(
-            {
-                "Heads_1": Detect(),
-                "Heads_2": Detect(),
-                "Heads_3": Detect(),
-            }
-        )
+        self.heads = Detect(nc=self.nc, ch=(256, 512, 512))
 
     def forward(self, img: torch.Tensor, thermal: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
@@ -235,7 +226,7 @@ class NblityNet(BaseNet):
 
         # ----- head -----
 
-        return det1, det2, det3
+        return self.heads([det1, det2, det3])
 
     def view_structure(self) -> None:
         from torchinfo import summary
@@ -244,3 +235,8 @@ class NblityNet(BaseNet):
         thermal_input = torch.randn(1, *self.thermal_shape, device=self.device)
 
         summary(self, input_data=[img_input, thermal_input])
+
+
+if __name__ == "__main__":
+    net = NblityNet(img_shape=(3, 640, 640), thermal_shape=(1, 640, 640), nc=80)
+    net.view_structure()
