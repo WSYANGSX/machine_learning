@@ -69,6 +69,12 @@ class ImgTransform(TransformBase):
 
     def _apply_augmentation(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Application Data Augmentation"""
+        _necessary_data_type = ["image"]
+
+        for data_type in _necessary_data_type:
+            if data_type not in data:
+                raise ValueError("Necessary data type {data_type} not in input data.")
+
         transform_args = {"image": data["image"]}
 
         # add parameters
@@ -83,20 +89,15 @@ class ImgTransform(TransformBase):
         if "keypoints" in data and self.aug_cfg.keypoint_params:
             transform_args["keypoints"] = data["keypoints"]
 
+        if self.aug_cfg.additional_targets:
+            for key in self.aug_cfg.additional_targets:
+                if key in data:
+                    transform_args[key] = data[key]
+
         # apply transform
-        transformed = self.augmentation_pipeline(**transform_args)
+        transformed_data = self.augmentation_pipeline(**transform_args)
 
-        data["image"] = transformed["image"]
-        if "bboxes" in transformed:
-            data["bboxes"] = transformed["bboxes"]
-        if "category_ids" in transformed:
-            data["category_ids"] = transformed["category_ids"]
-        if "mask" in transformed:
-            data["mask"] = transformed["mask"]
-        if "keypoints" in transformed:
-            data["keypoints"] = transformed["keypoints"]
-
-        return data
+        return transformed_data
 
     def __call__(self, data: Dict[str, Any]) -> Dict[str, Union[torch.Tensor, np.ndarray]]:
         if self.augmentation_pipeline:

@@ -92,6 +92,7 @@ def visualize_img_with_bboxes(
     bboxes: np.ndarray,
     category_ids: Sequence[int],
     category_id_to_name: Sequence[str] | Mapping[int, str],
+    cmap: str | None = None,
 ) -> None:
     """显示添加边界框后的图像
 
@@ -107,7 +108,7 @@ def visualize_img_with_bboxes(
         img = add_bbox(img, bbox, class_name)
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    plt.imshow(img)
+    plt.imshow(img, cmap)
     plt.show()
 
 
