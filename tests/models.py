@@ -1,7 +1,7 @@
 import cv2
 import albumentations as A
 from machine_learning.utils.transforms import CustomTransform
-from machine_learning.utils.augmentations import DEFAULT_YOLO_AUG
+from machine_learning.utils.aug_cfg import DEFAULT_YOLO_AUG
 
 
 if __name__ == "__main__":

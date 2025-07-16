@@ -2,7 +2,7 @@ import cv2
 from PIL import Image
 import albumentations as A
 import numpy as np
-from machine_learning.utils.augmentations import PadShortEdge
+from machine_learning.utils.aug_cfg import PadShortEdge
 
 # Prepare data with multiple targets
 img_path = "./data/coco-2017/images/train/000000102862.jpg"

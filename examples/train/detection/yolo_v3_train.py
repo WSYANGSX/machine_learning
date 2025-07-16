@@ -2,20 +2,19 @@ from machine_learning.models import DarkNet53
 from machine_learning.algorithms import YoloV3
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.transforms import ImgTransform
-from machine_learning.utils.augmentations import DEFAULT_YOLO_AUG
-from machine_learning.utils.data_parser import YoloParserCfg, YoloParser
+from machine_learning.utils.aug_cfg import DEFAULT_YOLO_AUG
+from machine_learning.data.data_parser import YoloParserCfg, YoloParser
 from machine_learning.utils.others import load_config_from_yaml
 
 
 def main():
     # Step 1: Parse the data
     tfs = ImgTransform(
-        augmentation=DEFAULT_YOLO_AUG["transforms"],
-        bbox_params=DEFAULT_YOLO_AUG["bbox_params"],
-        to_tensor=True,
+        aug_cfg=DEFAULT_YOLO_AUG,
         normalize=True,
         mean=[0, 0, 0],
         std=[1, 1, 1],
+        to_tensor=True,
     )
 
     parser_cfg = YoloParserCfg(dataset_dir="./data/coco-2017", labels=True, tfs=tfs)
