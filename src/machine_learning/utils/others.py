@@ -37,7 +37,7 @@ def load_config_from_yaml(file_path: FilePath) -> dict:
     return config
 
 
-def print_segmentation() -> None:
+def show_seg() -> None:
     print("=" * 90)
 
 
