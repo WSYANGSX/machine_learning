@@ -1,8 +1,8 @@
 from machine_learning.algorithms import AutoEncoder
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.models.ae import Encoder, Decoder
+from machine_learning.networks.ae_nets import Encoder, Decoder
 from machine_learning.utils.transforms import ImgTransform
-from machine_learning.data.data_parser import ParserCfg, MinistParser
+from machine_learning.data.dataset_parsers import ParserCfg, MinistParser
 
 
 def main():

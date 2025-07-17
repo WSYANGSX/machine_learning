@@ -3,12 +3,12 @@ from typing import Sequence
 import torch
 import torch.nn as nn
 
-from machine_learning.models.base import BaseNet, AttentionBlock
+from machine_learning.models import BaseNet, AttentionBlock
 from machine_learning.utils.layers import cal_conv_output_size, cal_convtrans_output_size
 
 
 # 时间步嵌入层
-class TimestepEmbedding(nn.Module):
+class TimestepEmbeddingBlock(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = dim

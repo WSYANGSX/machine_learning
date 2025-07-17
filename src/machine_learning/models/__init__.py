@@ -1,8 +1,9 @@
-from .base import BaseNet, AttentionBlock, ResidualBlock1D, ResidualBlock2D
-from .unet import UNet
-from .darknet import DarkNet53
-from .ae import Encoder, Decoder
-from .gan import Generator, Discriminator
+from ..networks.base import BaseNet
+from .blocks import AttentionBlock, ResidualBlock1D, ResidualBlock2D
+from ..networks.diffusion.unet import UNet
+from ..networks.yolo.darknet import DarkNet53
+from ..networks.ae_nets import Encoder, Decoder
+from ..networks.gan_nets import Generator, Discriminator
 
 __all__ = [
     "BaseNet",

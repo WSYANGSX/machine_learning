@@ -1,7 +1,7 @@
 from torchvision import transforms
 
 from machine_learning.algorithms import VQ_VAE
-from machine_learning.models.vq_vae import Encoder, Decoder
+from machine_learning.networks.vq_vae.vq_vae_nets import Encoder, Decoder
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.data_parser import ParserCfg, ParserFactory
 

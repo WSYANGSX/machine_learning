@@ -1,47 +1,8 @@
-from abc import ABC, abstractmethod
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class BaseNet(nn.Module, ABC):
-    def __init__(self):
-        super().__init__()
-
-    @property
-    def device(self) -> torch.device:
-        return next(self.parameters()).device
-
-    def _initialize_weights(self):
-        print(f"[INFO] Initializing weights of {self.__class__.__name__} with Kaiming normal...")
-
-        for module in self.modules():
-            if isinstance(
-                module,
-                (
-                    nn.Conv1d,
-                    nn.Conv2d,
-                    nn.Conv3d,
-                    nn.ConvTranspose1d,
-                    nn.ConvTranspose2d,
-                    nn.ConvTranspose3d,
-                    nn.Linear,
-                ),
-            ):
-                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-                nn.init.constant_(module.weight, 1)
-                nn.init.constant_(module.bias, 0)
-
-    @abstractmethod
-    def view_structure(self):
-        pass
-
-
-# 注意力模块
 class AttentionBlock(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
@@ -66,7 +27,6 @@ class AttentionBlock(nn.Module):
         return x + self.proj_out(h)  # 在数据传播过程中保留原始信息并增强全局依赖
 
 
-# 残差模块
 class ResidualBlock1D(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.1):
         super().__init__()
@@ -109,3 +69,26 @@ class ResidualBlock2D(nn.Module):
 
     def forward(self, x):
         return self.shortcut(x) + self._block(x)
+
+
+class ConvBNLeakyBlock(nn.Module):
+    """Conv2D+BN+LeakyReLU"""
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.activation = nn.LeakyReLU(0.1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.activation(self.bn(self.conv(x)))
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv1 = ConvBNLeakyBlock(channels, channels, 1)
+        self.conv2 = ConvBNLeakyBlock(channels, channels, 3, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv2(self.conv1(x)) + x
