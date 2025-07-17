@@ -3,7 +3,7 @@ from machine_learning.algorithms import YoloV3
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.transforms import ImgTransform
 from machine_learning.utils.aug_cfg import DEFAULT_YOLO_AUG
-from machine_learning.data.dataset_parsers import YoloParserCfg, YoloParser
+from machine_learning.data.parsers import YoloParserCfg, YoloParser
 from machine_learning.utils.others import load_config_from_yaml
 
 
