@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.models import BaseNet
+from machine_learning.modules import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.others import print_dict, print_segmentation
 

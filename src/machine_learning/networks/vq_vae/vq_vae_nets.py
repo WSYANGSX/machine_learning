@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from machine_learning.models import BaseNet
+from machine_learning.modules import BaseNet
 from machine_learning.utils.layers import cal_conv_output_size, cal_convtrans_output_size
 
 

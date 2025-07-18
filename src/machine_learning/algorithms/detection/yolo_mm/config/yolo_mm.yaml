@@ -1,6 +1,11 @@
 algorithm: 
   name: "yolo_mm"
-  default_img_size: 640
+  img_size: 640
+
+  # loss weight
+  box: 7.5 # (float) box loss gain
+  cls: 0.5 # (float) cls loss gain (scale with pixels)
+  dfl: 1.5 # (float) dfl loss gain
 
   # detection
   iou_threshold: 0.5

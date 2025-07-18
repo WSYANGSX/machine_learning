@@ -1,4 +1,4 @@
-from machine_learning.models import DarkNet53
+from machine_learning.modules import DarkNet53
 from machine_learning.algorithms import YoloV3
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.transforms import ImgTransform

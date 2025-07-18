@@ -1,7 +1,7 @@
 import numpy as np
 import torch.nn as nn
 
-from machine_learning.models import BaseNet
+from machine_learning.networks import BaseNet
 
 
 class Generator(BaseNet):

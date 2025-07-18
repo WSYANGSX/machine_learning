@@ -1,17 +1,13 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any, Iterable, Union
+from typing import Literal, Mapping, Any, Union
 
 import cv2
-import time
 import torch
-import torchvision
-import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.transforms import Compose, ToTensor, Normalize
 
-from machine_learning.models import BaseNet
+from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
 
@@ -40,20 +36,15 @@ class YoloMM(AlgorithmBase):
         super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
 
         # main parameters of the algorithm
-        self.default_img_size = self.cfg["algorithm"].get("default_img_size", None)
+        self.img_size = self.cfg["algorithm"].get("img_size", None)
 
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
         self.conf_threshold = self.cfg["algorithm"]["conf_threshold"]
         self.nms_threshold = self.cfg["algorithm"]["nms_threshold"]
-        self.anchor_scale_threshold = self.cfg["algorithm"]["anchor_scale_threshold"]
 
-        self.b_weight = self.cfg["algorithm"].get("b_weight", 0.05)
-        self.o_weight = self.cfg["algorithm"].get("o_weight", 1.0)
-        self.c_weight = self.cfg["algorithm"].get("c_weight", 0.5)
-
-        if "anchors" not in self.cfg["algorithm"]:
-            raise ValueError("Configuration must contain 'anchors' field in 'algorithm' section.")
-        self.anchors = torch.tensor(self.cfg["algorithm"]["anchors"], device=self.device).view(3, 3, 2)
+        self.bw = self.cfg["algorithm"].get("box", 0.05)
+        self.ow = self.cfg["algorithm"].get("cls", 1.0)
+        self.cw = self.cfg["algorithm"].get("dfl", 0.5)
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
@@ -117,18 +108,18 @@ class YoloMM(AlgorithmBase):
         total_loss = 0.0
         scaler = GradScaler()
 
-        for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
+        for batch_idx, (imgs, thermals, iid_cls_bboxes) in enumerate(self.train_loader):
             imgs = imgs.to(self.device, non_blocking=True)
+            thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
-            img_size = imgs.size(2)
 
             self._optimizers["yolo"].zero_grad()
 
             with autocast(
                 device_type=str(self.device)
             ):  # Ensure that the autocast scope correctly covers the forward computation
-                fmap1, fmap2, fmap3 = self.models["darknet"](imgs)
-                loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets, img_size=img_size)
+                fmap1, fmap2, fmap3 = self.models["nblitynet"](imgs)
+                loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets)
 
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
@@ -306,53 +297,6 @@ class YoloMM(AlgorithmBase):
 
         return fmap.view(B, -1, self.cfg["data"]["class_nums"] + 5)
 
-    def criterion(self, fmaps: list[torch.Tensor], targets: torch.Tensor, img_size: int) -> tuple:
-        # 初始化损失
-        cls_loss = torch.zeros(1, device=self.device)
-        box_loss = torch.zeros(1, device=self.device)
-        obj_loss = torch.zeros(1, device=self.device)
-
-        # 使用配置参数
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.0], device=self.device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.0], device=self.device))
-
-        for i, fmap in enumerate(fmaps):
-            # fmap [B, C, H, W] -> [B, A, H, W, 85]
-            B, _, H, W = fmap.shape
-            fmap = fmap.view(B, self.anchor_nums, -1, H, W).permute(0, 1, 3, 4, 2).contiguous()
-            stride = img_size // H
-
-            norm_anchors = self.anchors[i] / stride
-            tcls, tboxes, indices, norm_anchors = self.prepare_target(targets, H, W, norm_anchors)
-            tobj = torch.zeros_like(fmap[..., 0])  # target obj
-
-            if tboxes.size(0) > 0:
-                ps = fmap[indices]
-                pxy = ps[:, :2].sigmoid()
-                pwh = torch.exp(ps[:, 2:4].clamp(-10, 10)) * norm_anchors
-                pboxes = torch.cat([pxy, pwh], dim=1)
-
-                iou = couple_bboxes_iou(pboxes, tboxes, bbox_format="coco", iou_type="ciou")
-                box_loss += (1.0 - iou).mean()  # CIoU loss
-
-                # 使用IOU作为软标签（重要改进！）
-                tobj[indices] = iou.detach().clamp(0).type(tobj.dtype)  # iou作为软标签
-
-                # 类别损失（带标签平滑）
-                label_smoothing = self.cfg.get("label_smoothing", 0.0)
-                if fmap.size(-1) > 5:
-                    pcls = ps[:, 5:]
-                    cls = torch.full_like(pcls, label_smoothing / (self.cfg["data"]["class_nums"] - 1))
-                    cls.scatter_(1, tcls.unsqueeze(1), 1.0 - label_smoothing)
-                    cls_loss += BCEcls(pcls, cls)
-
-            obj_loss += BCEobj(fmap[..., 4], tobj)
-
-        # 加权求和
-        loss = self.b_weight * box_loss + self.o_weight * obj_loss + self.c_weight * cls_loss
-
-        return loss, [box_loss.detach(), obj_loss.detach(), cls_loss.detach()]
-
     @torch.no_grad()
     def prepare_target(self, targets: torch.Tensor, fh: int, fw: int, norm_anchors: torch.Tensor) -> tuple:
         """
@@ -400,98 +344,3 @@ class YoloMM(AlgorithmBase):
         norm_anchors = norm_anchors[anchor_ids]
 
         return tcls, tbboxes, indices, norm_anchors
-
-
-"""
-Helper function
-"""
-
-
-@torch.no_grad()
-def non_max_suppression(
-    decodes: list[torch.Tensor],
-    conf_threshold: float = 0.5,
-    nms_threshold: float = 0.5,
-    classes_filter: Iterable[int] = None,
-    max_wh: int = 4096,
-    max_det: int = 300,
-    max_nms: int = 30000,
-    time_limit: float = 1.0,
-    device: str | torch.device = None,
-) -> list[torch.Tensor]:
-    """Performs Non-Maximum Suppression (NMS) on decodes output from fmap decoder.
-
-    Args:
-        decode_ls (list[torch.Tensor]): decode list contians decodes from fmap decoder. [(xywh, obj, cls), ...]
-        stride_ls (list[int]): stride list contians strides of each decode to img_size in decode list.[(stride1, ...]
-        conf_threshold (float, optional): This threshold is used to filter out the prediction boxes whose confidence
-        scores are lower than this threshold. Defaults to 0.25.
-        nms_threshold (float, optional): This threshold is used in torchvision.ops.nms() todetermine which boxes overlap
-        and should be merged or discarded. Defaults to 0.45.
-        classes_filter (Iterable[int], optional): class filter. Defaults to None.
-        max_wh (int, optional): maximum box width and height used to Offset and separate the bounding boxes by classes.
-        Defaults to 4096.
-        max_det (int, optional): maximum number of detections per image. Defaults to 300.
-        max_nms (int, optional): maximum number of boxes into torchvision.ops.nms(). Defaults to 30000.
-        time_limit (float, optional): seconds to quit after. Defaults to 1.0.
-
-    Returns:
-        torch.Tensor: detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
-    """
-    detections = torch.cat(decodes, dim=1)  # detections [B, 3*(H1*W1+H2*W2+H3*W3), 85]
-    class_nums = detections.shape[2] - 5  # number of classes
-    multi_label = class_nums > 1  # multiple labels per box (adds 0.5ms/img)
-
-    t = time.time()
-    output = [torch.zeros((0, 6), device=device)] * detections.shape[0]
-
-    for img_id, detection in enumerate(detections):  # img_id, detection
-        # Apply constraints
-        # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        detection = detection[detection[..., 4] > conf_threshold]  # detections [k, 85]
-
-        # If none remain process next image
-        if not detection.shape[0]:
-            continue
-
-        # Compute conf
-        detection[:, 5:] *= detection[:, 4:5]  # conf = obj_conf * cls_conf
-
-        # Box (center x, center y, width, height) to (x1, y1, x2, y2)
-        box = xywh2xyxy(detection[:, :4])
-
-        # Detections matrix nx6 (x1, y1, x2, y2, conf, cls)
-        if multi_label:
-            i, j = (detection[:, 5:] > conf_threshold).nonzero(as_tuple=False).T  # i row indices, j col indices
-            detection = torch.cat((box[i], detection[i, j + 5, None], j[:, None].float()), 1)
-        else:  # best class only
-            conf, j = detection[:, 5:].max(1, keepdim=True)
-            detection = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_threshold]
-
-        # Filter by class
-        if classes_filter is not None:
-            detection = detection[(detection[:, 5:6] == torch.tensor(classes_filter, device=detection.device)).any(1)]
-
-        # Check shape
-        num_boxes = detection.shape[0]  # number of boxes
-        if not num_boxes:  # no boxes
-            continue
-        elif num_boxes > max_nms:  # excess boxes
-            # sort by confidence
-            detection = detection[detection[:, 4].argsort(descending=True)[:max_nms]]
-
-        # Batched NMS
-        class_offset = detection[:, 5:6] * max_wh  # classes
-        # boxes (offset by class), scores
-        boxes, scores = detection[:, :4] + class_offset, detection[:, 4]
-        j = torchvision.ops.nms(boxes, scores, nms_threshold)  # NMS
-        if j.shape[0] > max_det:  # limit detections
-            j = j[:max_det]
-
-        output[img_id] = detection[j]
-
-        if (time.time() - t) > time_limit:
-            print(f"WARNING: NMS time limit {time_limit}s exceeded")
-            break  # time limit exceeded
-
-    return output

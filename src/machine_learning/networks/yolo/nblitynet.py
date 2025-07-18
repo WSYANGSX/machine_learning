@@ -1,137 +1,14 @@
 from __future__ import annotations
-from typing import List, Tuple, Sequence
+from typing import Sequence
 
-import math
 import torch
 import torch.nn as nn
 
-from machine_learning.models import BaseNet
-from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH
+from machine_learning.networks import BaseNet
+from machine_learning.modules.head import DetectV8
+from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel
+
 from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat
-
-
-class CFuseModule(nn.Module):
-    def __init__(self, c_in):
-        super().__init__()
-        self.conv_out = Conv(2 * c_in, c_in, 1)
-
-    def forward(self, x):
-        x_cat = torch.cat([x[0], x[1]], dim=1)
-        out = self.conv_out(x_cat)
-        return out
-
-
-class CHyperACE(nn.Module):
-    def __init__(
-        self,
-        c1,
-        c2,
-        n=1,
-        num_hyperedges=8,
-        dsc3k=True,
-        shortcut=False,
-        e1=0.5,
-        e2=1,
-        context="both",
-    ):
-        super().__init__()
-        self.c = int(c2 * e1)
-        self.cv1 = Conv(c1, 3 * self.c, 1, 1)
-        self.cv2 = Conv((4 + n) * self.c, c2, 1)
-        self.m = nn.ModuleList(
-            DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
-            for _ in range(n)
-        )
-        self.fuse = CFuseModule(c1)
-        self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
-        self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
-
-    def forward(self, X):
-        x = self.fuse(X)
-        y = list(self.cv1(x).chunk(3, 1))
-        out1 = self.branch1(y[1])
-        out2 = self.branch2(y[1])
-        y.extend(m(y[-1]) for m in self.m)
-        y[1] = out1
-        y.append(out2)
-
-        return self.cv2(torch.cat(y, 1))
-
-
-class MMFullPAD_Tunnel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.gate1 = nn.Parameter(torch.tensor(0.0))
-        self.gate2 = nn.Parameter(torch.tensor(0.0))
-        self.gate3 = nn.Parameter(torch.tensor(0.0))
-
-    def forward(self, x):
-        out = x[0] + self.gate1 * x[1] + self.gate2 * x[2] + self.gate3 * x[3]
-        return out
-
-
-class DetectV8(nn.Module):
-    """YOLOv8 Detect Head for object detection."""
-
-    def __init__(
-        self,
-        nc: int = 80,  # number of classes
-        ch: Tuple[int, ...] = (256, 512, 512),  # input channels for each scale
-        reg_max: int = 16,  # DFL channels
-        stride: Tuple[int, ...] = (8, 16, 32),  # feature map strides
-    ):
-        super().__init__()
-        assert len(ch) == len(stride), "ch和stride长度必须一致"
-
-        self.nc = nc  # number of classes
-        self.reg_max = reg_max  # DFL参数
-        self.no = nc + reg_max * 4  # 每个anchor的输出通道数 (cls + reg)
-        self.stride = stride  # 各尺度stride
-
-        # 中间层通道数计算
-        dfl_hidden_ch = max(16, ch[0] // 4, self.reg_max * 4)  # DFL分支隐藏层通道数
-        cls_hidden_ch = max(ch[0], self.nc)  # 分类分支隐藏层通道数
-
-        # 回归分支 (DFL)
-        self.cv1 = nn.ModuleList(
-            [
-                nn.Sequential(
-                    Conv(x, dfl_hidden_ch, 3),
-                    Conv(dfl_hidden_ch, dfl_hidden_ch, 3),
-                    nn.Conv2d(dfl_hidden_ch, 4 * self.reg_max, 1),
-                )
-                for x in ch
-            ]
-        )
-
-        # 分类分支
-        self.cv2 = nn.ModuleList(
-            [
-                nn.Sequential(
-                    Conv(x, cls_hidden_ch, 3),
-                    Conv(cls_hidden_ch, cls_hidden_ch, 3),
-                    nn.Conv2d(cls_hidden_ch, self.nc, 1),
-                )
-                for x in ch
-            ]
-        )
-
-        self.bias_init()
-
-    def bias_init(self):
-        """Initialize biases for classification branch."""
-        for cv2 in self.cv2:
-            m = cv2[-1]  # 最后一个卷积层
-            if isinstance(m, nn.Conv2d) and m.bias is not None:
-                b = m.bias.data.view(-1)  # 展平便于索引
-                # 目标检测常用初始化技巧
-                b[:1] += math.log(5 / self.nc / (640 / self.stride[0]))  # obj
-                b[1:] += math.log(0.6 / (self.nc - 0.99999))  # cls
-                m.bias = torch.nn.Parameter(b.view_as(m.bias.data), requires_grad=True)
-
-    def forward(self, x: List[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
-        """Forward pass through detection head."""
-        return tuple(torch.cat([self.cv1[i](xi), self.cv2[i](xi)], 1) for i, xi in enumerate(x))
 
 
 class NblityNet(BaseNet):
@@ -301,7 +178,6 @@ class NblityNet(BaseNet):
 
         summary(self, input_data=[img_input, thermal_input])
 
-
-if __name__ == "__main__":
-    net = NblityNet(img_shape=(3, 640, 640), thermal_shape=(1, 640, 640), nc=80)
-    net.view_structure()
+    def _initialize_weights(self):
+        super()._initialize_weights()
+        self.heads.bias_init()

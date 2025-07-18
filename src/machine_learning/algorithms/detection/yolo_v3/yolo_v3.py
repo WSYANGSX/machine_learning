@@ -11,7 +11,7 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
-from machine_learning.models import BaseNet
+from machine_learning.modules import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.image import resize
