@@ -30,7 +30,9 @@ if __name__ == "__main__":
 
     transform = ImgTransform(DEFAULT_YOLOMM_AUG, normalize=True, to_tensor=False)
 
-    transformed = transform({"image": image, "thermal": thermal, "bboxes": bboxes, "category_ids": category_ids})
+    transformed = transform(
+        {"image": image, "thermal": thermal, "bboxes": bboxes, "category_ids": category_ids}, augment=False
+    )
     transformed_img = transformed["image"]
     transformed_thermal = transformed["thermal"] * 255
     transformed_bboxes = transformed["bboxes"]

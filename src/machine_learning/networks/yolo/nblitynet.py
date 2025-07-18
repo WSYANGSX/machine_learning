@@ -1,12 +1,13 @@
 from __future__ import annotations
-from typing import Sequence
+from typing import List, Tuple, Sequence
 
+import math
 import torch
 import torch.nn as nn
 
 from machine_learning.models import BaseNet
 from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH
-from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, Detect
+from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat
 
 
 class CFuseModule(nn.Module):
@@ -67,6 +68,70 @@ class MMFullPAD_Tunnel(nn.Module):
     def forward(self, x):
         out = x[0] + self.gate1 * x[1] + self.gate2 * x[2] + self.gate3 * x[3]
         return out
+
+
+class DetectV8(nn.Module):
+    """YOLOv8 Detect Head for object detection."""
+
+    def __init__(
+        self,
+        nc: int = 80,  # number of classes
+        ch: Tuple[int, ...] = (256, 512, 512),  # input channels for each scale
+        reg_max: int = 16,  # DFL channels
+        stride: Tuple[int, ...] = (8, 16, 32),  # feature map strides
+    ):
+        super().__init__()
+        assert len(ch) == len(stride), "ch和stride长度必须一致"
+
+        self.nc = nc  # number of classes
+        self.reg_max = reg_max  # DFL参数
+        self.no = nc + reg_max * 4  # 每个anchor的输出通道数 (cls + reg)
+        self.stride = stride  # 各尺度stride
+
+        # 中间层通道数计算
+        dfl_hidden_ch = max(16, ch[0] // 4, self.reg_max * 4)  # DFL分支隐藏层通道数
+        cls_hidden_ch = max(ch[0], self.nc)  # 分类分支隐藏层通道数
+
+        # 回归分支 (DFL)
+        self.cv1 = nn.ModuleList(
+            [
+                nn.Sequential(
+                    Conv(x, dfl_hidden_ch, 3),
+                    Conv(dfl_hidden_ch, dfl_hidden_ch, 3),
+                    nn.Conv2d(dfl_hidden_ch, 4 * self.reg_max, 1),
+                )
+                for x in ch
+            ]
+        )
+
+        # 分类分支
+        self.cv2 = nn.ModuleList(
+            [
+                nn.Sequential(
+                    Conv(x, cls_hidden_ch, 3),
+                    Conv(cls_hidden_ch, cls_hidden_ch, 3),
+                    nn.Conv2d(cls_hidden_ch, self.nc, 1),
+                )
+                for x in ch
+            ]
+        )
+
+        self.bias_init()
+
+    def bias_init(self):
+        """Initialize biases for classification branch."""
+        for cv2 in self.cv2:
+            m = cv2[-1]  # 最后一个卷积层
+            if isinstance(m, nn.Conv2d) and m.bias is not None:
+                b = m.bias.data.view(-1)  # 展平便于索引
+                # 目标检测常用初始化技巧
+                b[:1] += math.log(5 / self.nc / (640 / self.stride[0]))  # obj
+                b[1:] += math.log(0.6 / (self.nc - 0.99999))  # cls
+                m.bias = torch.nn.Parameter(b.view_as(m.bias.data), requires_grad=True)
+
+    def forward(self, x: List[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
+        """Forward pass through detection head."""
+        return tuple(torch.cat([self.cv1[i](xi), self.cv2[i](xi)], 1) for i, xi in enumerate(x))
 
 
 class NblityNet(BaseNet):
@@ -150,7 +215,7 @@ class NblityNet(BaseNet):
         )  # small size
 
         # head
-        self.heads = Detect(nc=self.nc, ch=(256, 512, 512))
+        self.heads = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
     def forward(self, img: torch.Tensor, thermal: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone

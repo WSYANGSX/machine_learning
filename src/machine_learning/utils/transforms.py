@@ -49,17 +49,31 @@ class ImgTransform(TransformBase):
 
         # Build a conversion pipeline
         self.augmentation_pipeline = self._build_augmentation_pipeline(self.aug_cfg.augs)
+        self.postprocess_pipeline = self._build_postprocess_pipeline()
 
     def _build_augmentation_pipeline(self, augmentation: list[A.BasicTransform]) -> Optional[A.Compose]:
         """Building the data augmentation pipeline"""
-        if self.normalize:
-            augmentation.append(A.Normalize(self.mean, self.std))
-
-        if self.to_tensor:
-            augmentation.append(A.pytorch.ToTensorV2())
 
         return A.Compose(
             transforms=augmentation,
+            bbox_params=self.aug_cfg.bbox_params,
+            keypoint_params=self.aug_cfg.keypoint_params,
+            additional_targets=self.aug_cfg.additional_targets,
+            p=self.aug_cfg.probility,
+            seed=self.aug_cfg.seed,
+        )
+
+    def _build_postprocess_pipeline(self) -> Dict[str, Any]:
+        postprocess = []
+
+        if self.normalize:
+            postprocess.append(A.Normalize(self.mean, self.std))
+
+        if self.to_tensor:
+            postprocess.append(A.pytorch.ToTensorV2())
+
+        return A.Compose(
+            transforms=postprocess,
             bbox_params=self.aug_cfg.bbox_params,
             keypoint_params=self.aug_cfg.keypoint_params,
             additional_targets=self.aug_cfg.additional_targets,
@@ -99,8 +113,10 @@ class ImgTransform(TransformBase):
 
         return transformed_data
 
-    def __call__(self, data: Dict[str, Any]) -> Dict[str, Union[torch.Tensor, np.ndarray]]:
-        if self.augmentation_pipeline:
+    def __call__(self, data: Dict[str, Any], augment: bool = True) -> Dict[str, Union[torch.Tensor, np.ndarray]]:
+        if augment:
             data = self._apply_augmentation(data)
+
+        data = self.postprocess_pipeline(**data)
 
         return data
