@@ -1,8 +1,8 @@
 from __future__ import annotations
 from typing import Literal, Mapping, Any, Union
 
-import cv2
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
@@ -10,9 +10,12 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
+from machine_learning.modules.blocks import DFL
+from machine_learning.utils.ops import empty_like
+from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloMM(AlgorithmBase):
+class YoloVMM(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
@@ -41,20 +44,33 @@ class YoloMM(AlgorithmBase):
         self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
         self.conf_threshold = self.cfg["algorithm"]["conf_threshold"]
         self.nms_threshold = self.cfg["algorithm"]["nms_threshold"]
+        self.reg_max = self.cfg["algorithm"]["reg_max"]
+        self.label_smoothing_scale = self.cfg["algorithm"]["label_smoothing_scale"]
+        self.nc = self._models["nblitynet"].nc
+        self.no = self.nc + self.reg_max * 4
 
-        self.bw = self.cfg["algorithm"].get("box", 0.05)
-        self.ow = self.cfg["algorithm"].get("cls", 1.0)
-        self.cw = self.cfg["algorithm"].get("dfl", 0.5)
+        self.topk = self.cfg["algorithm"]["topk"]
+        self.alpha = self.cfg["algorithm"]["alpha"]
+        self.beta = self.cfg["algorithm"]["beta"]
+
+        self.box_weight = self.cfg["algorithm"].get("box", 0.05)
+        self.cls_weight = self.cfg["algorithm"].get("cls", 1.0)
+        self.dfl_weight = self.cfg["algorithm"].get("dfl", 0.5)
+        self.use_dfl = self.reg_max > 1
+        self.dfl = DFL(self.reg_max) if self.use_dfl else nn.Identity()
+        self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
+        self.bbox_loss = BboxLoss(self.reg_max).to(device)
+        self.proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
 
-        self.params = self.models["darknet"].parameters()
+        self.params = self.models["nblitynet"].parameters()
 
         if opt_cfg["type"] == "Adam":
             self._optimizers.update(
                 {
-                    "yolo": torch.optim.Adam(
+                    "yolo_mm": torch.optim.Adam(
                         params=self.params,
                         lr=opt_cfg["learning_rate"],
                         betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
@@ -72,8 +88,8 @@ class YoloMM(AlgorithmBase):
         if sch_config.get("type") == "ReduceLROnPlateau":
             self._schedulers.update(
                 {
-                    "yolo": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self._optimizers["yolo"],
+                    "yolo_mm": torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        self._optimizers["yolo_mm"],
                         mode="min",
                         factor=sch_config.get("factor", 0.1),
                         patience=sch_config.get("patience", 10),
@@ -81,7 +97,7 @@ class YoloMM(AlgorithmBase):
                 }
             )
 
-        if sch_config.get("type") == "LRWarnupDecay":
+        if sch_config.get("type") == "LRWarmupDecay":
 
             def make_warmup_fn(warmup_epoch=15, decay_epochs=sch_config["epochs"], decay_scales=sch_config["scales"]):
                 def fn(current_epoch):
@@ -96,7 +112,7 @@ class YoloMM(AlgorithmBase):
                 return fn
 
             self._schedulers.update(
-                {"yolo": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo"], lr_lambda=make_warmup_fn())}
+                {"yolo_mm": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo_mm"], lr_lambda=make_warmup_fn())}
             )
 
         else:
@@ -113,114 +129,37 @@ class YoloMM(AlgorithmBase):
             thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
-            self._optimizers["yolo"].zero_grad()
+            self._optimizers["yolo_mm"].zero_grad()
 
             with autocast(
                 device_type=str(self.device)
             ):  # Ensure that the autocast scope correctly covers the forward computation
-                fmap1, fmap2, fmap3 = self.models["nblitynet"](imgs)
-                loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets)
+                pred1, pred2, pred3 = self.models["nblitynet"](imgs, thermals)
+                loss, loss_components = self.criterion(
+                    preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
+                )
 
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
-            scaler.step(self._optimizers["yolo"])
+            scaler.step(self._optimizers["yolo_mm"])
             scaler.update()
 
             total_loss += loss.item()
 
             batches = epoch * len(self.train_loader) + batch_idx
             if batch_idx % log_interval == 0:
-                writer.add_scalar("iou loss/train_batch", loss_components[0].item(), batches)  # IOU loss
-                writer.add_scalar("object loss/train_batch", loss_components[1].item(), batches)  # batch loss
-                writer.add_scalar("class loss/train_batch", loss_components[2].item(), batches)  # batch loss
-                writer.add_scalar("loss/train_batch", loss.item(), batches)  # batch loss
+                writer.add_scalar("box_loss/train_batch", loss_components["box_loss"], batches)
+                writer.add_scalar("cls_loss/train_batch", loss_components["cls_loss"], batches)
+                writer.add_scalar("dfl_loss/train_batch", loss_components["dfl_loss"], batches)
+                writer.add_scalar("total_loss/train_batch", loss_components["total_loss"], batches)
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo loss": avg_loss}
+        return {"yolo_mm loss": avg_loss}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         self.set_eval()
-
-        total_loss, total_iou_loss, total_obj_loss, total_cls_loss = 0.0, 0.0, 0.0, 0.0
-
-        labels = []
-        sample_metrics = []
-
-        for imgs, iid_cls_bboxes in self.val_loader:
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
-            labels += targets[:, 1].tolist()
-
-            fmap1, fmap2, fmap3 = self.models["darknet"](imgs)
-
-            # loss
-            loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets, img_size=imgs.size(2))
-            total_loss += loss.item()
-            total_iou_loss += loss_components[0].item()
-            total_obj_loss += loss_components[1].item()
-            total_cls_loss += loss_components[2].item()
-
-            # metrics
-            decodes = [
-                self.fmap_decode(fmap, self.anchors[i], imgs.size(2)) for i, fmap in enumerate([fmap1, fmap2, fmap3])
-            ]
-            detections = non_max_suppression(
-                decodes=decodes,
-                conf_threshold=self.conf_threshold,
-                nms_threshold=self.nms_threshold,
-                device=self.device,
-            )
-            targets[:, 2:] = xywh2xyxy(targets[:, 2:])
-            targets[:, 2:] *= imgs.size(2)
-
-            sample_metrics += get_batch_statistics(
-                detections, targets, iou_threshold=self.iou_threshold
-            )  # [[true_positives, pred_scores, pred_clses], ...]
-
-        avg_loss = total_loss / len(self.val_loader)
-        avg_iou_loss = total_iou_loss / len(self.val_loader)
-        avg_obj_loss = total_obj_loss / len(self.val_loader)
-        avg_cls_loss = total_cls_loss / len(self.val_loader)
-
-        if len(sample_metrics) == 0:  # No detections over whole validation set.
-            print("---- No detections over whole validation set ----")
-            return {
-                "yolo loss": avg_loss,
-                "save metric": avg_loss,
-                "iou loss": avg_iou_loss,
-                "object loss": avg_obj_loss,
-                "class loss": avg_cls_loss,
-                "mAP": 0.0,
-            }
-
-        # Concatenate sample statistics
-        true_positives, pred_scores, pred_labels = [torch.cat(x, 0) for x in list(zip(*sample_metrics))]
-        metrics_output = average_precision_per_cls(
-            true_positives.cpu().numpy(), pred_scores.cpu().numpy(), pred_labels.cpu().numpy(), labels
-        )
-
-        result = {
-            "yolo loss": avg_loss,
-            "save metric": avg_loss,
-            "iou loss": avg_iou_loss,
-            "object loss": avg_obj_loss,
-            "class loss": avg_cls_loss,
-        }
-
-        if metrics_output is not None:
-            precision, recall, AP, f1, ap_class = metrics_output
-            result.update(
-                {
-                    "precision": precision.mean(),
-                    "recall": recall.mean(),
-                    "f1": f1.mean(),
-                    "mAP": AP.mean(),
-                }
-            )
-
-        return result
 
     def eval(self) -> None:
         raise NotImplementedError(
@@ -228,119 +167,153 @@ class YoloMM(AlgorithmBase):
             + "please use detect method to detect objects in an image."
         )
 
-    @torch.no_grad()
-    def detect(self, img_path: FilePath, img_size: int, conf_threshold, nms_threshold) -> None:
-        # read image
-        img = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
-        origin_img_shape = img.shape
+    def criterion(self, preds: list[torch.Tensor], targets: torch.Tensor, img_size: int):
+        cls_loss = torch.zeros(1, device=self.device)
+        box_loss = torch.zeros(1, device=self.device)
+        dfl_loss = torch.zeros(1, device=self.device)
 
-        # scale to square
-        pad_img = pad_to_square(img=img, pad_values=0.1)
+        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
+        pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
+            (self.reg_max * 4, self.nc), 1
+        )  # [bs, no, h1*w1+h2*w2+h3*w3]
 
-        # to tensor / normalize
-        tfs = Compose([ToTensor(), Normalize(mean=[0.471, 0.448, 0.408], std=[0.234, 0.239, 0.242])])
-        pad_img = tfs(pad_img)
-        pad_img = resize(pad_img, size=img_size).unsqueeze(0).to(self.device)
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
 
-        # input image to model
-        fmap1, fmap2, fmap3 = self.models["darknet"](pad_img)
+        bs = pred_scores.shape[0]
+        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
 
-        # decode
-        decodes = [
-            self.fmap_decode(fmap, self.anchors[i], pad_img.size(2)) for i, fmap in enumerate([fmap1, fmap2, fmap3])
-        ]
-        detections = non_max_suppression(
-            decodes=decodes,
-            conf_threshold=conf_threshold,
-            nms_threshold=nms_threshold,
-            device=self.device,
+        # Targets
+        scale_tensor = torch.tensor([img_size] * 4, device=self.device)
+        targets = torch.cat((targets[:, [0]], targets[:, [1]], targets[:, 2:6]), 1)
+        targets = self.preprocess(targets.to(self.device), bs, scale_tensor=scale_tensor)
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+
+        # Pboxes
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+        # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
+        # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
+
+        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+            # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
+            pred_scores.detach().sigmoid(),
+            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor,
+            gt_labels,
+            gt_bboxes,
+            mask_gt,
         )
 
-        # rescale to img coordiante
-        detection = detections[0]
-        detection[:, :4] = rescale_padded_boxes(detection[:, :4], pad_img.shape[2], origin_img_shape)
+        target_scores_sum = max(target_scores.sum(), 1)
 
-        bboxes = detection[:, :4]
-        conf = detection[:, 4]
-        cls = detection[:, 5].int()
+        # Cls loss
+        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
+        cls_loss = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum  # BCE
 
-        # visiualization
-        visualize_img_with_bboxes(img, bboxes.cpu().numpy(), cls.cpu().numpy(), self.cfg["data"]["class_names"])
+        # Bbox loss
+        if fg_mask.sum():
+            target_bboxes /= stride_tensor
+            box_loss, dfl_loss = self.bbox_loss(
+                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
+            )
 
-    def fmap_decode(self, fmap: torch.Tensor, anchors: torch.Tensor, img_size: int) -> torch.Tensor:
-        """
-        Decode the features output by the yolo detection net and map them to the image coordinate system (x, y, w, h).
+        cls_loss *= self.cls_weight  # box gain
+        box_loss *= self.box_weight  # cls gain
+        dfl_loss *= self.dfl_weight  # dfl gain
 
-        Args:
-            fmap (torch.Tensor): the features output by the yolo detection net.
-            img_size (int): the dim of image.
-            anchors (torch.Tensor): the anchors corresponding to specific feature maps
+        total_loss = box_loss + cls_loss + dfl_loss
 
-        Returns:
-            torch.Tensor: decode.
-        """
-        B, C, H, W = fmap.shape
-        stride = img_size // H
-        fmap = fmap.view(B, self.anchor_nums, -1, H, W).permute(0, 1, 3, 4, 2).contiguous()
-        anchors = anchors.view(1, self.anchor_nums, 1, 1, 2)
+        loss_component = {
+            "box_loss": box_loss.item(),
+            "cls_loss": cls_loss.item(),
+            "dfl_loss": dfl_loss.item(),
+            "total_loss": total_loss.item(),
+        }
 
-        grid_y, grid_x = torch.meshgrid(
-            torch.arange(H, device=self.device),
-            torch.arange(W, device=self.device),
-            indexing="ij",
-        )
-        grid_xy = torch.stack((grid_x, grid_y), dim=-1).view(1, 1, H, W, 2).float()  # [H, W, 2]
+        return total_loss, loss_component
 
-        fmap[..., :2] = (torch.sigmoid(fmap[..., :2]) + grid_xy) * stride
-        fmap[..., 2:4] = anchors * torch.exp(fmap[..., 2:4].clamp(-10, 10))
-        fmap[..., 4:] = torch.sigmoid(fmap[..., 4:])
+    def bbox_decode(self, anchor_points, pred_dist):
+        """Decode predicted object bounding box coordinates from anchor points and distribution."""
+        if self.use_dfl:
+            b, a, c = pred_dist.shape  # batch, anchors, channels
+            pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
+            # pred_dist = pred_dist.view(b, a, c // 4, 4).transpose(2,3).softmax(3).matmul(self.proj.type(pred_dist.dtype))
+            # pred_dist = (pred_dist.view(b, a, c // 4, 4).softmax(2) * self.proj.type(pred_dist.dtype).view(1, 1, -1, 1)).sum(2)
+        return dist2bbox(pred_dist, anchor_points, xywh=False)
 
-        return fmap.view(B, -1, self.cfg["data"]["class_nums"] + 5)
-
-    @torch.no_grad()
-    def prepare_target(self, targets: torch.Tensor, fh: int, fw: int, norm_anchors: torch.Tensor) -> tuple:
-        """
-        The target information of the original image is mapped to the fmap space to prepare for the loss calculation
-
-        The reason for not mapping the feature space to the original image space is that the number of bounding boxes in
-        the feature space is much larger than that in the target bounding box. For example, the number of bounding boxes
-        in the 52*52 feature map is 52*52*3, and the computational complexity is high.
-
-        Args:
-            targets (torch.Tensor): the features output by the yolo detection net.
-            fh (int): the height of fmap.
-            fw (int): the weight of fmap.
-            norm_anchors (torch.Tensor): the norm_anchors corresponding to specific fmap.
-
-        Returns:
-            torch.Tensor: decode.
-        """
-        num_bboxes = targets.shape[0]  # number of bboxes(targets)
-        targets = targets.repeat(self.anchor_nums, 1, 1)  # targets [num_anchors, num_bboxes, 6]
-
-        scale_tensor = torch.tensor([fw, fh, fw, fh], device=targets.device, dtype=torch.float32)
-        targets[:, :, 2:6] *= scale_tensor
-        anchor_ids = torch.arange(self.anchor_nums, device=self.device).repeat(num_bboxes, 1).T.view(-1, num_bboxes, 1)
-        targets = torch.cat([anchor_ids, targets], dim=-1)  # (anchor_ids, img_id, class_id, x, y, w, h)
-
-        # Filter the appropriate target box
-        if num_bboxes:
-            r = targets[:, :, 5:7] / norm_anchors[:, None]
-            j = torch.max(r, 1.0 / r).max(2)[0] < self.anchor_scale_threshold
-            targets = targets[j]
+    def preprocess(self, targets, batch_size, scale_tensor):
+        """Preprocesses the target counts and matches with the input batch size to output a tensor."""
+        nl, ne = targets.shape
+        if nl == 0:
+            out = torch.zeros(batch_size, 0, ne - 1, device=self.device)
         else:
-            targets = targets[0]
+            i = targets[:, 0]  # image index
+            _, counts = i.unique(return_counts=True)
+            counts = counts.to(dtype=torch.int32)
+            out = torch.zeros(batch_size, counts.max(), ne - 1, device=self.device)
+            for j in range(batch_size):
+                matches = i == j
+                if n := matches.sum():
+                    out[j, :n] = targets[matches, 1:]
+            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
 
-        anchor_ids, img_ids, tcls = targets[:, :3].long().T
+        return out
 
-        # The center point coordinates of the target bboxes in the feature map coordinate system
-        gxy = targets[:, 3:5]
-        gwh = targets[:, 5:7]
-        gji = gxy.long()
-        gj, gi = gji.T
 
-        tbboxes = torch.cat((gxy - gji, gwh), 1)  # box
-        indices = (img_ids, anchor_ids, gi.clamp_(0, fh - 1), gj.clamp_(0, fw - 1))
-        norm_anchors = norm_anchors[anchor_ids]
+"""
+Helper functions
+"""
 
-        return tcls, tbboxes, indices, norm_anchors
+
+def xywh2xyxy(x):
+    """
+    Convert bounding box coordinates from (x, y, width, height) format to (x1, y1, x2, y2) format where (x1, y1) is the
+    top-left corner and (x2, y2) is the bottom-right corner. Note: ops per 2 channels faster than per channel.
+
+    Args:
+        x (np.ndarray | torch.Tensor): The input bounding box coordinates in (x, y, width, height) format.
+
+    Returns:
+        y (np.ndarray | torch.Tensor): The bounding box coordinates in (x1, y1, x2, y2) format.
+    """
+    assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
+    y = empty_like(x)  # faster than clone/copy
+    xy = x[..., :2]  # centers
+    wh = x[..., 2:] / 2  # half width-height
+    y[..., :2] = xy - wh  # top left xy
+    y[..., 2:] = xy + wh  # bottom right xy
+    return y
+
+
+def make_anchors(preds, strides, grid_cell_offset=0.5):
+    """Generate anchors from features."""
+    anchor_points, stride_tensor = [], []
+    assert preds is not None
+    dtype, device = preds[0].dtype, preds[0].device
+    for i, stride in enumerate(strides):
+        h, w = preds[i].shape[2:] if isinstance(preds, list) else (int(preds[i][0]), int(preds[i][1]))
+        sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
+        sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
+        sy, sx = torch.meshgrid(sy, sx, indexing="ij")
+        anchor_points.append(torch.stack((sx, sy), -1).view(-1, 2))
+        stride_tensor.append(torch.full((h * w, 1), stride, dtype=dtype, device=device))
+    return torch.cat(anchor_points), torch.cat(stride_tensor)
+
+
+def bbox2dist(anchor_points, bbox, reg_max):
+    """Transform bbox(xyxy) to dist(ltrb)."""
+    x1y1, x2y2 = bbox.chunk(2, -1)
+    return torch.cat((anchor_points - x1y1, x2y2 - anchor_points), -1).clamp_(0, reg_max - 0.01)  # dist (lt, rb)
+
+
+def dist2bbox(distance, anchor_points, xywh=True, dim=-1):
+    """Transform distance(ltrb) to box(xywh or xyxy)."""
+    lt, rb = distance.chunk(2, dim)
+    x1y1 = anchor_points - lt
+    x2y2 = anchor_points + rb
+    if xywh:
+        c_xy = (x1y1 + x2y2) / 2
+        wh = x2y2 - x1y1
+        return torch.cat((c_xy, wh), dim)  # xywh bbox
+    return torch.cat((x1y1, x2y2), dim)  # xyxy bbox

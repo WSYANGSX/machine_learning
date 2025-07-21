@@ -94,20 +94,20 @@ class NblityNet(BaseNet):
         # head
         self.heads = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-    def forward(self, img: torch.Tensor, thermal: torch.Tensor) -> tuple[torch.Tensor]:
+    def forward(self, imgs: torch.Tensor, thermals: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
         for key, layer in self.img_backbone.items():
-            img = layer(img)
+            imgs = layer(imgs)
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
-                img_skips.append(img)
+                img_skips.append(imgs)
 
         # themral backbone
         thermal_skips = []
         for key, layer in self.thermal_backbone.items():
-            thermal = layer(thermal)
+            thermals = layer(thermals)
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
-                thermal_skips.append(thermal)
+                thermal_skips.append(thermals)
 
         pixels_fuse = [img_skips[i] + thermal_skips[i] for i in range(len(img_skips))]
 
