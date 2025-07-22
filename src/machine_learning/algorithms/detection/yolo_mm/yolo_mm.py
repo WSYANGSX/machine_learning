@@ -61,6 +61,7 @@ class YoloVMM(AlgorithmBase):
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
         self.bbox_loss = BboxLoss(self.reg_max).to(device)
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
+        self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]

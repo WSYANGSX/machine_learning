@@ -1,5 +1,5 @@
 import torch
-import random
 
-a = torch.arange(3).repeat(5, 1).T.view(3, 5, 1)
-print(a)
+targets = torch.tensor([[1, 2, 3, 4, 5], [4, 5, 6, 7, 8]])
+b = torch.arange(5)
+print(targets.matmul(b))
