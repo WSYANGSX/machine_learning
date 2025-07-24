@@ -9,10 +9,10 @@ if __name__ == "__main__":
 
     np.set_printoptions(threshold=np.inf)
 
-    img_path = "./data/coco-2017/images/train/000000559214.jpg"
+    img_path = "/home/yangxf/Downloads/align/JPEGImages/FLIR_00002_RGB.jpg"
     image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
 
-    labels = np.loadtxt("./data/coco-2017/labels/train/000000559214.txt").reshape(-1, 5)
+    labels = np.loadtxt("/home/yangxf/Downloads/align/Annotations/FLIR_00002.txt").reshape(-1, 5)
     bboxes = labels[:, 1:5]
     category_ids = np.array(labels[:, 0], dtype=np.int32)
 

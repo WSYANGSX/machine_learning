@@ -65,7 +65,7 @@ DEFAULT_YOLOMM_AUG = AugCfg(
         A.PadIfNeeded(min_height=416, min_width=416),
     ],
     bbox_params=A.BboxParams(
-        format="pascal_voc",
+        format="yolo",
         label_fields=["category_ids"],
         min_visibility=0.1,
         min_height=0.01,

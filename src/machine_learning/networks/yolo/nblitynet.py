@@ -92,7 +92,7 @@ class NblityNet(BaseNet):
         )  # small size
 
         # head
-        self.heads = DetectV8(nc=self.nc, ch=(256, 512, 512))
+        self.head = nn.ModuleDict({"head": DetectV8(nc=self.nc, ch=(256, 512, 512))})  # small size
 
     def forward(self, imgs: torch.Tensor, thermals: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
@@ -168,7 +168,7 @@ class NblityNet(BaseNet):
 
         # ----- head -----
 
-        return self.heads([det1, det2, det3])
+        return self.head([det1, det2, det3])
 
     def view_structure(self) -> None:
         from torchinfo import summary

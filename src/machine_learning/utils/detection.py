@@ -48,7 +48,7 @@ def xyxy2xywh_np(x: torch.Tensor) -> torch.Tensor:
 
 def to_absolute_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
     img, bboxes = img, bboxes
-    h, w, _ = img.shape
+    h, w = img.shape[:2]
     bboxes[:, [0, 2]] *= w
     bboxes[:, [1, 3]] *= h
     return bboxes
@@ -56,7 +56,7 @@ def to_absolute_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
 
 def to_relative_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
     img, bboxes = img, bboxes
-    h, w, _ = img.shape
+    h, w = img.shape[:2]
     bboxes[:, [0, 2]] /= w
     bboxes[:, [1, 3]] /= h
     return bboxes

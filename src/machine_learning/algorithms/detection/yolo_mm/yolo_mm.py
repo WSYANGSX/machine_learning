@@ -56,6 +56,7 @@ class YoloVMM(AlgorithmBase):
         self.box_weight = self.cfg["algorithm"].get("box", 0.05)
         self.cls_weight = self.cfg["algorithm"].get("cls", 1.0)
         self.dfl_weight = self.cfg["algorithm"].get("dfl", 0.5)
+
         self.use_dfl = self.reg_max > 1
         self.dfl = DFL(self.reg_max) if self.use_dfl else nn.Identity()
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
@@ -66,22 +67,39 @@ class YoloVMM(AlgorithmBase):
     def _configure_optimizers(self) -> None:
         opt_cfg = self._cfg["optimizer"]
 
-        self.params = self.models["nblitynet"].parameters()
+        g = [], [], []
+        bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)
+
+        for module_name, module in self.models["nblitynet"].named_modules():
+            for param_name, param in module.named_parameters(recurse=False):
+                fullname = f"{module_name}.{param_name}" if module_name else param_name
+                if "bias" in fullname:  # bias (no decay)
+                    g[2].append(param)
+                elif isinstance(module, bn):  # weight (no decay)
+                    g[1].append(param)
+                else:  # weight (with decay)
+                    g[0].append(param)
 
         if opt_cfg["type"] == "Adam":
-            self._optimizers.update(
-                {
-                    "yolo_mm": torch.optim.Adam(
-                        params=self.params,
-                        lr=opt_cfg["learning_rate"],
-                        betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
-                        eps=opt_cfg["eps"],
-                        weight_decay=opt_cfg["weight_decay"],
-                    ),
-                }
+            optimizer = torch.optim.Adam(
+                params=g[2],
+                lr=opt_cfg["learning_rate"],
+                betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
+                eps=opt_cfg["eps"],
+                weight_decay=0.0,
             )
+        elif opt_cfg["type"] == "SGD":
+            optimizer = torch.optim.SGD(
+                params=g[2], lr=opt_cfg["learning_rate"], momentum=opt_cfg["momentum"], weight_decay=0.0, nesterov=True
+            )
+
         else:
             raise ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
+
+        optimizer.add_param_group({"params": g[0], "weight_decay": self._cfg["optimizer"].get("weight_decay", 1e-5)})
+        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})
+
+        self._optimizers["yolo_mm"] = optimizer
 
     def _configure_schedulers(self) -> None:
         sch_config = self._cfg["scheduler"]
@@ -98,22 +116,16 @@ class YoloVMM(AlgorithmBase):
                 }
             )
 
-        if sch_config.get("type") == "LRWarmupDecay":
-
-            def make_warmup_fn(warmup_epoch=15, decay_epochs=sch_config["epochs"], decay_scales=sch_config["scales"]):
-                def fn(current_epoch):
-                    if current_epoch < warmup_epoch:
-                        return (current_epoch + 1) / warmup_epoch
-                    else:
-                        for i, epoch in enumerate(decay_epochs):
-                            if current_epoch >= epoch:
-                                return decay_scales[i]
-                    return 1.0
-
-                return fn
-
+        if sch_config.get("type") == "CustomLRDecay":
             self._schedulers.update(
-                {"yolo_mm": torch.optim.lr_scheduler.LambdaLR(self._optimizers["yolo_mm"], lr_lambda=make_warmup_fn())}
+                {
+                    "yolo_mm": torch.optim.lr_scheduler.LambdaLR(
+                        self._optimizers["yolo_mm"],
+                        lr_lambda=lambda x: max(1 - x / sch_config["final_epoch"], 0)
+                        * (1.0 - sch_config["learning_rate_final_factor"])
+                        + sch_config["learning_rate_final_factor"],
+                    )
+                }
             )
 
         else:
@@ -193,8 +205,6 @@ class YoloVMM(AlgorithmBase):
 
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
-        # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
-        # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
@@ -239,8 +249,6 @@ class YoloVMM(AlgorithmBase):
         if self.use_dfl:
             b, a, c = pred_dist.shape  # batch, anchors, channels
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
-            # pred_dist = pred_dist.view(b, a, c // 4, 4).transpose(2,3).softmax(3).matmul(self.proj.type(pred_dist.dtype))
-            # pred_dist = (pred_dist.view(b, a, c // 4, 4).softmax(2) * self.proj.type(pred_dist.dtype).view(1, 1, -1, 1)).sum(2)
         return dist2bbox(pred_dist, anchor_points, xywh=False)
 
     def preprocess(self, targets, batch_size, scale_tensor):
