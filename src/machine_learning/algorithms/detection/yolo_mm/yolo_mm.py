@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Literal, Mapping, Any, Union
 
 import torch
+import torchvision
+import numpy as np
 import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.cuda.amp import autocast, GradScaler
@@ -15,7 +17,7 @@ from machine_learning.utils.ops import empty_like
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloVMM(AlgorithmBase):
+class YoloMM(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
@@ -60,8 +62,8 @@ class YoloVMM(AlgorithmBase):
         self.use_dfl = self.reg_max > 1
         self.dfl = DFL(self.reg_max) if self.use_dfl else nn.Identity()
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
-        self.bbox_loss = BboxLoss(self.reg_max).to(device)
-        self.proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
+        self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
+        self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
     def _configure_optimizers(self) -> None:
@@ -122,8 +124,8 @@ class YoloVMM(AlgorithmBase):
                     "yolo_mm": torch.optim.lr_scheduler.LambdaLR(
                         self._optimizers["yolo_mm"],
                         lr_lambda=lambda x: max(1 - x / sch_config["final_epoch"], 0)
-                        * (1.0 - sch_config["learning_rate_final_factor"])
-                        + sch_config["learning_rate_final_factor"],
+                        * (1.0 - self._cfg["optimizer"]["learning_rate_final_factor"])
+                        + self._cfg["optimizer"]["learning_rate_final_factor"],
                     )
                 }
             )
@@ -145,7 +147,7 @@ class YoloVMM(AlgorithmBase):
             self._optimizers["yolo_mm"].zero_grad()
 
             with autocast(
-                device_type=str(self.device)
+                enabled=True, dtype=torch.float16
             ):  # Ensure that the autocast scope correctly covers the forward computation
                 pred1, pred2, pred3 = self.models["nblitynet"](imgs, thermals)
                 loss, loss_components = self.criterion(
@@ -153,7 +155,7 @@ class YoloVMM(AlgorithmBase):
                 )
 
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(self.models["nblitynet"].parameters(), self._cfg["optimizer"]["grad_clip"])
             scaler.step(self._optimizers["yolo_mm"])
             scaler.update()
 
@@ -173,6 +175,208 @@ class YoloVMM(AlgorithmBase):
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         self.set_eval()
+
+        metrics = {}
+
+        total_loss = 0.0
+        total_box_loss = 0.0
+        total_cls_loss = 0.0
+        total_dfl_loss = 0.0
+
+        # 初始化评估指标
+        stats = []
+        iouv = torch.linspace(0.5, 0.95, 10, device=self.device)  # iou从0.5到0.95，步长0.05
+        niou = iouv.numel()
+
+        for batch_idx, (imgs, thermals, targets) in enumerate(self.val_loader):
+            imgs = imgs.to(self.device, non_blocking=True)
+            thermals = thermals.to(self.device, non_blocking=True)
+            targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
+
+            # 前向传播
+            with autocast(enabled=True, dtype=torch.float16):
+                pred1, pred2, pred3 = self.models["nblitynet"](imgs, thermals)
+                loss, loss_components = self.criterion(
+                    preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
+                )
+
+                # 计算预测结果
+                preds = self.non_max_suppression([pred1, pred2, pred3])
+
+        total_loss += loss.item()
+        total_box_loss += loss_components["box_loss"]
+        total_cls_loss += loss_components["cls_loss"]
+        total_dfl_loss += loss_components["dfl_loss"]
+
+        targets[:, 2:] *= torch.tensor((imgs.shape[3], imgs.shape[2], imgs.shape[3], imgs.shape[2]), device=self.device)
+
+        for si, pred in enumerate(preds):
+            labels = targets[targets[:, 0] == si, 1:]  # 当前图片的标签
+            nl = len(labels)
+            tcls = labels[:, 0].tolist() if nl else []  # 类别列表
+
+            # 如果没有预测结果，记录所有标签为未检测到
+            if len(pred) == 0:
+                if nl:
+                    stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                continue
+
+            # 计算预测框与真实框的IoU
+            correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=self.device)
+            if nl:
+                detected = []  # 已检测到的目标索引
+                tcls_tensor = labels[:, 0]
+
+                # 计算每个预测框与所有真实框的IoU
+                ious, i = self.box_iou(pred[:, :4], labels[:, 1:]).max(1)
+
+                # 选择IoU大于阈值的预测框
+                j = (ious > self.iou_threshold) & (pred[:, 5] == tcls_tensor[i])
+
+                # 每个真实目标只匹配一个预测框
+                for k in j.nonzero(as_tuple=False):
+                    if k not in detected:
+                        detected.append(k)
+                        correct[k] = ious[k] > iouv
+
+            # 记录统计信息
+            stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+
+        # 计算平均损失
+        num_batches = len(self.val_loader)
+        metrics["val/loss"] = total_loss / num_batches
+        metrics["val/box_loss"] = total_box_loss / num_batches
+        metrics["val/cls_loss"] = total_cls_loss / num_batches
+        metrics["val/dfl_loss"] = total_dfl_loss / num_batches
+
+        # 计算mAP指标
+        if stats:
+            tp, conf, pred_cls, target_cls = zip(*stats)
+            metrics.update(self.compute_ap(tp, conf, pred_cls, target_cls))
+
+        return metrics
+
+    @torch.no_grad()
+    def non_max_suppression(self, preds: list[torch.Tensor]) -> list[torch.Tensor]:
+        """应用非极大值抑制处理预测结果"""
+        output = [torch.empty((0, 6), device=self.device)] * preds[0].shape[0]
+
+        # 合并多尺度预测
+        x = []
+        for pred in preds:
+            bs, _, ny, nx = pred.shape
+            pred = pred.permute(0, 2, 3, 1).reshape(bs, ny * nx, -1)
+            x.append(pred)
+        x = torch.cat(x, 1)
+
+        # 分割边界框和类别分数
+        box, cls = x.split((self.reg_max * 4, self.nc), 2)
+        dbox = dist2bbox(self.dfl(box), self.anchors, xywh=False, dim=1) * self.strides
+
+        # 计算类别分数
+        scores = cls.sigmoid()
+
+        # 处理每张图片
+        for i in range(x.shape[0]):
+            boxes = dbox[i]
+            scores_i = scores[i]
+
+            # 过滤低置信度预测
+            conf_mask = scores_i.max(1)[0] > self.conf_threshold
+            boxes, scores_i = boxes[conf_mask], scores_i[conf_mask]
+
+            if not boxes.shape[0]:
+                continue
+
+            # 非极大值抑制
+            boxes = boxes.clone()
+            scores_i, classes = scores_i.max(1)
+            boxes = torch.cat((boxes, scores_i.unsqueeze(1), classes.unsqueeze(1)), 1)
+            nms_mask = torchvision.ops.nms(boxes[:, :4], boxes[:, 4], self.nms_threshold)
+            output[i] = boxes[nms_mask]
+
+        return output
+
+    def compute_ap(self, tp, conf, pred_cls, target_cls):
+        """计算平均精度指标(mAP)"""
+        # 按置信度排序所有预测结果
+        i = np.argsort(-np.concatenate(conf))
+        tp, conf, pred_cls = [np.concatenate(x, 0)[i] for x in [tp, conf, pred_cls]]
+
+        # 计算PR曲线和AP值
+        nc = self.nc  # 类别数量
+        ap = np.zeros((nc, 10))
+        p = np.zeros((nc, 1000))
+        r = np.zeros((nc, 1000))
+
+        # 为每个类别计算AP
+        for ci in range(nc):
+            # 获取当前类别的预测和标签
+            ci_tp = tp[:, ci]
+            ci_pred_cls = pred_cls == ci
+            if ci_pred_cls.sum() == 0:
+                continue
+
+            # 计算精度和召回率
+            n_gt = (np.concatenate(target_cls, 0) == ci).sum()
+            n_p = ci_pred_cls.sum()
+
+            if n_gt == 0 or n_p == 0:
+                continue
+
+            # 累积FP和TP
+            fpc = (1 - ci_tp[ci_pred_cls]).cumsum()
+            tpc = ci_tp[ci_pred_cls].cumsum()
+
+            # 召回率
+            recall = tpc / (n_gt + 1e-16)
+            r[ci] = np.interp(-np.linspace(0, 1, 1000), -conf[ci_pred_cls], recall)
+
+            # 精度
+            precision = tpc / (tpc + fpc)
+            p[ci] = np.interp(-np.linspace(0, 1, 1000), -conf[ci_pred_cls], precision)
+
+            # AP值 (积分PR曲线)
+            for j in range(10):
+                ap[ci, j] = compute_ap_single(precision, recall, iouv=j * 0.05 + 0.5)
+
+        # 计算全局指标
+        results = {
+            "val/mAP": ap[:, :].mean(),
+            "val/mAP_50": ap[:, 0].mean(),
+            "val/mAP_75": ap[:, 5].mean(),
+            "val/precision": p.mean(0).mean(),
+            "val/recall": r.mean(0).mean(),
+        }
+
+        # 添加每个类别的AP
+        for ci in range(nc):
+            results[f"val/AP_{self.class_names[ci]}"] = ap[ci].mean()
+
+        return results
+
+    def box_iou(self, box1, box2):
+        """计算两组边界框之间的IoU"""
+        # 获取边界框坐标
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1.T
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2.T
+
+        # 计算交集区域
+        inter_x1 = torch.max(b1_x1.unsqueeze(1), b2_x1)
+        inter_y1 = torch.max(b1_y1.unsqueeze(1), b2_y1)
+        inter_x2 = torch.min(b1_x2.unsqueeze(1), b2_x2)
+        inter_y2 = torch.min(b1_y2.unsqueeze(1), b2_y2)
+
+        # 交集面积
+        inter_area = torch.clamp(inter_x2 - inter_x1, min=0) * torch.clamp(inter_y2 - inter_y1, min=0)
+
+        # 并集面积
+        b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+        b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+        union_area = b1_area.unsqueeze(1) + b2_area - inter_area
+
+        # 返回IoU
+        return inter_area / (union_area + 1e-7)
 
     def eval(self) -> None:
         raise NotImplementedError(
@@ -273,6 +477,23 @@ class YoloVMM(AlgorithmBase):
 """
 Helper functions
 """
+
+
+def compute_ap_single(precision, recall, iou_threshold=0.5):
+    """计算单个IoU阈值下的平均精度"""
+    # 平滑PR曲线
+    mrec = np.concatenate(([0.0], recall, [1.0]))
+    mpre = np.concatenate(([0.0], precision, [0.0]))
+
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+    # 找到召回率变化的点
+    i = np.where(mrec[1:] != mrec[:-1])[0]
+
+    # 积分计算AP
+    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    return ap
 
 
 def xywh2xyxy(x):

@@ -3,7 +3,7 @@ algorithm:
 
 optimizer:
   type: "Adam"
-  learning_rate: 1.0e-3
+  lr: 1.0e-3
   beta1: 0.9
   beta2: 0.999
   eps: 1.0e-8
@@ -15,7 +15,7 @@ scheduler:
   factor: 0.5
   patience: 5  
 
-model:
+net:
   initialize_weights: True
 
 data_loader:

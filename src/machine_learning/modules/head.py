@@ -54,7 +54,7 @@ class DetectV8(nn.Module):
 
     def bias_init(self):
         """Initialize biases for classification branch."""
-        print("[INFO] Initializing bias parameters of {self.__class__.__name__}...")
+        print(f"[INFO] Initializing bias parameters of {self.__class__.__name__}...")
 
         for cv2 in self.cv2:
             m = cv2[-1]  # 最后一个卷积层

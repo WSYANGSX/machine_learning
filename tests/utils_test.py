@@ -1,5 +1,6 @@
 import torch
 
-targets = torch.tensor([[1, 2, 3, 4, 5], [4, 5, 6, 7, 8]])
-b = torch.arange(5)
-print(targets.matmul(b))
+a = {"1": 1, "2": 2}
+b = {"1": 3, "4": 4}
+a.update(b)
+print(iter(a.values())[0])

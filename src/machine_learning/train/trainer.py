@@ -1,9 +1,10 @@
-from typing import Any
+from typing import Any, Mapping, Union
 import os
 import torch
 from tqdm import trange
 from prettytable import PrettyTable
 
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from .trainer_cfg import TrainCfg
@@ -12,16 +13,27 @@ from machine_learning.utils.others import set_seed
 
 
 class Trainer:
-    def __init__(self, cfg: TrainCfg, algo: AlgorithmBase) -> None:
+    def __init__(
+        self,
+        cfg: TrainCfg,
+        algo: AlgorithmBase,
+        data: Mapping[str, Union[Dataset, Any]],
+    ) -> None:
         """
         The trainer of all machine learning algorithm
 
         Args:
             cfg (TrainCfg): The configuration of the trainer.
             algo (AlgorithmBase): The algorithm to be trained.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
         """
         self.cfg = cfg
         self._algorithm = algo
+
+        # ---------------------- initilaize algo --------------------------
+        self._algorithm._add_cfg("trainer", self.cfg)
+        self._algorithm._initialize(data=data)
 
         # ------------------ configure global random seed -----------------
         set_seed(self.cfg.seed)
@@ -51,16 +63,22 @@ class Trainer:
         print("[INFO] Start training...")
 
         for epoch in trange(start_epoch, self.cfg.epochs):
-            train_res = self._algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
-            val_res = self._algorithm.validate()
+            train_res = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+            val_res = self.algorithm.validate()
 
             # adjust the learning rate
-            if self._algorithm._schedulers:
-                for key, val in self._algorithm._schedulers.items():
-                    if isinstance(val, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        val.step(val_res[key + " loss"])
+            if len(self.algorithm.schedulers) == 1:  # single net, single optimizer
+                scheduler = self.algorithm.schedulers["scheduler"]
+                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(val_res["loss"])
+                else:
+                    scheduler.step()
+            elif self.algorithm.schedulers > 1:  # multi nets, multi optimizers
+                for name, scheduler in self.algorithm.schedulers.items():
+                    if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        scheduler.step(val_res[name + " loss"])
                     else:
-                        val.step()
+                        scheduler.step()
 
             # log the train loss
             for key, val in train_res.items():

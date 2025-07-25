@@ -14,13 +14,15 @@ if __name__ == "__main__":
 
     np.set_printoptions(threshold=np.inf)
 
-    img_path = "/home/yangxf/Downloads/align/JPEGImages/FLIR_00002_RGB.jpg"
+    img_path = "/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/JPEGImages/FLIR_00002_RGB.jpg"
     image = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
-    thermal_path = "/home/yangxf/Downloads/align/JPEGImages/FLIR_00002_PreviewData.jpeg"
+    thermal_path = "/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/JPEGImages/FLIR_00002_PreviewData.jpeg"
     thermal = np.array(Image.open(img_path).convert("L"), dtype=np.uint8)
 
-    labels = np.loadtxt("/home/yangxf/Downloads/align/Annotations/FLIR_00002.txt").reshape(-1, 5)
+    labels = np.loadtxt("/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/Annotations/FLIR_00002.txt").reshape(
+        -1, 5
+    )
     bboxes = labels[:, 1:5]
 
     category_ids = labels[:, 0]
@@ -37,6 +39,8 @@ if __name__ == "__main__":
     transformed_thermal = transformed["thermal"] * 255
     transformed_bboxes = transformed["bboxes"]
     transformed_category_ids = transformed["category_ids"]
+
+    print(transformed_category_ids)
 
     visualize_img_with_bboxes(
         transformed_img, yolo2voc(transformed_img, transformed_bboxes), transformed["category_ids"], category_id_to_name

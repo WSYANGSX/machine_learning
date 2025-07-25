@@ -14,6 +14,22 @@ class AugCfg:
     probility: float = 1
 
 
+# default augcfg, none enhancer
+DEFAULT_AUG = AugCfg(
+    augs=[
+        A.HorizontalFlip(p=0.5),
+        A.CoarseDropout(
+            num_holes_range=(1, 10),
+            hole_height_range=(10, 30),
+            hole_width_range=(10, 30),
+            fill="random_uniform",
+            p=0.8,
+        ),
+        A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1), p=0.8),
+        A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.8),
+    ],
+)
+
 # basic yolo enhancer
 DEFAULT_YOLO_AUG = AugCfg(
     augs=[

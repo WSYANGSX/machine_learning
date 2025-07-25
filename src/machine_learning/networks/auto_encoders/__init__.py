@@ -1,4 +1,3 @@
-from .encoder import Encoder
-from .decoder import Decoder
+from .ae_net import AENet
 
-__all__ = ["Encoder", "Decoder"]
+__all__ = ["AENet"]

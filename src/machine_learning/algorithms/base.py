@@ -6,19 +6,20 @@ from abc import ABC, abstractmethod
 
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.modules import BaseNet
+from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.others import print_dict, print_segmentation
+from machine_learning.utils.others import print_dict
 
 
 class AlgorithmBase(ABC):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        models: Mapping[str, BaseNet],
-        data: Mapping[str, Union[Dataset, Any]],
+        net: BaseNet | None = None,
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ):
@@ -26,18 +27,21 @@ class AlgorithmBase(ABC):
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            models (Mapping[str, BaseNet]): Models required by the algorithm, {"net1": BaseNet1, "net2": BaseNet2}.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
+            net (Mapping[str, BaseNet]): Neural neural required by the algorithm.
             name (str, optional): Name of the algorithm. Defaults to None.
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """
         super().__init__()
 
-        self._models = models
+        self._nets = {}
         self._optimizers = {}
         self._schedulers = {}
+
+        self.net = net
+        if self.net:
+            self._add_net("net", self.net)
+
         self.training = False
 
         # ------------------------ configure device -----------------------
@@ -52,27 +56,13 @@ class AlgorithmBase(ABC):
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
-        # -------------------- configure models of algo -------------------
-        self._configure_models()
-        if self.cfg["model"]["initialize_weights"]:
-            self._initialize_weights()
-
-        # --------------------- configure optimizers ----------------------
-        self._configure_optimizers()
-
-        # --------------------- configure schedulers ----------------------
-        self._configure_schedulers()
-
-        # ------------------------ configure data -------------------------
-        self._initialize_dependent_on_data(data)
-
     @property
     def name(self) -> str:
         return self._name
 
     @property
-    def models(self) -> dict[str, BaseNet]:
-        return self._models
+    def nets(self) -> dict[str, BaseNet]:
+        return self._nets
 
     @property
     def optimizers(self) -> dict[str, BaseNet]:
@@ -90,6 +80,35 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
+    def _initialize(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+        """initialization algorithm, needs to be called before the training starts."""
+        # --------------------- configure nets of algo --------------------
+        self._configure_nets()
+        if self.cfg["net"]["initialize_weights"]:
+            self._initialize_weights()
+
+        # --------------------- configure optimizers ----------------------
+        self._configure_optimizers()
+
+        # --------------------- configure schedulers ----------------------
+        self._configure_schedulers()
+
+        # ------------------------ configure data -------------------------
+        self._initialize_dependent_on_data(data)
+
+    def _add_cfg(self, name, cfg: Any) -> None:
+        # add additional configuration parameters may used by algo, e.g. traincfg
+        self._cfg.update({name: cfg})
+
+    def _add_net(self, name: str, net: BaseNet) -> None:
+        self._nets.update({name: net})
+
+    def _add_optimizer(self, name: str, optimizer: Optimizer) -> None:
+        self._optimizers.update({name: optimizer})
+
+    def _add_scheduler(self, name: str, scheduler: LRScheduler) -> None:
+        self._schedulers.update({name: scheduler})
+
     def _configure_device(self, device: str) -> torch.device:
         if device == "auto":
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -104,30 +123,27 @@ class AlgorithmBase(ABC):
             with open(config, "r") as f:
                 cfg = yaml.safe_load(f)
 
-        print_segmentation()
-        print("Configuration parameters: ")
-        print_dict(cfg)
-        print_segmentation()
+        print_dict(input_dict=cfg)
 
         return cfg
 
     def _validate_config(self):
         """Validate the config of the algorithm"""
-        required_sections = ["algorithm", "model", "optimizer", "scheduler", "data_loader"]
+        required_sections = ["algorithm", "net", "optimizer", "scheduler", "data_loader"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
 
-    def _configure_models(self):
-        """Configure models of the algo and show their structures"""
-        for model in self._models.values():
-            model.to(self._device)
-            model.view_structure()
+    def _configure_nets(self):
+        """Configure nets of the algo and show their structures"""
+        for net in self.nets.values():
+            net.to(self._device)
+            net.view_structure()
 
     def _initialize_weights(self) -> None:
         """Initialize the weight parameters of models"""
-        for model in self._models.values():
-            model._initialize_weights()
+        for net in self.nets.values():
+            net._initialize_weights()
 
     def _initialize_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
@@ -174,15 +190,80 @@ class AlgorithmBase(ABC):
             for key, val in data.items():
                 self.cfg["data"][key] = val
 
-    @abstractmethod
     def _configure_optimizers(self):
         """Configure the training optimizer"""
-        pass
+        self.opt_cfg = self._cfg["optimizer"]
 
-    @abstractmethod
+        if self.opt_cfg["type"] == "SGD":
+            self.optimizer = torch.optim.SGD(
+                params=self.net.parameters(),
+                lr=self.opt_cfg["lr"],
+                momentum=self.opt_cfg["momentum"],
+                weight_decay=self.opt_cfg["weight_decay"],
+            )
+            self._add_optimizer("optimizer", self.optimizer)
+
+        if self.opt_cfg["type"] == "Adam":
+            self.optimizer = torch.optim.Adam(
+                params=self.net.parameters(),
+                lr=self.opt_cfg["lr"],
+                betas=(self.opt_cfg["beta1"], self.opt_cfg["beta2"]),
+                eps=self.opt_cfg["eps"],
+                weight_decay=self.opt_cfg["weight_decay"],
+            )
+            self._add_optimizer("optimizer", self.optimizer)
+
+        else:
+            ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
+
     def _configure_schedulers(self):
         """Configure the learning rate scheduler"""
-        pass
+        self.sch_config = self._cfg["scheduler"]
+
+        if self.sch_config.get("type") == "ReduceLROnPlateau":
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=self.sch_config.get("factor", 0.1),
+                patience=self.sch_config.get("patience", 10),
+            )
+            self._add_scheduler("scheduler", self.scheduler)
+
+    def __str__(self) -> str:
+        """Return a summary string of the algorithm instance."""
+        # Basic info
+        summary = [
+            f"Algorithm: {self.name}",
+            f"Device: {self.device}",
+            f"Training mode: {self.training}",
+            f"Batch size: {self.batch_size}",
+        ]
+
+        # Networks info
+        nets_info = []
+        for name, net in self.nets.items():
+            num_params = sum(p.numel() for p in net.parameters())
+            nets_info.append(f"  {name}: {type(net).__name__} ({num_params / 1e6:.2f}M params)")
+        summary.append("Networks:\n" + "\n".join(nets_info) if nets_info else "Networks: None")
+
+        # Optimizers info
+        optim_info = []
+        for name, opt in self.optimizers.items():
+            lr = opt.param_groups[0]["lr"] if opt.param_groups else "N/A"
+            optim_info.append(f"  {name}: {type(opt).__name__} (lr={lr:.2e})")
+        summary.append("Optimizers:\n" + "\n".join(optim_info) if optim_info else "Optimizers: None")
+
+        # Schedulers info
+        sched_info = []
+        for name, sched in self.schedulers.items():
+            sched_info.append(f"  {name}: {type(sched).__name__}")
+        summary.append("Schedulers:\n" + "\n".join(sched_info) if sched_info else "Schedulers: None")
+
+        # Config overview
+        config_keys = list(self.cfg.keys())
+        summary.append(f"Config sections: {', '.join(config_keys)}")
+
+        return "\n".join(summary)
 
     @abstractmethod
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
@@ -209,19 +290,19 @@ class AlgorithmBase(ABC):
             "epoch": epoch,
             "cfg": self.cfg,
             "best loss": best_loss,
-            "models": {},
+            "nets": {},
             "optimizers": {},
         }
 
         for key, val in val_info.items():
             state.update({key: val})
 
-        # save the models' parameters
-        for key, val in self.models.items():
-            state["models"].update({key: val.state_dict()})
+        # save the nets' parameters
+        for key, val in self.nets.items():
+            state["nets"].update({key: val.state_dict()})
 
         # save the optimizers' parameters
-        for key, val in self._optimizers.items():
+        for key, val in self.optimizers.items():
             state["optimizers"].update({key: val.state_dict()})
 
         # save the schedulers' parameters
@@ -237,12 +318,12 @@ class AlgorithmBase(ABC):
         # cfg
         self._cfg = state["cfg"]
 
-        # load the models' parameters
-        for key, val in self.models.items():
-            val.load_state_dict(state["models"][key])
+        # load the nets' parameters
+        for key, val in self.nets.items():
+            val.load_state_dict(state["nets"][key])
 
         # load the optimizers' parameters
-        for key, val in self._optimizers.items():
+        for key, val in self.optimizers.items():
             val.load_state_dict(state["optimizers"][key])
 
         # load the schedulers' parameters
@@ -254,13 +335,13 @@ class AlgorithmBase(ABC):
         return state
 
     def set_train(self) -> None:
-        """Set the pattern of all the models in the algorithm to training"""
-        for model in self.models.values():
-            model.train()
+        """Set the pattern of all the nets in the algorithm to training"""
+        for net in self.nets.values():
+            net.train()
         self.training = True
 
     def set_eval(self) -> None:
-        """Set the pattern of all the models in the algorithm to eval"""
-        for model in self.models.values():
-            model.eval()
+        """Set the pattern of all the nets in the algorithm to eval"""
+        for net in self.nets.values():
+            net.eval()
         self.training = False
