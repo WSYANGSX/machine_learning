@@ -48,6 +48,8 @@ class AENet(BaseNet):
         return y
 
     def view_structure(self):
+        super().view_structure()
+
         from torchinfo import summary
 
         summary(self, input_size=(1, *self.image_shape))

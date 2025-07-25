@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 
 import torch
 import torch.nn as nn
@@ -37,6 +37,5 @@ class BaseNet(nn.Module, ABC):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
-    @abstractmethod
     def view_structure(self):
-        pass
+        LOGGER.info(f"{self.__class__.__name__} structure:")
