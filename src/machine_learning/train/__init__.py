@@ -1,4 +1,4 @@
-from .trainer import Trainer
-from .trainer_cfg import TrainCfg
+from .trainer import Trainer, TrainCfg
+
 
 __all__ = ["Trainer", "TrainCfg"]

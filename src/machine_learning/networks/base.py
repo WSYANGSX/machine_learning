@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
 
+from machine_learning.utils.logger import LOGGER
+
 
 class BaseNet(nn.Module, ABC):
     def __init__(self):
@@ -13,7 +15,7 @@ class BaseNet(nn.Module, ABC):
         return next(self.parameters()).device
 
     def _initialize_weights(self):
-        print(f"[INFO] Initializing weights of {self.__class__.__name__} with Kaiming normal...")
+        LOGGER.info(f"Initializing weights of {self.__class__.__name__} with Kaiming normal...")
 
         for module in self.modules():
             if isinstance(

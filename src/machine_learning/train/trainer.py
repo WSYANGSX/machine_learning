@@ -7,18 +7,26 @@ from prettytable import PrettyTable
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
-from .trainer_cfg import TrainCfg
+from machine_learning.utils.cfg import BaseCfg
+from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils.others import set_seed
+from machine_learning.utils import set_seed, print_cfg, cfg_to_dict
+from dataclasses import dataclass, field, MISSING
+
+
+@dataclass
+class TrainCfg(BaseCfg):
+    log_dir: str = MISSING
+    model_dir: str = MISSING
+    seed: int = field(default=23)
+    epochs: int = field(default=100)
+    log_interval: int = field(default=10)
+    save_interval: int = field(default=10)
+    save_best: bool = field(default=True)
 
 
 class Trainer:
-    def __init__(
-        self,
-        cfg: TrainCfg,
-        algo: AlgorithmBase,
-        data: Mapping[str, Union[Dataset, Any]],
-    ) -> None:
+    def __init__(self, cfg: TrainCfg, algo: AlgorithmBase, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """
         The trainer of all machine learning algorithm
 
@@ -31,15 +39,16 @@ class Trainer:
         self.cfg = cfg
         self._algorithm = algo
 
-        # ---------------------- initilaize algo --------------------------
-        self._algorithm._add_cfg("trainer", self.cfg)
-        self._algorithm._initialize(data=data)
-
-        # ------------------ configure global random seed -----------------
+        # ------------------ configure global random seed ------------------
         set_seed(self.cfg.seed)
-        print(f"[INFO] Current seed: {self.cfg.seed}")
+        LOGGER.info(f"Current seed: {self.cfg.seed}")
 
-        # ------------------------ configure logger -----------------------
+        # ------------------------ initilaize algo -------------------------
+        self._algorithm._add_cfg("trainer", cfg_to_dict(self.cfg))
+        self._algorithm._initialize(data=data)
+        print_cfg("Configuration", self._algorithm.cfg)
+
+        # ------------------------ configure writer ------------------------
         self._configure_writer()
         self.best_loss = torch.inf
 
@@ -60,7 +69,7 @@ class Trainer:
 
     def train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
-        print("[INFO] Start training...")
+        LOGGER.info("Start training...")
 
         for epoch in trange(start_epoch, self.cfg.epochs):
             train_res = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
@@ -97,7 +106,7 @@ class Trainer:
                     self.best_loss = val_res["save metric"]
                     self.save_checkpoint(epoch, val_res, self.best_loss, is_best=True)
             else:
-                print("Saving of the best loss model skipped.")
+                LOGGER.info("Saving of the best loss model skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:

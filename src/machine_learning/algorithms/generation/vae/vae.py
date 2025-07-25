@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.draw import show_raw_and_recon_images
+from machine_learning.utils.image import show_raw_and_recon_images
 
 
 class VAE(AlgorithmBase):

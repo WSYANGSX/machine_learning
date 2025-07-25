@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.draw import show_image
+from machine_learning.utils.image import show_image
 
 
 class Flow(AlgorithmBase):

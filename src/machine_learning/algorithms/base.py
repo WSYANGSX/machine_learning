@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.others import print_dict
+from machine_learning.utils.logger import LOGGER
 
 
 class AlgorithmBase(ABC):
@@ -82,10 +82,11 @@ class AlgorithmBase(ABC):
 
     def _initialize(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """initialization algorithm, needs to be called before the training starts."""
+
+        LOGGER.info("Algorithm initializing...")
+
         # --------------------- configure nets of algo --------------------
         self._configure_nets()
-        if self.cfg["net"]["initialize_weights"]:
-            self._initialize_weights()
 
         # --------------------- configure optimizers ----------------------
         self._configure_optimizers()
@@ -123,8 +124,6 @@ class AlgorithmBase(ABC):
             with open(config, "r") as f:
                 cfg = yaml.safe_load(f)
 
-        print_dict(input_dict=cfg)
-
         return cfg
 
     def _validate_config(self):
@@ -135,15 +134,12 @@ class AlgorithmBase(ABC):
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
 
     def _configure_nets(self):
-        """Configure nets of the algo and show their structures"""
+        """Configure nets of the algo, initialize the weight parameters of nets and show their structures"""
         for net in self.nets.values():
             net.to(self._device)
+            if self.cfg["net"]["initialize_weights"]:
+                net._initialize_weights()
             net.view_structure()
-
-    def _initialize_weights(self) -> None:
-        """Initialize the weight parameters of models"""
-        for net in self.nets.values():
-            net._initialize_weights()
 
     def _initialize_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
@@ -235,7 +231,6 @@ class AlgorithmBase(ABC):
         summary = [
             f"Algorithm: {self.name}",
             f"Device: {self.device}",
-            f"Training mode: {self.training}",
             f"Batch size: {self.batch_size}",
         ]
 
@@ -258,10 +253,6 @@ class AlgorithmBase(ABC):
         for name, sched in self.schedulers.items():
             sched_info.append(f"  {name}: {type(sched).__name__}")
         summary.append("Schedulers:\n" + "\n".join(sched_info) if sched_info else "Schedulers: None")
-
-        # Config overview
-        config_keys = list(self.cfg.keys())
-        summary.append(f"Config sections: {', '.join(config_keys)}")
 
         return "\n".join(summary)
 
@@ -310,7 +301,7 @@ class AlgorithmBase(ABC):
             state["schedulers"] = {k: v.state_dict() for k, v in self.schedulers.items()}
 
         torch.save(state, save_path)
-        print(f"Saved checkpoint to {save_path}")
+        LOGGER.info(f"Saved checkpoint to {save_path}")
 
     def load(self, checkpoint: str) -> dict:
         state = torch.load(checkpoint, weights_only=False)
