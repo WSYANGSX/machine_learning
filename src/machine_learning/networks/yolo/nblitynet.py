@@ -171,6 +171,8 @@ class NblityNet(BaseNet):
         return self.head.Head([det1, det2, det3])
 
     def view_structure(self) -> None:
+        super().view_structure()
+
         from torchinfo import summary
 
         img_input = torch.randn(1, *self.img_shape, device=self.device)

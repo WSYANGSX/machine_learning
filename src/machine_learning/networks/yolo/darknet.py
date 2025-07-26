@@ -88,6 +88,8 @@ class DarkNet53(BaseNet):
         return fmap1, fmap2, fmap3
 
     def view_structure(self) -> None:
+        super().view_structure()
+
         from torchinfo import summary
 
         dummy_input = torch.randn(1, *self.default_img_shape, device=self.device)

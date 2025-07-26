@@ -40,15 +40,13 @@ scheduler:
   # patience: 5 
   
   type: CustomLRDecay
-  final_epoch: 200
 
 
-model:
+net:
   initialize_weights: True
 
 data_loader:
   num_workers: 6
   shuffle: True
   batch_size: 64
-  subdevision: 1
   

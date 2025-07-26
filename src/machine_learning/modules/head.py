@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 from ultralytics.nn.modules import Conv
 
+from machine_learning.utils.logger import LOGGER
+
 
 class DetectV8(nn.Module):
     """YOLOv8 Detect Head for object detection."""
@@ -54,7 +56,7 @@ class DetectV8(nn.Module):
 
     def bias_init(self):
         """Initialize biases for classification branch."""
-        print(f"[INFO] Initializing bias parameters of {self.__class__.__name__}...")
+        LOGGER.info(f"Initializing bias parameters of {self.__class__.__name__}...")
 
         for cv2 in self.cv2:
             m = cv2[-1]  # 最后一个卷积层

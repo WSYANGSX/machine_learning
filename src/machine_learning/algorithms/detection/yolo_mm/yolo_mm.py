@@ -1,11 +1,10 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any, Union
+from typing import Literal, Mapping, Any
 
 import torch
 import torchvision
 import numpy as np
 import torch.nn as nn
-from torch.utils.data import Dataset
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
@@ -21,8 +20,7 @@ class YoloMM(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        models: Mapping[str, BaseNet],
-        data: Mapping[str, Union[Dataset, Any]],
+        net: BaseNet,
         name: str | None = "yolo_mm",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -30,15 +28,13 @@ class YoloMM(AlgorithmBase):
         Implementation of YoloMM object detection algorithm
 
         Args:
-            cfg (str, dict): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            models (dict[str, BaseNet]): Models required by the YOLOMM algorithm, {"net": model}.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
+            cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
+            net (BaseNet): Models required by the YOLOMM algorithm.
             name (str): Name of the algorithm. Defaults to "yolo_mm".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg=cfg, models=models, data=data, name=name, device=device)
+        super().__init__(cfg=cfg, net=net, name=name, device=device)
 
         # main parameters of the algorithm
         self.img_size = self.cfg["algorithm"].get("img_size", None)
@@ -48,7 +44,7 @@ class YoloMM(AlgorithmBase):
         self.nms_threshold = self.cfg["algorithm"]["nms_threshold"]
         self.reg_max = self.cfg["algorithm"]["reg_max"]
         self.label_smoothing_scale = self.cfg["algorithm"]["label_smoothing_scale"]
-        self.nc = self._models["nblitynet"].nc
+        self.nc = self.net.nc
         self.no = self.nc + self.reg_max * 4
 
         self.topk = self.cfg["algorithm"]["topk"]
@@ -67,12 +63,12 @@ class YoloMM(AlgorithmBase):
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
     def _configure_optimizers(self) -> None:
-        opt_cfg = self._cfg["optimizer"]
+        self.opt_cfg = self._cfg["optimizer"]
 
         g = [], [], []
         bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)
 
-        for module_name, module in self.models["nblitynet"].named_modules():
+        for module_name, module in self.net.named_modules():
             for param_name, param in module.named_parameters(recurse=False):
                 fullname = f"{module_name}.{param_name}" if module_name else param_name
                 if "bias" in fullname:  # bias (no decay)
@@ -82,56 +78,54 @@ class YoloMM(AlgorithmBase):
                 else:  # weight (with decay)
                     g[0].append(param)
 
-        if opt_cfg["type"] == "Adam":
-            optimizer = torch.optim.Adam(
+        if self.opt_cfg["type"] == "Adam":
+            self.optimizer = torch.optim.Adam(
                 params=g[2],
-                lr=opt_cfg["learning_rate"],
-                betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
-                eps=opt_cfg["eps"],
+                lr=self.opt_cfg["learning_rate"],
+                betas=(self.opt_cfg["beta1"], self.opt_cfg["beta2"]),
+                eps=self.opt_cfg["eps"],
                 weight_decay=0.0,
             )
-        elif opt_cfg["type"] == "SGD":
-            optimizer = torch.optim.SGD(
-                params=g[2], lr=opt_cfg["learning_rate"], momentum=opt_cfg["momentum"], weight_decay=0.0, nesterov=True
+        elif self.opt_cfg["type"] == "SGD":
+            self.optimizer = torch.optim.SGD(
+                params=g[2],
+                lr=self.opt_cfg["learning_rate"],
+                momentum=self.opt_cfg["momentum"],
+                weight_decay=0.0,
+                nesterov=True,
             )
 
         else:
-            raise ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
+            raise ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
 
-        optimizer.add_param_group({"params": g[0], "weight_decay": self._cfg["optimizer"].get("weight_decay", 1e-5)})
-        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})
+        self.optimizer.add_param_group(
+            {"params": g[0], "weight_decay": self._cfg["optimizer"].get("weight_decay", 1e-5)}
+        )
+        self.optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})
 
-        self._optimizers["yolo_mm"] = optimizer
+        self._add_optimizer("optimizer", self.optimizer)
 
     def _configure_schedulers(self) -> None:
-        sch_config = self._cfg["scheduler"]
+        self.sch_config = self._cfg["scheduler"]
 
-        if sch_config.get("type") == "ReduceLROnPlateau":
-            self._schedulers.update(
-                {
-                    "yolo_mm": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                        self._optimizers["yolo_mm"],
-                        mode="min",
-                        factor=sch_config.get("factor", 0.1),
-                        patience=sch_config.get("patience", 10),
-                    )
-                }
+        if self.sch_config.get("type") == "ReduceLROnPlateau":
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=self.sch_config.get("factor", 0.1),
+                patience=self.sch_config.get("patience", 10),
             )
 
-        if sch_config.get("type") == "CustomLRDecay":
-            self._schedulers.update(
-                {
-                    "yolo_mm": torch.optim.lr_scheduler.LambdaLR(
-                        self._optimizers["yolo_mm"],
-                        lr_lambda=lambda x: max(1 - x / sch_config["final_epoch"], 0)
-                        * (1.0 - self._cfg["optimizer"]["learning_rate_final_factor"])
-                        + self._cfg["optimizer"]["learning_rate_final_factor"],
-                    )
-                }
+        if self.sch_config.get("type") == "CustomLRDecay":
+            self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+                self.optimizer,
+                lr_lambda=lambda x: max(1 - x / self.cfg["trainer"]["epochs"], 0)
+                * (1.0 - self.opt_cfg["learning_rate_final_factor"])
+                + self.opt_cfg["learning_rate_final_factor"],
             )
 
         else:
-            print(f"Warning: Unknown scheduler type '{sch_config.get('type')}', no scheduler configured.")
+            print(f"Warning: Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         self.set_train()
@@ -144,19 +138,19 @@ class YoloMM(AlgorithmBase):
             thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
-            self._optimizers["yolo_mm"].zero_grad()
+            self.optimizer.zero_grad()
 
             with autocast(
                 enabled=True, dtype=torch.float16
             ):  # Ensure that the autocast scope correctly covers the forward computation
-                pred1, pred2, pred3 = self.models["nblitynet"](imgs, thermals)
+                pred1, pred2, pred3 = self.net(imgs, thermals)
                 loss, loss_components = self.criterion(
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )
 
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(self.models["nblitynet"].parameters(), self._cfg["optimizer"]["grad_clip"])
-            scaler.step(self._optimizers["yolo_mm"])
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._cfg["optimizer"]["grad_clip"])
+            scaler.step(self.optimizer)
             scaler.update()
 
             total_loss += loss.item()
@@ -170,7 +164,7 @@ class YoloMM(AlgorithmBase):
 
         avg_loss = total_loss / len(self.train_loader)
 
-        return {"yolo_mm loss": avg_loss}
+        return {"loss": avg_loss}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -195,7 +189,7 @@ class YoloMM(AlgorithmBase):
 
             # 前向传播
             with autocast(enabled=True, dtype=torch.float16):
-                pred1, pred2, pred3 = self.models["nblitynet"](imgs, thermals)
+                pred1, pred2, pred3 = self.net(imgs, thermals)
                 loss, loss_components = self.criterion(
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )

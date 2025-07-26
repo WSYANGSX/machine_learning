@@ -2,9 +2,9 @@ from machine_learning.networks.yolo import NblityNet
 from machine_learning.algorithms.detection import YoloMM
 from machine_learning.train import Trainer, TrainCfg
 from machine_learning.utils.transforms import ImgTransform
-from machine_learning.utils.aug_cfg import DEFAULT_YOLOMM_AUG
+from machine_learning.utils.transforms import DEFAULT_YOLOMM_AUG
 from machine_learning.data.parsers import YoloMMParser, YoloParserCfg
-from machine_learning.utils.others import load_config_from_yaml
+from machine_learning.utils import load_config_from_yaml
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
     nblitynet = NblityNet(img_shape=(3, img_size, img_size), thermal_shape=(1, img_size, img_size), nc=num_classes)
 
     # Step 2: Build the algorithm
-    yolo_mm = YoloMM(cfg=yolomm_cfg, data=data, models={"nblitynet": nblitynet})
+    yolo_mm = YoloMM(cfg=yolomm_cfg, net=nblitynet)
 
     # Step 5: Configure the trainer
     trainer_cfg = TrainCfg(
@@ -40,7 +40,7 @@ def main():
         save_interval=10,
         save_best=True,
     )
-    trainer = Trainer(trainer_cfg, yolo_mm)
+    trainer = Trainer(trainer_cfg, yolo_mm, data)
 
     # Step 6: Train the model
     trainer.train()
