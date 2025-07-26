@@ -1,44 +1,39 @@
-from torchvision import transforms
-
 from machine_learning.algorithms import GAN
-from machine_learning.modules import Generator, Discriminator
+from machine_learning.networks import Generator, Discriminator
 from machine_learning.train import Trainer, TrainCfg
-from machine_learning.utils.data_parser import ParserCfg, ParserFactory
+from machine_learning.utils.transforms import ImgTransform
+from machine_learning.utils.transforms import DEFAULT_AUG
+from machine_learning.data.parsers import ParserCfg, MinistParser
 
 
 def main():
-    # Step 1: Build the network
+    # Step 1: Configure the augmentator/converter and parse the data
+    tfs = ImgTransform(aug_cfg=DEFAULT_AUG, normalize=True, mean=[0.1307], std=[0.3081], to_tensor=True)
+
+    dataset_dir = "./data/minist"
+    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
+    parser = MinistParser(parser_cfg)
+    data = parser.create()
+
+    # Step 2: Build the network
+    image_shape = data["image_shape"]
     generator_input_dim = 100
-    image_size = (1, 28, 28)
-    generator = Generator(generator_input_dim, image_size)
-    discriminator = Discriminator(image_size)
+    generator = Generator(generator_input_dim, image_shape)
+    discriminator = Discriminator(image_shape)
 
     # Step 2: Build the algorithm
     gan = GAN(
         "./src/machine_learning/algorithms/generation/gan/config/config.yaml",
-        {"generator": generator, "discriminator": discriminator},
+        generator,
+        discriminator,
     )
-
-    # Step 3: Configure the augmentator/converter
-    tfs = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.1307], std=[0.3081]),
-        ]
-    )
-
-    # Step 4: Parse the data
-    dataset_dir = "./data/minist"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, transforms=tfs)
-    parser = ParserFactory().parser_create(parser_cfg)
-    dataset = parser.create()
 
     # Step 5: Configure the trainer
     trainer_cfg = TrainCfg(
         log_dir="./logs/gan/",
         model_dir="./checkpoints/gan/",
     )
-    trainer = Trainer(trainer_cfg, dataset, gan)
+    trainer = Trainer(trainer_cfg, gan, data)
 
     # Step 6: Train the model
     trainer.train()

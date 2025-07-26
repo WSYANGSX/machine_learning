@@ -32,6 +32,7 @@ class Discriminator(BaseNet):
         return output
 
     def view_structure(self):
+        super().view_structure()
         from torchinfo import summary
 
         summary(self, input_size=(1, *self.input_size))

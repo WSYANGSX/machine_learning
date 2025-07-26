@@ -82,7 +82,7 @@ class Trainer:
                     scheduler.step(val_res["loss"])
                 else:
                     scheduler.step()
-            elif self.algorithm.schedulers > 1:  # multi nets, multi optimizers
+            elif len(self.algorithm.schedulers) > 1:  # multi nets, multi optimizers
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         scheduler.step(val_res[name + " loss"])

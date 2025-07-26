@@ -3,7 +3,7 @@ from typing import Literal, Mapping, Any
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.networks import BaseNet
+from machine_learning.networks import Generator, Discriminator
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.image import show_image
@@ -13,7 +13,8 @@ class GAN(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        models: Mapping[str, BaseNet],
+        generator: Generator,
+        discriminator: Discriminator,
         name: str | None = "gan",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -22,43 +23,49 @@ class GAN(AlgorithmBase):
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
-            models (Mapping[str, BaseNet]): Models required by the GAN algorithm, {"generator": model1, "discriminator": model2}.
+            generator (Generator): Generator net required by the GAN algorithm.
+            discriminator (Discriminator): Discriminator net required by the GAN algorithm.
             name (str, optional): Name of the algorithm. Defaults to "gan".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg, models, name, device)
+        super().__init__(cfg=cfg, name=name, device=device)
+
+        self.generator = generator
+        self.discriminator = discriminator
+        self._add_net("generator", self.generator)
+        self._add_net("discriminator", self.discriminator)
 
         # -------------------- the dim of prior ------------------------
-        self.z_dim = self.models["generator"].input_dim
+        self.z_dim = self.generator.input_dim
 
     def _configure_optimizers(self) -> None:
-        opt_cfg = self.cfg["optimizer"]
+        self.opt_cfg = self.cfg["optimizer"]
 
-        if opt_cfg["type"] == "Adam":
+        if self.opt_cfg["type"] == "Adam":
             self._optimizers.update(
                 {
                     "generator": torch.optim.Adam(
-                        params=self.models["generator"].parameters(),
-                        lr=opt_cfg["g_learning_rate"],
-                        betas=(opt_cfg["g_beta1"], opt_cfg["g_beta2"]),
-                        eps=opt_cfg["g_eps"],
-                        weight_decay=opt_cfg["g_weight_decay"],
+                        params=self.nets["generator"].parameters(),
+                        lr=self.opt_cfg["g_learning_rate"],
+                        betas=(self.opt_cfg["g_beta1"], self.opt_cfg["g_beta2"]),
+                        eps=self.opt_cfg["g_eps"],
+                        weight_decay=self.opt_cfg["g_weight_decay"],
                     )
                 }
             )
             self._optimizers.update(
                 {
                     "discriminator": torch.optim.Adam(
-                        params=self.models["discriminator"].parameters(),
-                        lr=opt_cfg["d_learning_rate"],
-                        betas=(opt_cfg["d_beta1"], opt_cfg["d_beta2"]),
-                        eps=opt_cfg["d_eps"],
-                        weight_decay=opt_cfg["d_weight_decay"],
+                        params=self.nets["discriminator"].parameters(),
+                        lr=self.opt_cfg["d_learning_rate"],
+                        betas=(self.opt_cfg["d_beta1"], self.opt_cfg["d_beta2"]),
+                        eps=self.opt_cfg["d_eps"],
+                        weight_decay=self.opt_cfg["d_weight_decay"],
                     )
                 }
             )
         else:
-            ValueError(f"Does not support optimizer:{opt_cfg['type']} currently.")
+            ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
 
     def _configure_schedulers(self) -> None:
         sched_config = self.cfg.get("scheduler", {})
@@ -87,19 +94,19 @@ class GAN(AlgorithmBase):
         for batch_idx, (real_images, _) in enumerate(self.train_loader):
             real_images = real_images.to(self._device, non_blocking=True)
             z = torch.randn((len(real_images), self.z_dim), device=self.device, dtype=torch.float32)
-            fake_image = self.models["generator"](z)
+            fake_image = self.nets["generator"](z)
 
             # train discriminator
             self._optimizers["discriminator"].zero_grad()
 
-            real_preds = self.models["discriminator"](real_images)
-            fake_preds = self.models["discriminator"](fake_image.detach())
+            real_preds = self.nets["discriminator"](real_images)
+            fake_preds = self.nets["discriminator"](fake_image.detach())
 
             d_loss = discriminator_criterion_bce(real_preds, fake_preds)
             d_loss.backward()
 
             torch.nn.utils.clip_grad_norm_(
-                self.models["discriminator"].parameters(), self.cfg["optimizer"]["grad_clip"]["discriminator"]
+                self.nets["discriminator"].parameters(), self.cfg["optimizer"]["grad_clip"]["discriminator"]
             )
             self._optimizers["discriminator"].step()
             total_d_loss += d_loss
@@ -111,14 +118,14 @@ class GAN(AlgorithmBase):
             if batch_idx % n_discriminator == 0:
                 self._optimizers["generator"].zero_grad()
 
-                fake_preds = self.models["discriminator"](fake_image)
+                fake_preds = self.nets["discriminator"](fake_image)
                 g_loss = generator_criterion_bce(fake_preds)
                 total_g_loss += g_loss
 
                 g_loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(
-                    self.models["generator"].parameters(), self.cfg["optimizer"]["grad_clip"]["generator"]
+                    self.nets["generator"].parameters(), self.cfg["optimizer"]["grad_clip"]["generator"]
                 )
                 self._optimizers["generator"].step()
 
@@ -138,7 +145,7 @@ class GAN(AlgorithmBase):
         d_avg_loss = total_d_loss / len(self.train_loader)
         g_avg_loss = total_g_loss / g_count
 
-        return {"discriminator": d_avg_loss, "generator": g_avg_loss}
+        return {"discriminator loss": d_avg_loss, "generator loss": g_avg_loss}
 
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
@@ -151,10 +158,10 @@ class GAN(AlgorithmBase):
             for real_image, _ in self.val_loader:
                 real_image = real_image.to(self.device, non_blocking=True)
                 z = torch.randn((len(real_image), self.z_dim), device=self.device, dtype=torch.float32)
-                fake_image = self.models["generator"](z)
+                fake_image = self.nets["generator"](z)
 
-                real_preds = self.models["discriminator"](real_image)
-                fake_preds = self.models["discriminator"](fake_image)
+                real_preds = self.nets["discriminator"](real_image)
+                fake_preds = self.nets["discriminator"](fake_image)
 
                 d_loss = discriminator_criterion_bce(real_preds, fake_preds)
                 d_total_loss += d_loss.item()
@@ -165,7 +172,7 @@ class GAN(AlgorithmBase):
         d_avg_loss = d_total_loss / len(self.val_loader)
         g_avg_loss = g_total_loss / len(self.val_loader)
 
-        return {"discriminator": d_avg_loss, "generator": g_avg_loss}
+        return {"discriminator loss": d_avg_loss, "generator loss": g_avg_loss}
 
     def eval(self, num_samples: int = 5) -> None:
         """Evaluate the model effect by visualizing reconstruction results"""
@@ -174,7 +181,7 @@ class GAN(AlgorithmBase):
         z = torch.randn((num_samples, self.z_dim), device=self.device, dtype=torch.float32)
 
         with torch.no_grad():  # Disable gradient calculation, which has the same effect as.detach()
-            recons = self.models["generator"](z)
+            recons = self.nets["generator"](z)
 
         show_image(recons, color_mode="gray", backend="pyplot")
 
