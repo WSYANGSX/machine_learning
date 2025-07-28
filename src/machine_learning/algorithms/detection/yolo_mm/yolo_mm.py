@@ -11,7 +11,6 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.modules.blocks import DFL
 from machine_learning.utils.ops import empty_like
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
@@ -61,6 +60,8 @@ class YoloMM(AlgorithmBase):
 
     def _configure_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
+
+        self.optimizer = None
 
         # normalized layers
         norm_types = (
@@ -133,6 +134,8 @@ class YoloMM(AlgorithmBase):
     def _configure_schedulers(self) -> None:
         self.sch_config = self._cfg["scheduler"]
 
+        self.scheduler = None
+
         if self.sch_config.get("type") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
@@ -141,7 +144,7 @@ class YoloMM(AlgorithmBase):
                 patience=self.sch_config.get("patience", 10),
             )
 
-        if self.sch_config.get("type") == "CustomLRDecay":
+        elif self.sch_config.get("type") == "CustomLRDecay":
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(
                 self.optimizer,
                 lr_lambda=lambda x: max(1 - x / self.cfg["train"]["epochs"], 0)

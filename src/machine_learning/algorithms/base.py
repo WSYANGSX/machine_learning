@@ -190,6 +190,8 @@ class AlgorithmBase(ABC):
         """Configure the training optimizer"""
         self.opt_cfg = self._cfg["optimizer"]
 
+        self.optimizer = None
+
         if self.opt_cfg["type"] == "SGD":
             self.optimizer = torch.optim.SGD(
                 params=self.net.parameters(),
@@ -215,6 +217,8 @@ class AlgorithmBase(ABC):
     def _configure_schedulers(self):
         """Configure the learning rate scheduler"""
         self.sch_config = self._cfg["scheduler"]
+
+        self.scheduler = None
 
         if self.sch_config.get("type") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
