@@ -42,7 +42,7 @@ class DetectV8(nn.Module):
             ]
         )
 
-        # 分类分支
+        # cls branch
         self.cv2 = nn.ModuleList(
             [
                 nn.Sequential(
@@ -58,14 +58,11 @@ class DetectV8(nn.Module):
         """Initialize biases for classification branch."""
         LOGGER.info(f"Initializing bias parameters of {self.__class__.__name__}...")
 
-        for cv2 in self.cv2:
-            m = cv2[-1]  # 最后一个卷积层
-            if isinstance(m, nn.Conv2d) and m.bias is not None:
-                b = m.bias.data.view(-1)  # 展平便于索引
-                # 目标检测常用初始化技巧
-                b[:1] += math.log(5 / self.nc / (640 / self.stride[0]))  # obj
-                b[1:] += math.log(0.6 / (self.nc - 0.99999))  # cls
-                m.bias = torch.nn.Parameter(b.view_as(m.bias.data), requires_grad=True)
+        for a, b, s in zip(self.cv1, self.cv2, self.stride):  # from
+            a[-1].bias.data[:] = 1.0  # box
+            b[-1].bias.data[: self.nc] = math.log(
+                5 / self.nc / (640 / s) ** 2
+            )  # cls (.01 objects, 80 classes, 640 img)
 
     def forward(self, x: List[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
         """Forward pass through detection head."""

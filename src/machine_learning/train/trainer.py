@@ -80,12 +80,16 @@ class Trainer:
                 scheduler = self.algorithm.schedulers["scheduler"]
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     scheduler.step(val_res["loss"])
+                elif isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR):
+                    scheduler.step(epoch)
                 else:
                     scheduler.step()
             elif len(self.algorithm.schedulers) > 1:  # multi nets, multi optimizers
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         scheduler.step(val_res[name + " loss"])
+                    elif isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR):
+                        scheduler.step(epoch)
                     else:
                         scheduler.step()
 

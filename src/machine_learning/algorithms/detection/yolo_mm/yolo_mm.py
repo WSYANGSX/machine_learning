@@ -9,9 +9,9 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
-from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.types.aliases import FilePath
 from machine_learning.utils.ops import empty_like
+from machine_learning.types.aliases import FilePath
+from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
@@ -147,9 +147,8 @@ class YoloMM(AlgorithmBase):
         elif self.sch_config.get("type") == "CustomLRDecay":
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(
                 self.optimizer,
-                lr_lambda=lambda x: max(1 - x / self.cfg["train"]["epochs"], 0)
-                * (1.0 - self.opt_cfg["learning_rate_final_factor"])
-                + self.opt_cfg["learning_rate_final_factor"],
+                lr_lambda=lambda x: max(1 - x / self.cfg["train"]["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
+                + self.opt_cfg["final_factor"],
             )
 
         else:
@@ -225,64 +224,66 @@ class YoloMM(AlgorithmBase):
                 # Calculate the prediction result
                 preds = self.non_max_suppression([pred1, pred2, pred3], imgs.shape[2])
 
-        total_loss += loss.item()
-        total_box_loss += loss_components["box_loss"]
-        total_cls_loss += loss_components["cls_loss"]
-        total_dfl_loss += loss_components["dfl_loss"]
+            total_loss += loss.item()
+            total_box_loss += loss_components["box_loss"]
+            total_cls_loss += loss_components["cls_loss"]
+            total_dfl_loss += loss_components["dfl_loss"]
 
-        scale = torch.tensor([imgs.shape[3], imgs.shape[2], imgs.shape[3], imgs.shape[2]], device=self.device)
+            scale = torch.tensor([imgs.shape[3], imgs.shape[2], imgs.shape[3], imgs.shape[2]], device=self.device)
 
-        # 创建目标副本
-        targets_abs = targets.clone()
+            targets_abs = targets.clone()
+            bbox_norm = targets[:, 2:6]
+            bbox_abs = bbox_norm * scale  # 转换为绝对坐标的xywh
+            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # 转换为xyxy
 
-        # 只对bbox部分进行转换
-        bbox_norm = targets[:, 2:6]
-        bbox_abs = bbox_norm * scale  # 转换为绝对坐标的xywh
-        targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # 转换为xyxy
+            for si, pred in enumerate(preds):
+                # 获取当前图像的真实框 (img_id, class_id, x1, y1, x2, y2)
+                labels = targets_abs[targets_abs[:, 0] == si, 1:]
 
-        for si, pred in enumerate(preds):
-            # 获取当前图像的真实框 (img_id, class_id, x1, y1, x2, y2)
-            labels = targets_abs[targets_abs[:, 0] == si, 1:]
+                # 提取真实框的类别和坐标
+                tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
+                tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
 
-            # 提取真实框的类别和坐标
-            tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
-            tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
+                if len(pred) == 0:
+                    if len(labels):
+                        stats.append(
+                            (
+                                torch.zeros(0, niou, dtype=torch.bool),
+                                torch.Tensor(),
+                                torch.Tensor(),
+                                tcls.cpu().tolist(),
+                            )
+                        )
+                    continue
 
-            if len(pred) == 0:
+                # 预测框格式: [x1, y1, x2, y2, conf, class]
+                pred_boxes = pred[:, :4]
+                pred_scores = pred[:, 4]
+                pred_classes = pred[:, 5]
+
+                # 计算IoU
+                ious = self.box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
+
+                # 找到每个预测框的最佳匹配真实框
+                best_iou, best_idx = ious.max(1)  # 每个预测框的最大IoU及对应真实框索引
+
+                # 创建正确匹配矩阵
+                correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=self.device)
+
                 if len(labels):
-                    stats.append(
-                        (torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls.cpu().tolist())
-                    )
-                continue
+                    # 检查类别匹配和IoU阈值
+                    class_matches = pred_classes == tcls[best_idx]
+                    iou_matches = best_iou > self.iou_threshold
 
-            # 预测框格式: [x1, y1, x2, y2, conf, class]
-            pred_boxes = pred[:, :4]
-            pred_scores = pred[:, 4]
-            pred_classes = pred[:, 5]
+                    # 综合匹配条件
+                    matches = class_matches & iou_matches
 
-            # 计算IoU
-            ious = self.box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
+                    # 标记正确匹配
+                    for iou_idx, iou_thresh in enumerate(iouv):
+                        correct[:, iou_idx] = matches & (best_iou > iou_thresh)
 
-            # 找到每个预测框的最佳匹配真实框
-            best_iou, best_idx = ious.max(1)  # 每个预测框的最大IoU及对应真实框索引
-
-            # 创建正确匹配矩阵
-            correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=self.device)
-
-            if len(labels):
-                # 检查类别匹配和IoU阈值
-                class_matches = pred_classes == tcls[best_idx]
-                iou_matches = best_iou > self.iou_threshold
-
-                # 综合匹配条件
-                matches = class_matches & iou_matches
-
-                # 标记正确匹配
-                for iou_idx, iou_thresh in enumerate(iouv):
-                    correct[:, iou_idx] = matches & (best_iou > iou_thresh)
-
-            # 记录统计信息
-            stats.append((correct.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu().tolist()))
+                # 记录统计信息
+                stats.append((correct.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu().tolist()))
 
         # 计算平均损失
         num_batches = len(self.val_loader)
@@ -442,7 +443,7 @@ class YoloMM(AlgorithmBase):
         strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
         pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
             (self.reg_max * 4, self.nc), 1
-        )  # [bs, no, h1*w1+h2*w2+h3*w3]
+        )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
 
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
