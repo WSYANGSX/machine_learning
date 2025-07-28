@@ -1,6 +1,7 @@
 import torch
 
-a = {"1": 1, "2": 2}
-b = {"1": 3, "4": 4}
-a.update(b)
-print(iter(a.values())[0])
+a = torch.rand((2, 5, 10))
+print(a)
+topk, topk_indices = torch.topk(a, 3, dim=-1, largest=True)
+print(topk)
+print(topk_indices)

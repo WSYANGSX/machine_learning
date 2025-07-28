@@ -44,7 +44,7 @@ class Trainer:
         LOGGER.info(f"Current seed: {self.cfg.seed}")
 
         # ------------------------ initilaize algo -------------------------
-        self._algorithm._add_cfg("trainer", cfg_to_dict(self.cfg))
+        self._algorithm._add_cfg("train", cfg_to_dict(self.cfg))
         self._algorithm._initialize(data=data)
         print_cfg("Configuration", self._algorithm.cfg)
 
