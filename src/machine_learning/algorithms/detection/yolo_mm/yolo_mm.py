@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
 from machine_learning.utils.ops import empty_like
+from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.types.aliases import FilePath
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
@@ -45,6 +46,7 @@ class YoloMM(AlgorithmBase):
         self.label_smoothing_scale = self.cfg["algorithm"]["label_smoothing_scale"]
         self.nc = self.net.nc
         self.no = self.nc + self.reg_max * 4
+        self.amp = self.cfg["algorithm"]["amp"]
 
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
@@ -63,18 +65,6 @@ class YoloMM(AlgorithmBase):
 
         self.optimizer = None
 
-        # normalized layers
-        norm_types = (
-            nn.BatchNorm1d,
-            nn.BatchNorm2d,
-            nn.BatchNorm3d,
-            nn.LayerNorm,
-            nn.GroupNorm,
-            nn.InstanceNorm1d,
-            nn.InstanceNorm2d,
-            nn.InstanceNorm3d,
-        )
-
         decay_params = []
         no_decay_norm_params = []
         no_decay_bias_params = []
@@ -90,7 +80,7 @@ class YoloMM(AlgorithmBase):
 
             if "bias" in full_name:
                 no_decay_bias_params.append(param)
-            elif module is not None and isinstance(module, norm_types):
+            elif module is not None and isinstance(module, NORM_LAYER_TYPES):
                 no_decay_norm_params.append(param)
             else:
                 decay_params.append(param)
@@ -145,11 +135,11 @@ class YoloMM(AlgorithmBase):
             )
 
         elif self.sch_config.get("type") == "CustomLRDecay":
-            self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self.optimizer,
-                lr_lambda=lambda x: max(1 - x / self.cfg["train"]["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
-                + self.opt_cfg["final_factor"],
-            )
+            self.lf = (
+                lambda x: max(1 - x / self.cfg["train"]["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
+                + self.opt_cfg["final_factor"]
+            )  # linear
+            self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
 
         else:
             print(f"Warning: Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
@@ -158,40 +148,47 @@ class YoloMM(AlgorithmBase):
         self.set_train()
 
         total_loss = 0.0
-        scaler = GradScaler()
+        self.scaler = GradScaler()
 
         for batch_idx, (imgs, thermals, iid_cls_bboxes) in enumerate(self.train_loader):
+            # warmup
+            batch_inters = epoch * self.num_batches + batch_idx
+            self.warmup(batch_inters, epoch)
+
+            # load data
             imgs = imgs.to(self.device, non_blocking=True)
             thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
             self.optimizer.zero_grad()
 
-            with autocast(
-                enabled=True, dtype=torch.float16
-            ):  # Ensure that the autocast scope correctly covers the forward computation
+            with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
                 pred1, pred2, pred3 = self.net(imgs, thermals)
                 loss, loss_components = self.criterion(
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )
 
-            scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._cfg["optimizer"]["grad_clip"])
-            scaler.step(self.optimizer)
-            scaler.update()
+            self.scaler.scale(loss).backward()  # backward
+            if batch_inters - self.last_opt_step >= self.accumulate:
+                self.optimizer_step()
+                self.last_opt_step = batch_inters
 
             total_loss += loss.item()
 
-            batches = epoch * len(self.train_loader) + batch_idx
             if batch_idx % log_interval == 0:
-                writer.add_scalar("box_loss/train_batch", loss_components["box_loss"], batches)
-                writer.add_scalar("cls_loss/train_batch", loss_components["cls_loss"], batches)
-                writer.add_scalar("dfl_loss/train_batch", loss_components["dfl_loss"], batches)
-                writer.add_scalar("total_loss/train_batch", loss_components["total_loss"], batches)
+                writer.add_scalar("box_loss/train_batch", loss_components["box_loss"], batch_inters)
+                writer.add_scalar("cls_loss/train_batch", loss_components["cls_loss"], batch_inters)
+                writer.add_scalar("dfl_loss/train_batch", loss_components["dfl_loss"], batch_inters)
 
         avg_loss = total_loss / len(self.train_loader)
 
         return {"loss": avg_loss}
+
+    def optimizer_step(self) -> None:
+        self.scaler.unscale_(self.optimizer)  # unscale gradients, necessary if gradient clipping is performed after.
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._cfg["optimizer"]["grad_clip"])
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -214,15 +211,11 @@ class YoloMM(AlgorithmBase):
             thermals = thermals.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
 
-            # Forward propagation
-            with autocast(enabled=True, dtype=torch.float16):
-                pred1, pred2, pred3 = self.net(imgs, thermals)
-                loss, loss_components = self.criterion(
-                    preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
-                )
+            pred1, pred2, pred3 = self.net(imgs, thermals)
+            loss, loss_components = self.criterion(preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2))
 
-                # Calculate the prediction result
-                preds = self.non_max_suppression([pred1, pred2, pred3], imgs.shape[2])
+            # Calculate the prediction result
+            preds = self.non_max_suppression([pred1, pred2, pred3], imgs.shape[2])
 
             total_loss += loss.item()
             total_box_loss += loss_components["box_loss"]
@@ -287,10 +280,11 @@ class YoloMM(AlgorithmBase):
 
         # 计算平均损失
         num_batches = len(self.val_loader)
-        metrics["val/loss"] = total_loss / num_batches
-        metrics["val/box_loss"] = total_box_loss / num_batches
-        metrics["val/cls_loss"] = total_cls_loss / num_batches
-        metrics["val/dfl_loss"] = total_dfl_loss / num_batches
+        metrics["loss"] = total_loss / num_batches
+        metrics["box_loss"] = total_box_loss / num_batches
+        metrics["cls_loss"] = total_cls_loss / num_batches
+        metrics["dfl_loss"] = total_dfl_loss / num_batches
+        metrics["save metric"] = metrics["loss"]
 
         # 计算mAP指标
         if stats:
@@ -298,6 +292,28 @@ class YoloMM(AlgorithmBase):
             metrics.update(self.compute_ap(tp, conf, pred_cls, target_cls))
 
         return metrics
+
+    def warmup(self, batch_inters: int, epoch: int) -> int:
+        nw = (
+            max(round(self.opt_cfg["warmup_epochs"] * self.num_batches), 100)
+            if self.opt_cfg["warmup_epochs"] > 0
+            else -1
+        )  # warmup batches
+
+        if batch_inters <= nw:
+            xi = [0, nw]  # x interp
+            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
+            for j, x in enumerate(self.optimizer.param_groups):
+                # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                x["lr"] = np.interp(
+                    batch_inters,
+                    xi,
+                    [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
+                )
+                if "momentum" in x:
+                    x["momentum"] = np.interp(
+                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
+                    )
 
     @torch.no_grad()
     def non_max_suppression(self, preds: list[torch.Tensor], img_size: int) -> list[torch.Tensor]:
@@ -387,16 +403,16 @@ class YoloMM(AlgorithmBase):
 
         # 计算全局指标
         results = {
-            "val/mAP": ap[:, :].mean(),
-            "val/mAP_50": ap[:, 0].mean(),
-            "val/mAP_75": ap[:, 5].mean(),
-            "val/precision": p.mean(0).mean(),
-            "val/recall": r.mean(0).mean(),
+            "mAP": ap[:, :].mean(),
+            "mAP_50": ap[:, 0].mean(),
+            "mAP_75": ap[:, 5].mean(),
+            "precision": p.mean(0).mean(),
+            "recall": r.mean(0).mean(),
         }
 
         # 添加每个类别的AP
         for ci in range(nc):
-            results[f"val/AP_{self.cfg['data']['class_names'][ci]}"] = ap[ci].mean()
+            results[f"AP_{self.cfg['data']['class_names'][ci]}"] = ap[ci].mean()
 
         return results
 
@@ -454,7 +470,7 @@ class YoloMM(AlgorithmBase):
         # Targets
         scale_tensor = torch.tensor([img_size] * 4, device=self.device)
         targets = torch.cat((targets[:, [0]], targets[:, [1]], targets[:, 2:6]), 1)
-        targets = self.preprocess(targets.to(self.device), bs, scale_tensor=scale_tensor)
+        targets = self.preprocess(targets, bs, scale_tensor=scale_tensor)
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
 
@@ -488,13 +504,12 @@ class YoloMM(AlgorithmBase):
         box_loss *= self.box_weight  # cls gain
         dfl_loss *= self.dfl_weight  # dfl gain
 
-        total_loss = box_loss + cls_loss + dfl_loss
+        total_loss = (box_loss + cls_loss + dfl_loss) * bs
 
         loss_component = {
             "box_loss": box_loss.item(),
             "cls_loss": cls_loss.item(),
             "dfl_loss": dfl_loss.item(),
-            "total_loss": total_loss.item(),
         }
 
         return total_loss, loss_component

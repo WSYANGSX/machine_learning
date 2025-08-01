@@ -1,7 +1,7 @@
 import torch
+import numpy as np
 
-a = torch.rand((2, 5, 10))
-print(a)
-topk, topk_indices = torch.topk(a, 3, dim=-1, largest=True)
-print(topk)
-print(topk_indices)
+a = torch.tensor([[1, 2, 3], [4, 5, 6]])
+print(a.shape)
+b = np.array(a)
+print(type(b.shape))

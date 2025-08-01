@@ -2,6 +2,26 @@ from typing import Sequence
 
 import torch.nn as nn
 
+# normalize layer types
+NORM_LAYER_TYPES = (
+    nn.BatchNorm1d,
+    nn.BatchNorm2d,
+    nn.BatchNorm3d,
+    nn.LayerNorm,
+    nn.GroupNorm,
+    nn.InstanceNorm1d,
+    nn.InstanceNorm2d,
+    nn.InstanceNorm3d,
+    nn.LazyBatchNorm1d,
+    nn.LazyBatchNorm2d,
+    nn.LazyBatchNorm3d,
+    nn.SyncBatchNorm,
+    nn.LocalResponseNorm,
+    nn.LazyInstanceNorm1d,
+    nn.LazyInstanceNorm2d,
+    nn.LazyInstanceNorm3d,
+)
+
 
 def cal_conv_output_size(input_size: Sequence[int], conv_layer: nn.Module) -> tuple[int]:
     if not isinstance(conv_layer, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):

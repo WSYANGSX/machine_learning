@@ -52,6 +52,9 @@ class AlgorithmBase(ABC):
         self._validate_config()
 
         self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
+        self.nbs = self.cfg["algorithm"].get("nbs", -1)
+        self.accumulate = max(1, round(self.nbs / self.batch_size))
+        self.last_opt_step = -1
 
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
@@ -186,6 +189,8 @@ class AlgorithmBase(ABC):
             for key, val in data.items():
                 self.cfg["data"][key] = val
 
+        self.num_batches = len(self.train_loader)
+
     def _configure_optimizers(self):
         """Configure the training optimizer"""
         self.opt_cfg = self._cfg["optimizer"]
@@ -287,6 +292,7 @@ class AlgorithmBase(ABC):
             "best loss": best_loss,
             "nets": {},
             "optimizers": {},
+            "last_opt_step": self.last_opt_step,
         }
 
         for key, val in val_info.items():
@@ -312,6 +318,7 @@ class AlgorithmBase(ABC):
 
         # cfg
         self._cfg = state["cfg"]
+        self.last_opt_step = state["last_opt_step"]
 
         # load the nets' parameters
         for key, val in self.nets.items():

@@ -1,34 +1,31 @@
+import numpy as np
+
 from PIL import Image
-from machine_learning.utils.aug_cfg import DEFAULT_YOLOMM_AUG
 from machine_learning.utils.detection import yolo2voc
-from machine_learning.utils.draw import visualize_img_with_bboxes
-
-
+from machine_learning.utils.aug import DEFAULT_YOLOMM_AUG
 from machine_learning.utils.transforms import ImgTransform
-from machine_learning.utils.detection import yolo2voc
-from machine_learning.utils.draw import visualize_img_with_bboxes
+from machine_learning.utils.image import visualize_img_with_bboxes
 
+np.set_printoptions(threshold=np.inf)
 
 if __name__ == "__main__":
-    import numpy as np
-
-    np.set_printoptions(threshold=np.inf)
-
-    img_path = "/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/JPEGImages/FLIR_00002_RGB.jpg"
+    img_path = "./data/Flir_aligned/JPEGImages/FLIR_00099_RGB.jpg"
     image = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
-    thermal_path = "/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/JPEGImages/FLIR_00002_PreviewData.jpeg"
+    thermal_path = "./data/Flir_aligned/JPEGImages/FLIR_00099_PreviewData.jpeg"
     thermal = np.array(Image.open(img_path).convert("L"), dtype=np.uint8)
 
-    labels = np.loadtxt("/home/yangxf/WorkSpace/machine_learning/data/Flir_aligned/Annotations/FLIR_00002.txt").reshape(
-        -1, 5
-    )
+    labels = np.loadtxt("./data/Flir_aligned/Annotations/FLIR_00099.txt").reshape(-1, 5)
     bboxes = labels[:, 1:5]
 
     category_ids = labels[:, 0]
     category_id_to_name = {x: str(x) for x in category_ids}
-    visualize_img_with_bboxes(image, yolo2voc(image, bboxes), category_ids, category_id_to_name)
-    visualize_img_with_bboxes(thermal, yolo2voc(thermal, bboxes), category_ids, category_id_to_name, "gray")
+    visualize_img_with_bboxes(
+        image, yolo2voc(bboxes, image.shape[1], image.shape[0]), category_ids, category_id_to_name
+    )
+    visualize_img_with_bboxes(
+        thermal, yolo2voc(bboxes, thermal.shape[1], thermal.shape[0]), category_ids, category_id_to_name, "gray"
+    )
 
     transform = ImgTransform(DEFAULT_YOLOMM_AUG, normalize=True, to_tensor=False)
 
@@ -40,14 +37,17 @@ if __name__ == "__main__":
     transformed_bboxes = transformed["bboxes"]
     transformed_category_ids = transformed["category_ids"]
 
-    print(transformed_category_ids)
+    print(type(transformed_category_ids))
 
     visualize_img_with_bboxes(
-        transformed_img, yolo2voc(transformed_img, transformed_bboxes), transformed["category_ids"], category_id_to_name
+        transformed_img,
+        yolo2voc(transformed_bboxes, transformed_img.shape[1], transformed_img.shape[0]),
+        transformed["category_ids"],
+        category_id_to_name,
     )
     visualize_img_with_bboxes(
         transformed_thermal,
-        yolo2voc(transformed_img, transformed_bboxes),
+        yolo2voc(transformed_bboxes, transformed_thermal.shape[1], transformed_thermal.shape[0]),
         transformed["category_ids"],
         category_id_to_name,
         "gray",

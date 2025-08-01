@@ -1,13 +1,16 @@
-from typing import Literal, Iterable, Sequence
+from typing import Literal, Iterable, Sequence, Union
 
 import time
 import torch
 import torchvision
 import numpy as np
+from copy import deepcopy
+
+from machine_learning.utils.ops import zeros_like
 
 
-def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
-    new = x.new(x.shape)
+def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
+    new = zeros_like(x)
     new[..., 0] = x[..., 0] - x[..., 2] / 2
     new[..., 1] = x[..., 1] - x[..., 3] / 2
     new[..., 2] = x[..., 0] + x[..., 2] / 2
@@ -16,18 +19,8 @@ def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
     return new
 
 
-def xywh2xyxy_np(x):
-    new = np.zeros_like(x)
-    new[..., 0] = x[..., 0] - x[..., 2] / 2
-    new[..., 1] = x[..., 1] - x[..., 3] / 2
-    new[..., 2] = x[..., 0] + x[..., 2] / 2
-    new[..., 3] = x[..., 1] + x[..., 3] / 2
-
-    return new
-
-
-def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
-    new = x.new(x.shape)
+def xyxy2xywh(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
+    new = zeros_like(x)
     new[..., 0] = (x[..., 0] + x[..., 2]) / 2
     new[..., 1] = (x[..., 1] + x[..., 3]) / 2
     new[..., 2] = x[..., 2] - x[..., 0]
@@ -36,36 +29,25 @@ def xyxy2xywh(x: torch.Tensor) -> torch.Tensor:
     return new
 
 
-def xyxy2xywh_np(x: torch.Tensor) -> torch.Tensor:
-    new = np.zeros_like(x)
-    new[..., 0] = (x[..., 0] + x[..., 2]) / 2
-    new[..., 1] = (x[..., 1] + x[..., 3]) / 2
-    new[..., 2] = x[..., 2] - x[..., 0]
-    new[..., 3] = x[..., 3] - x[..., 1]
-
+def to_abs_labels(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> Union[torch.Tensor, np.ndarray]:
+    new = deepcopy(bboxes)
+    new[:, [0, 2]] *= img_w
+    new[:, [1, 3]] *= img_h
     return new
 
 
-def to_absolute_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
-    img, bboxes = img, bboxes
-    h, w = img.shape[:2]
-    bboxes[:, [0, 2]] *= w
-    bboxes[:, [1, 3]] *= h
-    return bboxes
+def to_rel_labels(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> Union[torch.Tensor, np.ndarray]:
+    new = deepcopy(bboxes)
+    new[:, [0, 2]] /= img_w
+    new[:, [1, 3]] /= img_h
+    return new
 
 
-def to_relative_labels(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
-    img, bboxes = img, bboxes
-    h, w = img.shape[:2]
-    bboxes[:, [0, 2]] /= w
-    bboxes[:, [1, 3]] /= h
-    return bboxes
+def yolo2voc(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> np.ndarray:
+    return to_abs_labels(xywh2xyxy(bboxes), img_w, img_h)
 
 
-def yolo2voc(img: np.ndarray, bboxes: np.ndarray) -> np.ndarray:
-    return to_absolute_labels(img, xywh2xyxy_np(bboxes))
-
-
+# TODO
 def pad_to_square(img: np.ndarray, pad_values: int | Sequence[tuple[int]]):
     h, w = img.shape[0], img.shape[1]
     dim_diff = np.abs(h - w)

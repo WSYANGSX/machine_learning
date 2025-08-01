@@ -80,16 +80,12 @@ class Trainer:
                 scheduler = self.algorithm.schedulers["scheduler"]
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     scheduler.step(val_res["loss"])
-                elif isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR):
-                    scheduler.step(epoch)
                 else:
                     scheduler.step()
             elif len(self.algorithm.schedulers) > 1:  # multi nets, multi optimizers
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         scheduler.step(val_res[name + " loss"])
-                    elif isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR):
-                        scheduler.step(epoch)
                     else:
                         scheduler.step()
 
@@ -145,7 +141,7 @@ class Trainer:
     def log_epoch_info(self, epoch: int, train_info: dict[Any], val_info: dict[Any]) -> None:
         log_table = PrettyTable()
         log_table.title = "Evaluation indicators: " + f"Epoch {epoch}"
-        log_table.field_names = ["Indicator name", "Value"]
+        log_table.field_names = ["Indicator", "Value"]
 
         rows = []
         for key, val in train_info.items():
