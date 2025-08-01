@@ -47,33 +47,61 @@ def yolo2voc(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) ->
     return to_abs_labels(xywh2xyxy(bboxes), img_w, img_h)
 
 
-# TODO
-def pad_to_square(img: np.ndarray, pad_values: int | Sequence[tuple[int]]):
+def pad_to_square(
+    img: Union[torch.Tensor, np.ndarray], pad_values: Union[int, tuple] = 0
+) -> Union[torch.Tensor, np.ndarray]:
+    # first to convert to np
+    output_type = "np"
+    if isinstance(img, torch.Tensor):
+        output_type = "torch"
+        dtype = img.dtype
+
+        if img.ndim == 3:
+            img = np.array(img.permute(1, 2, 0))
+        elif img.ndim == 2:
+            img = np.array(img)
+        else:
+            raise ValueError(f"Unsupported tensor shape: {img.shape}. Expected 2D (H,W) or 3D (C,H,W).")
+
     h, w = img.shape[0], img.shape[1]
     dim_diff = np.abs(h - w)
     pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
 
-    # 处理不同维度的图像
-    if img.ndim == 2:  # 灰度图 (H, W)
+    if img.ndim == 2:  # gray (H, W)
         pad_width = [(pad1, pad2), (0, 0)] if h <= w else [(0, 0), (pad1, pad2)]
-    elif img.ndim == 3:  # 彩色图 (H, W, C)
+    else:  # rgb (H, W, C)
         pad_width = [(pad1, pad2), (0, 0), (0, 0)] if h <= w else [(0, 0), (pad1, pad2), (0, 0)]
-    else:
-        raise ValueError(f"Unsupported image shape: {img.shape}")
 
-    # 确保pad_values兼容
     if isinstance(pad_values, int):
         constant_values = pad_values
     else:
-        constant_values = pad_values
+        if isinstance(pad_values, tuple):
+            if img.ndim == 3:  # RGB
+                if len(pad_values) == 1:
+                    pad_values = pad_values * img.shape[2]
+                elif len(pad_values) != img.shape[2]:
+                    raise ValueError(f"pad_values must have length 1 or {img.shape[2]} for RGB images.")
+                constant_values = [(v, v) for v in pad_values]  # (left, right) for each channel
+            elif img.ndim == 2:  # gray
+                if len(pad_values) != 1:
+                    raise ValueError("pad_values must be a single int or a 1-tuple for grayscale images.")
+                constant_values = pad_values[0]
+        else:
+            raise ValueError("pad_values must be an int or a tuple.")
 
-    return np.pad(img, pad_width, "constant", constant_values=constant_values)
+    output = np.pad(img, pad_width, "constant", constant_values=constant_values)
+
+    if output_type == "torch":
+        output = torch.tensor(output, dtype=dtype)
+        if output.ndim == 3:
+            output = output.permute(2, 0, 1)
+
+    return output
 
 
-def rescale_padded_boxes(boxes: np.ndarray, cur_img_size: int, original_img_shape: tuple[int]) -> np.ndarray:
+def rescale_boxes(boxes: np.ndarray, img_size: int, org_img_shape: tuple[int, ...]) -> np.ndarray:
     """
     将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
-    [example](/home/yangxf/WorkSpace/machine_learning/docs/pictures/01.jpg)
     """
     orig_h, orig_w, _ = original_img_shape
 
