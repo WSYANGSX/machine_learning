@@ -99,9 +99,11 @@ def pad_to_square(
     return output
 
 
+# TODO
 def rescale_boxes(boxes: np.ndarray, img_size: int, org_img_shape: tuple[int, ...]) -> np.ndarray:
     """
-    将目标检测模型输出的边界框坐标从padding后的正方形图像尺寸转换回原始图像尺寸,
+    Convert the bounding box coordinates output by the object detection model from the coordinate system of the padded
+    square image back to the coordinate system of the original image.
     """
     orig_h, orig_w, _ = original_img_shape
 
