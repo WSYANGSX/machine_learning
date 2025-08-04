@@ -99,27 +99,26 @@ def pad_to_square(
     return output
 
 
-# TODO
-def rescale_boxes(boxes: np.ndarray, img_size: int, org_img_shape: tuple[int, ...]) -> np.ndarray:
+def rescale_boxes(
+    boxes: Union[torch.Tensor, np.ndarray], img_size: int, org_img_w: int, org_img_h: int
+) -> Union[torch.Tensor, np.ndarray]:
     """
     Convert the bounding box coordinates output by the object detection model from the coordinate system of the padded
     square image back to the coordinate system of the original image.
     """
-    orig_h, orig_w, _ = original_img_shape
+    # Calculate the increased pad and deal with the situation of expansion and contraction after the pad
+    pad_x = max(org_img_h - org_img_w, 0) * (img_size / max(org_img_w, org_img_h))
+    pad_y = max(org_img_w - org_img_h, 0) * (img_size / max(org_img_w, org_img_h))
 
-    # 计算增加的pad, 应对pad后放缩的情况
-    pad_x = max(orig_h - orig_w, 0) * (cur_img_size / max(original_img_shape))
-    pad_y = max(orig_w - orig_h, 0) * (cur_img_size / max(original_img_shape))
+    # the size after removing the pad
+    unpad_h = img_size - pad_y
+    unpad_w = img_size - pad_x
 
-    # 移除pad后的尺寸
-    unpad_h = cur_img_size - pad_y
-    unpad_w = cur_img_size - pad_x
-
-    # 重新映射边界框
-    boxes[:, 0] = ((boxes[:, 0] - pad_x // 2) / unpad_w) * orig_w
-    boxes[:, 1] = ((boxes[:, 1] - pad_y // 2) / unpad_h) * orig_h
-    boxes[:, 2] = ((boxes[:, 2] - pad_x // 2) / unpad_w) * orig_w
-    boxes[:, 3] = ((boxes[:, 3] - pad_y // 2) / unpad_h) * orig_h
+    # remap the bounding box
+    boxes[:, 0] = ((boxes[:, 0] - pad_x // 2) / unpad_w) * org_img_w
+    boxes[:, 1] = ((boxes[:, 1] - pad_y // 2) / unpad_h) * org_img_h
+    boxes[:, 2] = ((boxes[:, 2] - pad_x // 2) / unpad_w) * org_img_w
+    boxes[:, 3] = ((boxes[:, 3] - pad_y // 2) / unpad_h) * org_img_h
 
     return boxes
 
