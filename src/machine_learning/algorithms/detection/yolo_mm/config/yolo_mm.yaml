@@ -15,9 +15,9 @@ algorithm:
   dfl: 1.5 # (float) dfl loss gain
 
   # detection
-  iou_threshold: 0.5
-  conf_threshold: 0.1
-  nms_threshold: 0.5
+  iou_thres: 0.5
+  conf_thres: 0.1
+  nms_thres: 0.5
 
   nbs: 64 # (int) nominal batch size, -1 represent no 
 

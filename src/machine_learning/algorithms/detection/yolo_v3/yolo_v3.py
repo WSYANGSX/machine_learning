@@ -17,11 +17,11 @@ from machine_learning.types.aliases import FilePath
 from machine_learning.utils.image import resize, visualize_img_with_bboxes
 from machine_learning.utils.detection import (
     couple_bboxes_iou,
+    bbox_iou,
     xywh2xyxy,
-    get_batch_statistics,
     average_precision_per_cls,
     pad_to_square,
-    rescale_padded_boxes,
+    rescale_boxes,
 )
 
 
@@ -277,7 +277,7 @@ class YoloV3(AlgorithmBase):
 
         # rescale to img coordiante
         detection = detections[0]
-        detection[:, :4] = rescale_padded_boxes(detection[:, :4], pad_img.shape[2], origin_img_shape)
+        detection[:, :4] = rescale_boxes(detection[:, :4], pad_img.shape[2], origin_img_shape)
 
         bboxes = detection[:, :4]
         conf = detection[:, 4]
@@ -505,3 +505,63 @@ def non_max_suppression(
             break  # time limit exceeded
 
     return output
+
+
+def get_batch_statistics(detections: list[torch.Tensor], targets: torch.Tensor, iou_threshold: float) -> list:
+    """Compute true positives, predicted scores and predicted labels per batch sample
+    Source: https://https://github.com/eriklindernoren/PyTorch-YOLOv3
+
+    Args:
+        detections (torch.Tensor): list of detections after NMS of each imgs in the batch. detections
+        (x1, y1, x2, y2, conf, cls).
+        targets (torch.Tensor): real label data.
+        iou_threshold (float): iou threshold to filter true labels.
+
+    Returns:
+        list: statistics of the batch.
+    """
+    batch_metrics = []
+
+    for i in range(len(detections)):
+        detection = detections[i]
+        pred_boxes = detection[:, :4]
+        pred_scores = detection[:, 4]
+        pred_clses = detection[:, -1]
+
+        true_positives = torch.zeros(pred_boxes.shape[0], device=detection.device)
+
+        annotations = targets[targets[:, 0] == i][:, 1:]  # annotations [cls, xyxy]
+        target_cls = annotations[:, 0] if len(annotations) else []
+
+        if len(annotations):
+            detected_boxes = []
+            target_boxes = annotations[:, 1:]
+
+            for i, (pred_box, pred_cls) in enumerate(zip(pred_boxes, pred_clses)):
+                # If all targets are found break
+                if len(detected_boxes) == len(annotations):
+                    break
+
+                # Ignore if label is not one of the target labels
+                if pred_cls not in target_cls:
+                    continue
+
+                # Filter target_boxes by pred_cls so that we only match against boxes of our own cls label
+                filtered_target_indices, filtered_targets_boxes = zip(
+                    *filter(lambda x: target_cls[x[0]] == pred_cls, enumerate(target_boxes))
+                )
+
+                # Find the best matching target for our predicted box
+                iou, box_filtered_index = bbox_iou(pred_box.unsqueeze(0), torch.stack(filtered_targets_boxes)).max(0)
+
+                # Remap the index in the list of filtered targets for that label to the index in the list with all targets.
+                box_index = filtered_target_indices[box_filtered_index]
+
+                # Check if the iou is above the min treshold and i
+                if iou >= iou_threshold and box_index not in detected_boxes:
+                    true_positives[i] = 1
+                    detected_boxes += [box_index]
+
+        batch_metrics.append([true_positives, pred_scores, pred_clses])
+
+    return batch_metrics

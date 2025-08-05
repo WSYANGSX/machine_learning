@@ -2,18 +2,17 @@ from __future__ import annotations
 from typing import Literal, Mapping, Any
 
 import torch
-import torchvision
 import numpy as np
 import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
-from machine_learning.utils.ops import empty_like
-from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy
 
 
 class YoloMM(AlgorithmBase):
@@ -38,9 +37,9 @@ class YoloMM(AlgorithmBase):
 
         # main parameters of the algorithm
         self.img_size = self.cfg["algorithm"].get("img_size", None)
-        self.iou_threshold = self.cfg["algorithm"]["iou_threshold"]
-        self.conf_threshold = self.cfg["algorithm"]["conf_threshold"]
-        self.nms_threshold = self.cfg["algorithm"]["nms_threshold"]
+        self.iou_thres = self.cfg["algorithm"]["iou_thres"]
+        self.conf_thres = self.cfg["algorithm"]["conf_thres"]
+        self.nms_thres = self.cfg["algorithm"]["nms_thres"]
         self.reg_max = self.cfg["algorithm"]["reg_max"]
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
         self.label_smoothing_scale = self.cfg["algorithm"]["label_smoothing_scale"]
@@ -206,7 +205,7 @@ class YoloMM(AlgorithmBase):
         iouv = torch.linspace(0.5, 0.95, 10, device=self.device)  # iou from 0.5 to 0.95，stride 0.05
         niou = iouv.numel()
 
-        for batch_idx, (imgs, thermals, targets) in enumerate(self.val_loader):
+        for _, (imgs, thermals, targets) in enumerate(self.val_loader):
             imgs = imgs.to(self.device, non_blocking=True)
             thermals = thermals.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
@@ -215,7 +214,7 @@ class YoloMM(AlgorithmBase):
             loss, loss_components = self.criterion(preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2))
 
             # Calculate the prediction result
-            preds = self.non_max_suppression([pred1, pred2, pred3], imgs.shape[2])
+            preds = non_max_suppression([pred1, pred2, pred3], conf_thres=self.conf_thres, iou_thres=self.iou_thres)
 
             total_loss += loss.item()
             total_box_loss += loss_components["box_loss"]
@@ -226,14 +225,14 @@ class YoloMM(AlgorithmBase):
 
             targets_abs = targets.clone()
             bbox_norm = targets[:, 2:6]
-            bbox_abs = bbox_norm * scale  # 转换为绝对坐标的xywh
-            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # 转换为xyxy
+            bbox_abs = bbox_norm * scale  # convert to abs xywh
+            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy
 
             for si, pred in enumerate(preds):
-                # 获取当前图像的真实框 (img_id, class_id, x1, y1, x2, y2)
+                # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
                 labels = targets_abs[targets_abs[:, 0] == si, 1:]
 
-                # 提取真实框的类别和坐标
+                # extract the category and coordinates of the real box
                 tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
                 tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
 
@@ -249,36 +248,38 @@ class YoloMM(AlgorithmBase):
                         )
                     continue
 
-                # 预测框格式: [x1, y1, x2, y2, conf, class]
+                # Prediction box format: [x1, y1, x2, y2, conf, class]
                 pred_boxes = pred[:, :4]
                 pred_scores = pred[:, 4]
                 pred_classes = pred[:, 5]
 
-                # 计算IoU
-                ious = self.box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
+                # calculate IoU
+                ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
 
-                # 找到每个预测框的最佳匹配真实框
-                best_iou, best_idx = ious.max(1)  # 每个预测框的最大IoU及对应真实框索引
+                # Find the best matching real box for each prediction box
+                best_iou, best_idx = ious.max(
+                    1
+                )  # The maximum IoU of each prediction box and the corresponding index of the real box
 
-                # 创建正确匹配矩阵
+                # create the correct matching matrix
                 correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=self.device)
 
                 if len(labels):
-                    # 检查类别匹配和IoU阈值
+                    # check the category matching and IoU threshold
                     class_matches = pred_classes == tcls[best_idx]
-                    iou_matches = best_iou > self.iou_threshold
+                    iou_matches = best_iou > self.iou_thres
 
-                    # 综合匹配条件
+                    # comprehensive matching conditions
                     matches = class_matches & iou_matches
 
-                    # 标记正确匹配
+                    # mark correctly matched
                     for iou_idx, iou_thresh in enumerate(iouv):
                         correct[:, iou_idx] = matches & (best_iou > iou_thresh)
 
-                # 记录统计信息
+                # record statistical information
                 stats.append((correct.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu().tolist()))
 
-        # 计算平均损失
+        # calculate the average loss
         num_batches = len(self.val_loader)
         metrics["loss"] = total_loss / num_batches
         metrics["box_loss"] = total_box_loss / num_batches
@@ -286,7 +287,7 @@ class YoloMM(AlgorithmBase):
         metrics["dfl_loss"] = total_dfl_loss / num_batches
         metrics["save metric"] = metrics["loss"]
 
-        # 计算mAP指标
+        # calculate mAP metrics
         if stats:
             tp, conf, pred_cls, target_cls = zip(*stats)
             metrics.update(self.compute_ap(tp, conf, pred_cls, target_cls))
@@ -314,49 +315,6 @@ class YoloMM(AlgorithmBase):
                     x["momentum"] = np.interp(
                         batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
                     )
-
-    @torch.no_grad()
-    def non_max_suppression(self, preds: list[torch.Tensor], img_size: int) -> list[torch.Tensor]:
-        """Application of non-maximum suppression processing to predict results"""
-        output = [torch.empty((0, 6), device=self.device)] * preds[0].shape[0]
-        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
-
-        # Merge multi-scale predictions
-        x = []
-        for pred in preds:
-            bs, _, ny, nx = pred.shape
-            pred = pred.permute(0, 2, 3, 1).reshape(bs, ny * nx, -1)
-            x.append(pred)
-        x = torch.cat(x, 1)
-
-        # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.nc), 2)
-        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
-        dbox = self.bbox_decode(anchor_points, box) * stride_tensor
-
-        # Calculate the category score
-        scores = cls.sigmoid()
-
-        # Process each picture
-        for i in range(x.shape[0]):
-            boxes = dbox[i]
-            scores_i = scores[i]
-
-            # Filter low-confidence predictions
-            conf_mask = scores_i.max(1)[0] > self.conf_threshold
-            boxes, scores_i = boxes[conf_mask], scores_i[conf_mask]
-
-            if not boxes.shape[0]:
-                continue
-
-            # non-maximum suppression
-            boxes = boxes.clone()
-            scores_i, classes = scores_i.max(1)
-            boxes = torch.cat((boxes, scores_i.unsqueeze(1), classes.unsqueeze(1)), 1)
-            nms_mask = torchvision.ops.nms(boxes[:, :4], boxes[:, 4], self.nms_threshold)
-            output[i] = boxes[nms_mask]
-
-        return output
 
     def compute_ap(self, tp, conf, pred_cls, target_cls):
         """计算平均精度指标(mAP)"""
@@ -415,35 +373,6 @@ class YoloMM(AlgorithmBase):
             results[f"AP_{self.cfg['data']['class_names'][ci]}"] = ap[ci].mean()
 
         return results
-
-    def box_iou(self, box1, box2):
-        """计算两组边界框之间的IoU"""
-        # 确保输入形状正确
-        if box1.dim() == 1:
-            box1 = box1.unsqueeze(0)
-        if box2.dim() == 1:
-            box2 = box2.unsqueeze(0)
-
-        # 获取边界框坐标
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1.T
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2.T
-
-        # 计算交集区域
-        inter_x1 = torch.max(b1_x1.unsqueeze(1), b2_x1)
-        inter_y1 = torch.max(b1_y1.unsqueeze(1), b2_y1)
-        inter_x2 = torch.min(b1_x2.unsqueeze(1), b2_x2)
-        inter_y2 = torch.min(b1_y2.unsqueeze(1), b2_y2)
-
-        # 交集面积 (处理无交集情况)
-        inter_area = torch.clamp(inter_x2 - inter_x1, min=0) * torch.clamp(inter_y2 - inter_y1, min=0)
-
-        # 并集面积
-        b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
-        b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-        union_area = b1_area.unsqueeze(1) + b2_area - inter_area
-
-        # 返回IoU
-        return inter_area / (union_area + 1e-7)
 
     def eval(self) -> None:
         raise NotImplementedError(
@@ -560,26 +489,6 @@ def compute_ap_single(precision, recall, iou_threshold=0.5):
     # 积分计算AP
     ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
     return ap
-
-
-def xywh2xyxy(x):
-    """
-    Convert bounding box coordinates from (x, y, width, height) format to (x1, y1, x2, y2) format where (x1, y1) is the
-    top-left corner and (x2, y2) is the bottom-right corner. Note: ops per 2 channels faster than per channel.
-
-    Args:
-        x (np.ndarray | torch.Tensor): The input bounding box coordinates in (x, y, width, height) format.
-
-    Returns:
-        y (np.ndarray | torch.Tensor): The bounding box coordinates in (x1, y1, x2, y2) format.
-    """
-    assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
-    y = empty_like(x)  # faster than clone/copy
-    xy = x[..., :2]  # centers
-    wh = x[..., 2:] / 2  # half width-height
-    y[..., :2] = xy - wh  # top left xy
-    y[..., 2:] = xy + wh  # bottom right xy
-    return y
 
 
 def make_anchors(preds, strides, grid_cell_offset=0.5):
