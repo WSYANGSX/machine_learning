@@ -1,18 +1,19 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any
+from typing import Literal, Mapping, Any, Sequence
 
 import torch
 import numpy as np
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap
 
 
 class YoloMM(AlgorithmBase):
@@ -38,14 +39,12 @@ class YoloMM(AlgorithmBase):
         # main parameters of the algorithm
         self.img_size = self.cfg["algorithm"].get("img_size", None)
         self.iou_thres = self.cfg["algorithm"]["iou_thres"]
-        self.conf_thres = self.cfg["algorithm"]["conf_thres"]
-        self.nms_thres = self.cfg["algorithm"]["nms_thres"]
+        self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
+        self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
         self.reg_max = self.cfg["algorithm"]["reg_max"]
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
-        self.label_smoothing_scale = self.cfg["algorithm"]["label_smoothing_scale"]
         self.nc = self.net.nc
         self.no = self.nc + self.reg_max * 4
-        self.amp = self.cfg["algorithm"]["amp"]
 
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
@@ -58,6 +57,9 @@ class YoloMM(AlgorithmBase):
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
         self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
+
+        self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
+        self.niou = self.iouv.numel()
 
     def _configure_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
@@ -132,6 +134,7 @@ class YoloMM(AlgorithmBase):
                 factor=self.sch_config.get("factor", 0.1),
                 patience=self.sch_config.get("patience", 10),
             )
+            self._add_scheduler("scheduler", self.scheduler)
 
         elif self.sch_config.get("type") == "CustomLRDecay":
             self.lf = (
@@ -139,15 +142,15 @@ class YoloMM(AlgorithmBase):
                 + self.opt_cfg["final_factor"]
             )  # linear
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
+            self._add_scheduler("scheduler", self.scheduler)
 
         else:
-            print(f"Warning: Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
+            LOGGER.warning(f"Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         self.set_train()
 
         total_loss = 0.0
-        self.scaler = GradScaler()
 
         for batch_idx, (imgs, thermals, iid_cls_bboxes) in enumerate(self.train_loader):
             # warmup
@@ -159,7 +162,8 @@ class YoloMM(AlgorithmBase):
             thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
-            self.optimizer.zero_grad()
+            if (batch_inters - self.last_opt_step) % self.accumulate == 0:
+                self.optimizer.zero_grad(set_to_none=True)
 
             with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
                 pred1, pred2, pred3 = self.net(imgs, thermals)
@@ -167,7 +171,11 @@ class YoloMM(AlgorithmBase):
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )
 
-            self.scaler.scale(loss).backward()  # backward
+            if self.scaler:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
+
             if batch_inters - self.last_opt_step >= self.accumulate:
                 self.optimizer_step()
                 self.last_opt_step = batch_inters
@@ -183,49 +191,54 @@ class YoloMM(AlgorithmBase):
 
         return {"loss": avg_loss}
 
-    def optimizer_step(self) -> None:
-        self.scaler.unscale_(self.optimizer)  # unscale gradients, necessary if gradient clipping is performed after.
-        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._cfg["optimizer"]["grad_clip"])
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         self.set_eval()
 
         metrics = {}
-
-        total_loss = 0.0
-        total_box_loss = 0.0
-        total_cls_loss = 0.0
-        total_dfl_loss = 0.0
+        total_loss, total_box_loss, total_cls_loss, total_dfl_loss = 0.0, 0.0, 0.0, 0.0
 
         # Initiate the evaluation indicators
         stats = []
-        iouv = torch.linspace(0.5, 0.95, 10, device=self.device)  # iou from 0.5 to 0.95，stride 0.05
-        niou = iouv.numel()
-
         for _, (imgs, thermals, targets) in enumerate(self.val_loader):
             imgs = imgs.to(self.device, non_blocking=True)
             thermals = thermals.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
+            img_size = imgs.size(2)
 
-            pred1, pred2, pred3 = self.net(imgs, thermals)
-            loss, loss_components = self.criterion(preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2))
-
-            # Calculate the prediction result
-            preds = non_max_suppression([pred1, pred2, pred3], conf_thres=self.conf_thres, iou_thres=self.iou_thres)
+            preds = self.net(imgs, thermals)
+            loss, loss_components = self.criterion(preds=preds, targets=targets, img_size=img_size)
 
             total_loss += loss.item()
             total_box_loss += loss_components["box_loss"]
             total_cls_loss += loss_components["cls_loss"]
             total_dfl_loss += loss_components["dfl_loss"]
 
-            scale = torch.tensor([imgs.shape[3], imgs.shape[2], imgs.shape[3], imgs.shape[2]], device=self.device)
+            # Merge multi-scale predictions
+            x = []
+            for pred in preds:
+                bs, _, h, w = pred.shape
+                pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
+                x.append(pred)
+            x = torch.cat(x, 1)
+            # Separate the bounding box from the category score
+            box, cls = x.split((self.reg_max * 4, self.nc), 2)
 
+            # decode preds
+            strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
+            anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
+            dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
+            prediction = torch.cat((dbox, cls.sigmoid()), 2)
+
+            # NMS
+            preds = non_max_suppression(
+                prediction.permute(0, 2, 1), conf_thres=self.conf_thres_val, iou_thres=self.iou_thres
+            )
+
+            # prepare targets
+            scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
             targets_abs = targets.clone()
-            bbox_norm = targets[:, 2:6]
-            bbox_abs = bbox_norm * scale  # convert to abs xywh
+            bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
             targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy
 
             for si, pred in enumerate(preds):
@@ -240,10 +253,10 @@ class YoloMM(AlgorithmBase):
                     if len(labels):
                         stats.append(
                             (
-                                torch.zeros(0, niou, dtype=torch.bool),
-                                torch.Tensor(),
-                                torch.Tensor(),
-                                tcls.cpu().tolist(),
+                                torch.zeros(0, self.niou, dtype=torch.bool),  # TP
+                                torch.Tensor(),  # confidence scores
+                                torch.Tensor(),  # pred_classes
+                                tcls.cpu(),  # ground truth classes
                             )
                         )
                     continue
@@ -255,14 +268,10 @@ class YoloMM(AlgorithmBase):
 
                 # calculate IoU
                 ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
-
                 # Find the best matching real box for each prediction box
-                best_iou, best_idx = ious.max(
-                    1
-                )  # The maximum IoU of each prediction box and the corresponding index of the real box
-
-                # create the correct matching matrix
-                correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=self.device)
+                best_iou, best_idx = ious.max(1)
+                # create the tp matching matrix
+                tp = torch.zeros(pred.shape[0], self.niou, dtype=torch.bool, device=self.device)
 
                 if len(labels):
                     # check the category matching and IoU threshold
@@ -273,11 +282,11 @@ class YoloMM(AlgorithmBase):
                     matches = class_matches & iou_matches
 
                     # mark correctly matched
-                    for iou_idx, iou_thresh in enumerate(iouv):
-                        correct[:, iou_idx] = matches & (best_iou > iou_thresh)
+                    for iou_idx, iou_thresh in enumerate(self.iouv):
+                        tp[:, iou_idx] = matches & (best_iou > iou_thresh)
 
                 # record statistical information
-                stats.append((correct.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu().tolist()))
+                stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))
 
         # calculate the average loss
         num_batches = len(self.val_loader)
@@ -290,7 +299,11 @@ class YoloMM(AlgorithmBase):
         # calculate mAP metrics
         if stats:
             tp, conf, pred_cls, target_cls = zip(*stats)
-            metrics.update(self.compute_ap(tp, conf, pred_cls, target_cls))
+            tp = np.concatenate(tp, 0)
+            conf = np.concatenate(conf, 0)
+            pred_cls = np.concatenate(pred_cls, 0)
+            target_cls = np.concatenate(target_cls, 0)
+            metrics.update(compute_ap(self.cfg["data"]["class_names"], tp, conf, pred_cls, target_cls, self.iouv))
 
         return metrics
 
@@ -316,71 +329,13 @@ class YoloMM(AlgorithmBase):
                         batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
                     )
 
-    def compute_ap(self, tp, conf, pred_cls, target_cls):
-        """计算平均精度指标(mAP)"""
-        # 按置信度排序所有预测结果
-        i = np.argsort(-np.concatenate(conf))
-        tp, conf, pred_cls = [np.concatenate(x, 0)[i] for x in [tp, conf, pred_cls]]
-
-        # 计算PR曲线和AP值
-        nc = self.nc  # 类别数量
-        ap = np.zeros((nc, 10))
-        p = np.zeros((nc, 1000))
-        r = np.zeros((nc, 1000))
-
-        # 为每个类别计算AP
-        for ci in range(nc):
-            # 获取当前类别的预测和标签
-            ci_tp = tp[:, ci]
-            ci_pred_cls = pred_cls == ci
-            if ci_pred_cls.sum() == 0:
-                continue
-
-            # 计算精度和召回率
-            n_gt = (np.concatenate(target_cls, 0) == ci).sum()
-            n_p = ci_pred_cls.sum()
-
-            if n_gt == 0 or n_p == 0:
-                continue
-
-            # 累积FP和TP
-            fpc = (1 - ci_tp[ci_pred_cls]).cumsum()
-            tpc = ci_tp[ci_pred_cls].cumsum()
-
-            # 召回率
-            recall = tpc / (n_gt + 1e-16)
-            r[ci] = np.interp(-np.linspace(0, 1, 1000), -conf[ci_pred_cls], recall)
-
-            # 精度
-            precision = tpc / (tpc + fpc)
-            p[ci] = np.interp(-np.linspace(0, 1, 1000), -conf[ci_pred_cls], precision)
-
-            # AP值 (积分PR曲线)
-            for j in range(10):
-                ap[ci, j] = compute_ap_single(precision, recall, j * 0.05 + 0.5)
-
-        # 计算全局指标
-        results = {
-            "mAP": ap[:, :].mean(),
-            "mAP_50": ap[:, 0].mean(),
-            "mAP_75": ap[:, 5].mean(),
-            "precision": p.mean(0).mean(),
-            "recall": r.mean(0).mean(),
-        }
-
-        # 添加每个类别的AP
-        for ci in range(nc):
-            results[f"AP_{self.cfg['data']['class_names'][ci]}"] = ap[ci].mean()
-
-        return results
-
     def eval(self) -> None:
         raise NotImplementedError(
             "Eval method is not implemented in the yolo-series algorithms, "
             + "please use detect method to detect objects in an image."
         )
 
-    def criterion(self, preds: list[torch.Tensor], targets: torch.Tensor, img_size: int):
+    def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, img_size: int):
         cls_loss = torch.zeros(1, device=self.device)
         box_loss = torch.zeros(1, device=self.device)
         dfl_loss = torch.zeros(1, device=self.device)
@@ -443,12 +398,12 @@ class YoloMM(AlgorithmBase):
 
         return total_loss, loss_component
 
-    def bbox_decode(self, anchor_points, pred_dist):
+    def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, xywh: bool = False):
         """Decode predicted object bounding box coordinates from anchor points and distribution."""
         if self.use_dfl:
             b, a, c = pred_dist.shape  # batch, anchors, channels
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
-        return dist2bbox(pred_dist, anchor_points, xywh=False)
+        return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
     def preprocess(self, targets, batch_size, scale_tensor):
         """Preprocesses the target counts and matches with the input batch size to output a tensor."""
@@ -468,27 +423,13 @@ class YoloMM(AlgorithmBase):
 
         return out
 
+    def detect(self, img: torch.Tensor, thermal: torch.Tensor) -> None:
+        pass
+
 
 """
 Helper functions
 """
-
-
-def compute_ap_single(precision, recall, iou_threshold=0.5):
-    """计算单个IoU阈值下的平均精度"""
-    # 平滑PR曲线
-    mrec = np.concatenate(([0.0], recall, [1.0]))
-    mpre = np.concatenate(([0.0], precision, [0.0]))
-
-    for i in range(mpre.size - 1, 0, -1):
-        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
-
-    # 找到召回率变化的点
-    i = np.where(mrec[1:] != mrec[:-1])[0]
-
-    # 积分计算AP
-    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-    return ap
 
 
 def make_anchors(preds, strides, grid_cell_offset=0.5):
@@ -497,7 +438,7 @@ def make_anchors(preds, strides, grid_cell_offset=0.5):
     assert preds is not None
     dtype, device = preds[0].dtype, preds[0].device
     for i, stride in enumerate(strides):
-        h, w = preds[i].shape[2:] if isinstance(preds, list) else (int(preds[i][0]), int(preds[i][1]))
+        h, w = preds[i].shape[2:] if isinstance(preds, (list, tuple)) else (int(preds[i][0]), int(preds[i][1]))
         sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
         sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
         sy, sx = torch.meshgrid(sy, sx, indexing="ij")

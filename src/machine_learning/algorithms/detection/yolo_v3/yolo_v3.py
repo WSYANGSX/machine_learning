@@ -16,10 +16,9 @@ from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.image import resize, visualize_img_with_bboxes
 from machine_learning.utils.detection import (
-    couple_bboxes_iou,
+    box_iou,
     bbox_iou,
     xywh2xyxy,
-    average_precision_per_cls,
     pad_to_square,
     rescale_boxes,
 )
@@ -141,6 +140,8 @@ class YoloV3(AlgorithmBase):
                 loss, loss_components = self.criterion(fmaps=[fmap1, fmap2, fmap3], targets=targets, img_size=img_size)
 
             scaler.scale(loss).backward()
+
+            scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.params, self._cfg["optimizer"]["grad_clip"])
             scaler.step(self._optimizers["yolo"])
             scaler.update()
@@ -280,7 +281,6 @@ class YoloV3(AlgorithmBase):
         detection[:, :4] = rescale_boxes(detection[:, :4], pad_img.shape[2], origin_img_shape)
 
         bboxes = detection[:, :4]
-        conf = detection[:, 4]
         cls = detection[:, 5].int()
 
         # visiualization
@@ -342,7 +342,7 @@ class YoloV3(AlgorithmBase):
                 pwh = torch.exp(ps[:, 2:4].clamp(-10, 10)) * norm_anchors
                 pboxes = torch.cat([pxy, pwh], dim=1)
 
-                iou = couple_bboxes_iou(pboxes, tboxes, bbox_format="coco", iou_type="ciou")
+                iou = bbox_iou(pboxes, tboxes, bbox_format="coco", iou_type="ciou")
                 box_loss += (1.0 - iou).mean()  # CIoU loss
 
                 # 使用IOU作为软标签（重要改进！）

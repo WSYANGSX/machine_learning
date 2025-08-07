@@ -9,9 +9,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.cfg import BaseCfg
 from machine_learning.utils.logger import LOGGER
+from dataclasses import dataclass, field, MISSING
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils import set_seed, print_cfg, cfg_to_dict
-from dataclasses import dataclass, field, MISSING
 
 
 @dataclass
@@ -23,6 +23,7 @@ class TrainCfg(BaseCfg):
     log_interval: int = field(default=10)
     save_interval: int = field(default=10)
     save_best: bool = field(default=True)
+    amp: bool = field(default=False)
 
 
 class Trainer:
@@ -39,13 +40,16 @@ class Trainer:
         self.cfg = cfg
         self._algorithm = algo
 
+        self.amp = self.cfg.amp
+        self.epochs = self.cfg.epochs
+
         # ------------------ configure global random seed ------------------
         set_seed(self.cfg.seed)
         LOGGER.info(f"Current seed: {self.cfg.seed}")
 
         # ------------------------ initilaize algo -------------------------
         self._algorithm._add_cfg("train", cfg_to_dict(self.cfg))
-        self._algorithm._initialize(data=data)
+        self._algorithm._initialize(data=data, amp=self.amp)
         print_cfg("Configuration", self._algorithm.cfg)
 
         # ------------------------ configure writer ------------------------
@@ -67,9 +71,16 @@ class Trainer:
 
         self.writer = SummaryWriter(log_dir=log_path)
 
+    def _setup_train(self):
+        # reset optimizer gradients to zeros
+        for opt in self.algorithm.optimizers.values():
+            opt.zero_grad()
+
     def train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
         LOGGER.info("Start training...")
+
+        self._setup_train()
 
         for epoch in trange(start_epoch, self.cfg.epochs):
             train_res = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)

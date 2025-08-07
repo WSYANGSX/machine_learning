@@ -4,7 +4,6 @@ algorithm:
   amp: True # (bool) Automatic Mixed Precision (AMP) training, choices=[True, False], True runs AMP check
   use_dfl: True
   reg_max: 16
-  label_smoothing_scale: 0.0
   topk: 10
   alpha: 0.5
   beta: 6.0
@@ -15,9 +14,9 @@ algorithm:
   dfl: 1.5 # (float) dfl loss gain
 
   # detection
-  iou_thres: 0.5
-  conf_thres: 0.1
-  nms_thres: 0.5
+  iou_thres: 0.7
+  conf_thres_val: 0.001
+  conf_thres_det: 0.25
 
   nbs: 64 # (int) nominal batch size, -1 represent no 
 

@@ -5,6 +5,7 @@ import yaml
 from abc import ABC, abstractmethod
 
 import torch
+from torch.cuda.amp import GradScaler
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -43,6 +44,8 @@ class AlgorithmBase(ABC):
             self._add_net("net", self.net)
 
         self.training = False
+        self.amp = False
+        self.scaler = None
 
         # ------------------------ configure device -----------------------
         self._device = self._configure_device(device)
@@ -83,10 +86,15 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
-    def _initialize(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+    def _initialize(self, data: Mapping[str, Union[Dataset, Any]], amp: bool = False) -> None:
         """initialization algorithm, needs to be called before the training starts."""
 
         LOGGER.info("Algorithm initializing...")
+
+        # --------------------- configure AMP of algo --------------------
+        if amp:
+            self.amp = amp
+            self.scaler = GradScaler()
 
         # --------------------- configure nets of algo --------------------
         self._configure_nets()
@@ -270,6 +278,21 @@ class AlgorithmBase(ABC):
         """Train a single epoch"""
         pass
 
+    def optimizer_step(self) -> None:
+        if self.scaler:
+            self.scaler.unscale_(
+                self.optimizer
+            )  # unscale gradients, necessary if gradient clipping is performed after.
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
+
+        if self.scaler:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            self.optimizer.step()
+
+        self.optimizer.zero_grad()
+
     @abstractmethod
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
@@ -293,6 +316,7 @@ class AlgorithmBase(ABC):
             "nets": {},
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
+            "amp": self.amp,
         }
 
         for key, val in val_info.items():
@@ -310,6 +334,10 @@ class AlgorithmBase(ABC):
         if hasattr(self, "schedulers"):
             state["schedulers"] = {k: v.state_dict() for k, v in self.schedulers.items()}
 
+        # save the scaler states
+        if self.scaler is not None:
+            state["scaler"] = self.scaler.state_dict()
+
         torch.save(state, save_path)
         LOGGER.info(f"Saved checkpoint to {save_path}")
 
@@ -319,6 +347,7 @@ class AlgorithmBase(ABC):
         # cfg
         self._cfg = state["cfg"]
         self.last_opt_step = state["last_opt_step"]
+        self.amp = state["amp"]
 
         # load the nets' parameters
         for key, val in self.nets.items():
@@ -333,6 +362,20 @@ class AlgorithmBase(ABC):
             for key, scheduler in self.schedulers.items():
                 if key in state.get("schedulers", {}):
                     scheduler.load_state_dict(state["schedulers"][key])
+
+        if self.amp:
+            if self.scaler is not None:
+                self.scaler.load_state_dict(state["scaler"])
+            else:
+                LOGGER.warning("Enable AMP to overwrite the current Settings based on checkpoint configuration.")
+                self.scaler = GradScaler()
+                self.scaler.load_state_dict(state["scaler"])
+        else:
+            if self.scaler is not None:
+                LOGGER.warning(
+                    "The checkpoint does not require AMP, overwrites its Settings and releases the current scaler."
+                )
+                self.scaler = None
 
         return state
 
