@@ -2,6 +2,7 @@ from typing import Literal, Mapping, Any
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
@@ -38,26 +39,28 @@ class AutoEncoder(AlgorithmBase):
         criterion = nn.MSELoss()
 
         for batch_idx, (data, _) in enumerate(self.train_loader):
+            batch_inters = epoch * self.num_batches + batch_idx
+
             data = data.to(self.device, non_blocking=True)
 
-            self.optimizer.zero_grad()
+            with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
+                output = self.net(data)
+                loss = criterion(output, data)
 
-            output = self.net(data)
+            if self.scaler:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
-            loss = criterion(output, data)
-            loss.backward()  # Backpropagation is used to calculate the gradients of each weight.
-
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._cfg["optimizer"]["grad_clip"])
-            self.optimizer.step()
+            if batch_inters - self.last_opt_step >= self.accumulate:
+                self.optimizer_step(batch_inters)
 
             total_loss += loss.item()
 
             if batch_idx % log_interval == 0:
-                writer.add_scalar(
-                    "loss/train_batch", loss.item(), epoch * len(self.train_loader) + batch_idx
-                )  # batch loss
+                writer.add_scalar("loss/train_batch", loss.item(), batch_inters)  # batch loss
 
-        avg_loss = total_loss / len(self.train_loader)
+        avg_loss = total_loss / self.num_batches
 
         return {"loss": avg_loss}  # use dict to unify interface
 

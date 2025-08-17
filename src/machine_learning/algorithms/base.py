@@ -6,14 +6,14 @@ from abc import ABC, abstractmethod
 
 import torch
 from torch.cuda.amp import GradScaler
-from torch.utils.data import Dataset, DataLoader
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
-from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER
+from machine_learning.types.aliases import FilePath
 
 
 class AlgorithmBase(ABC):
@@ -35,16 +35,16 @@ class AlgorithmBase(ABC):
         """
         super().__init__()
 
-        self._nets = {}
-        self._optimizers = {}
-        self._schedulers = {}
+        self._nets = {}  # nets buffer
+        self._optimizers = {}  # optimizers buffer
+        self._schedulers = {}  # schedulers buffer
 
         self.net = net
         if self.net:
             self._add_net("net", self.net)
 
-        self.training = False
-        self.amp = False
+        self.training = False  # training mode or not
+        self.amp = False  # automatic mixed precision
         self.scaler = None
 
         # ------------------------ configure device -----------------------
@@ -55,8 +55,8 @@ class AlgorithmBase(ABC):
         self._validate_config()
 
         self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
-        self.nbs = self.cfg["algorithm"].get("nbs", -1)
-        self.accumulate = max(1, round(self.nbs / self.batch_size))
+        self.nominal_batch_size = self.cfg["algorithm"].get("nbs", -1)
+        self.accumulate = max(1, round(self.nominal_batch_size / self.batch_size))
         self.last_opt_step = -1
 
         # ---------------------- configure algo name ----------------------
@@ -175,6 +175,8 @@ class AlgorithmBase(ABC):
             num_workers=self.cfg["data_loader"].get("num_workers", 4),
             collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
         )
+        self.num_batches = len(self.train_loader)
+
         self.val_loader = DataLoader(
             dataset=val_dataset,
             batch_size=self.batch_size,
@@ -192,12 +194,12 @@ class AlgorithmBase(ABC):
                 num_workers=self.cfg["data_loader"].get("num_workers", 4),
                 collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
             )
+        else:
+            self.test_loader = None
 
         if data:
             for key, val in data.items():
                 self.cfg["data"][key] = val
-
-        self.num_batches = len(self.train_loader)
 
     def _configure_optimizers(self):
         """Configure the training optimizer"""
@@ -278,7 +280,7 @@ class AlgorithmBase(ABC):
         """Train a single epoch"""
         pass
 
-    def optimizer_step(self) -> None:
+    def optimizer_step(self, batch_inters: int) -> None:
         if self.scaler:
             self.scaler.unscale_(
                 self.optimizer
@@ -292,6 +294,8 @@ class AlgorithmBase(ABC):
             self.optimizer.step()
 
         self.optimizer.zero_grad()
+
+        self.last_opt_step = batch_inters
 
     @abstractmethod
     def validate(self) -> dict[str, float]:

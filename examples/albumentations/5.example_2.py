@@ -13,7 +13,7 @@ if __name__ == "__main__":
     image = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
 
     thermal_path = "./data/Flir_aligned/JPEGImages/FLIR_00099_PreviewData.jpeg"
-    thermal = np.array(Image.open(img_path).convert("L"), dtype=np.uint8)
+    thermal = np.array(Image.open(thermal_path).convert("L"), dtype=np.uint8)
 
     labels = np.loadtxt("./data/Flir_aligned/Annotations/FLIR_00099.txt").reshape(-1, 5)
     bboxes = labels[:, 1:5]
@@ -33,11 +33,11 @@ if __name__ == "__main__":
         {"image": image, "thermal": thermal, "bboxes": bboxes, "category_ids": category_ids}, augment=True
     )
     transformed_img = transformed["image"]
+    print(transformed_img.shape)
     transformed_thermal = transformed["thermal"] * 255
+    print(transformed_thermal.shape)
     transformed_bboxes = transformed["bboxes"]
     transformed_category_ids = transformed["category_ids"]
-
-    print(type(transformed_category_ids))
 
     visualize_img_with_bboxes(
         transformed_img,

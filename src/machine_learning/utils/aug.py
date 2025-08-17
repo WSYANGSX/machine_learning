@@ -35,7 +35,7 @@ DEFAULT_AUG = AugCfg(
 # basic yolo enhancer
 DEFAULT_YOLO_AUG = AugCfg(
     augs=[
-        A.LongestMaxSize(max_size=416),
+        A.LongestMaxSize(max_size=640),
         A.HorizontalFlip(p=0.5),
         A.CoarseDropout(
             num_holes_range=(1, 10),
@@ -44,20 +44,15 @@ DEFAULT_YOLO_AUG = AugCfg(
             fill="random_uniform",
             p=0.8,
         ),
+        A.Affine(translate_percent=(-0.1, 0.1), scale=(0.7, 1.8), p=0.8, keep_ratio=True),
         A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1), p=0.8),
         A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.8),
-        A.HueSaturationValue(
-            hue_shift_limit=(-20, 20),
-            sat_shift_limit=(-20, 20),
-            val_shift_limit=(-20, 20),
-            p=0.5,
-        ),
-        A.PadIfNeeded(min_height=416, min_width=416),
+        A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=0, val_shift_limit=(-20, 20), p=0.5),
+        A.PadIfNeeded(min_height=640, min_width=640),
     ],
     bbox_params=A.BboxParams(
         format="yolo",
         label_fields=["category_ids"],
-        min_visibility=0.1,
         min_height=0.01,
         min_width=0.01,
         clip=True,
@@ -68,7 +63,7 @@ DEFAULT_YOLO_AUG = AugCfg(
 # basic multimodal enhancer
 DEFAULT_YOLOMM_AUG = AugCfg(
     augs=[
-        A.LongestMaxSize(max_size=416),
+        A.LongestMaxSize(max_size=640),
         A.HorizontalFlip(p=0.5),
         A.CoarseDropout(
             num_holes_range=(1, 10),
@@ -77,10 +72,11 @@ DEFAULT_YOLOMM_AUG = AugCfg(
             fill="random_uniform",
             p=0.8,
         ),
+        A.Affine(translate_percent=(-0.1, 0.1), scale=(0.7, 1.8), p=0.8, keep_ratio=True),
         A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1), p=0.8),
         A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.8),
         A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=0, val_shift_limit=(-20, 20), p=0.5),
-        A.PadIfNeeded(min_height=416, min_width=416),
+        A.PadIfNeeded(min_height=640, min_width=640),
     ],
     bbox_params=A.BboxParams(
         format="yolo",

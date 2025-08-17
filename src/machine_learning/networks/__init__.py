@@ -1,6 +1,6 @@
 from .base import BaseNet
 from .diffusion.unet import UNet
-from .yolo.darknet import DarkNet53
+from .yolo.darknet53 import DarkNet53
 from .auto_encoders import AENet
 from .gan import Generator, Discriminator
 

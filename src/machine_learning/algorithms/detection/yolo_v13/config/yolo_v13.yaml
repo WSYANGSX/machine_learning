@@ -1,5 +1,5 @@
 algorithm: 
-  name: "yolo_mm"
+  name: "yolo_v13"
   img_size: 640
   amp: True # (bool) Automatic Mixed Precision (AMP) training, choices=[True, False], True runs AMP check
   use_dfl: True

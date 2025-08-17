@@ -16,12 +16,12 @@ from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap
 
 
-class YoloMM(AlgorithmBase):
+class YoloV13(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
         net: BaseNet,
-        name: str | None = "yolo_mm",
+        name: str | None = "yolo_v13",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
@@ -158,18 +158,17 @@ class YoloMM(AlgorithmBase):
 
         total_loss = 0.0
 
-        for batch_idx, (imgs, thermals, iid_cls_bboxes) in enumerate(self.train_loader):
+        for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
             # warmup
             batch_inters = epoch * self.num_batches + batch_idx
             self.warmup(batch_inters, epoch)
 
             # load data
             imgs = imgs.to(self.device, non_blocking=True)
-            thermals = thermals.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
             with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
-                pred1, pred2, pred3 = self.net(imgs, thermals)
+                pred1, pred2, pred3 = self.net(imgs)
                 loss, loss_components = self.criterion(
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )
@@ -202,13 +201,12 @@ class YoloMM(AlgorithmBase):
 
         # Initiate the evaluation indicators
         stats = []
-        for _, (imgs, thermals, targets) in enumerate(self.val_loader):
+        for _, (imgs, targets) in enumerate(self.val_loader):
             imgs = imgs.to(self.device, non_blocking=True)
-            thermals = thermals.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
             img_size = imgs.size(2)
 
-            preds = self.net(imgs, thermals)
+            preds = self.net(imgs)
             loss, loss_components = self.criterion(preds=preds, targets=targets, img_size=img_size)
 
             total_loss += loss.item()
@@ -267,15 +265,14 @@ class YoloMM(AlgorithmBase):
                 pred_boxes = pred[:, :4]
                 pred_scores = pred[:, 4]
                 pred_classes = pred[:, 5]
-
-                # calculate IoU
-                ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
-                # Find the best matching real box for each prediction box
-                best_iou, best_idx = ious.max(1)
-                # create the tp matching matrix
                 tp = torch.zeros(pred.shape[0], self.niou, dtype=torch.bool, device=self.device)
 
-                if len(labels):
+                if len(tbox) > 0:
+                    # calculate IoU
+                    ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
+                    # Find the best matching real box for each prediction box
+                    best_iou, best_idx = ious.max(1)
+
                     # check the category matching and IoU threshold
                     class_matches = pred_classes == tcls[best_idx]
                     iou_matches = best_iou > self.iou_thres

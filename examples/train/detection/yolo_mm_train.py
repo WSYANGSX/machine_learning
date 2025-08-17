@@ -17,7 +17,7 @@ def main():
         to_tensor=True,
     )
 
-    parser_cfg = YoloParserCfg(dataset_dir="./data/Flir_aligned", labels=True, tfs=tfs)
+    parser_cfg = YoloParserCfg(dataset_dir="./data/Flir_aligned", labels=True, tfs=tfs, multiscale=False)
     data = YoloMMParser(parser_cfg).create()  # (class_names, train_dataset, val_dataset)
 
     # Step 1: Parse configurations
@@ -35,7 +35,7 @@ def main():
     trainer_cfg = TrainCfg(
         log_dir="./logs/yolomm/",
         model_dir="./checkpoints/yolomm/",
-        epochs=300,
+        epochs=600,
         log_interval=10,
         save_interval=10,
         save_best=True,
