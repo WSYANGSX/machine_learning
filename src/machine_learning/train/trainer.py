@@ -27,7 +27,12 @@ class TrainCfg(BaseCfg):
 
 
 class Trainer:
-    def __init__(self, cfg: TrainCfg, algo: AlgorithmBase, data: Mapping[str, Union[Dataset, Any]]) -> None:
+    def __init__(
+        self,
+        cfg: TrainCfg,
+        algo: AlgorithmBase,
+        data: Mapping[str, Union[Dataset, Any]],
+    ) -> None:
         """
         The trainer of all machine learning algorithm
 
