@@ -1,3 +1,6 @@
+from typing import Sequence
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,6 +111,51 @@ class CFuseModule(nn.Module):
         return out
 
 
+class CMCA(nn.Module):
+    def __init__(self, c_in, c_out):
+        super().__init__()
+        self.c_in = c_in
+        self.c_out = c_out
+
+        self.conv1 = nn.Conv2d(c_in, c_out, 1)
+        self.conv2 = nn.Conv2d(c_in, c_out, 1)
+        self.act1 = nn.Tanh()
+
+        self.conv3 = nn.Conv2d(2 * c_out, 1, 1)
+        self.act2 = nn.Sigmoid()
+
+        # channel attention
+        self.c_i1 = nn.Sequential(
+            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+            nn.Conv2d(c_out, c_out // 8, 1),
+            nn.GELU(),
+            nn.Conv2d(c_out // 8, c_out, 1),
+            nn.Sigmoid(),
+        )
+        self.c_i2 = nn.Sequential(
+            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+            nn.Conv2d(c_out, c_out // 8, 1),
+            nn.GELU(),
+            nn.Conv2d(c_out // 8, c_out, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, X):
+        x1 = self.act1(self.conv1(X[0]))
+        x2 = self.act1(self.conv2(X[1]))
+
+        z = torch.cat([x1, x2], dim=1)
+        z = self.act2(self.conv3(z))
+
+        x1_m = z * x1
+        x2_m = z * x2
+
+        x1_out = x1_m + x1_m * self.c_i1(x2_m)
+        x2_out = x2_m + x2_m * self.c_i2(x1_m)
+
+        return x1_out, x2_out
+
+
 class CHyperACE(nn.Module):
     def __init__(
         self,
@@ -129,11 +177,13 @@ class CHyperACE(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
+        self.cmca = CMCA(c1, c1)
         self.fuse = CFuseModule(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
     def forward(self, X):
+        X = self.cmca(X)
         x = self.fuse(X)
         y = list(self.cv1(x).chunk(3, 1))
         out1 = self.branch1(y[1])
@@ -143,6 +193,50 @@ class CHyperACE(nn.Module):
         y.append(out2)
 
         return self.cv2(torch.cat(y, 1))
+
+
+class CHyperACEV2(nn.Module):
+    def __init__(
+        self,
+        c1,
+        c2,
+        n=1,
+        num_hyperedges=8,
+        dsc3k=True,
+        shortcut=False,
+        e1=0.5,
+        e2=1,
+        context="both",
+    ):
+        super().__init__()
+        self.c = int(c2 * e1)
+        self.cv1 = Conv(c1, 3 * self.c, 1, 1)
+        self.cv2 = Conv(c1, self.c, 1, 1)
+        self.cv3 = Conv((5 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(
+            DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
+            for _ in range(n)
+        )
+        self.cmca = CMCA(c1, c1)
+        self.fuse1 = CFuseModule(c1)
+        self.fuse2 = CFuseModule(c1)
+        self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
+        self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
+
+    def forward(self, X):
+        x = self.fuse2(X)
+        y = list(self.cv1(x).chunk(3, 1))
+        out1 = self.branch1(y[1])
+        out2 = self.branch2(y[1])
+        y.extend(m(y[-1]) for m in self.m)
+        y[1] = out1
+        y.append(out2)
+
+        X_hat = self.cmca(X)
+        out3 = self.cv2(self.fuse1(X_hat))
+        y.append(out3)
+
+        return self.cv3(torch.cat(y, 1))
 
 
 class MMFullPAD_Tunnel(nn.Module):
@@ -177,3 +271,32 @@ class DFL(nn.Module):
         b, _, a = x.shape  # batch, channels, anchors
         return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
         # return self.conv(x.view(b, self.c1, 4, a).softmax(1)).view(b, 4, a)
+
+
+class MFD(nn.Module):
+    """Multimodal feature random shielding module"""
+
+    def __init__(self, p=0.15):
+        super().__init__()
+        self.p = p
+        self.alpha = 1.0 / (1.0 - 0.5 * self.p) if self.p > 0 else 1.0
+
+    def forward(self, X: Sequence[list[torch.Tensor]]):
+        if not self.training or self.p == 0:
+            return X
+
+        if torch.rand(1).item() < self.p:
+            drop_idx = random.randint(0, 1)
+            keep_idx = 1 - drop_idx
+
+            for i in range(len(X[drop_idx])):
+                X[drop_idx][i] = torch.zeros_like(X[drop_idx][i])
+
+            for i in range(len(X[keep_idx])):
+                X[keep_idx][i] = X[keep_idx][i] * self.alpha
+        else:
+            for modality in X:
+                for i in range(len(modality)):
+                    modality[i] = modality[i] * self.alpha
+
+        return X

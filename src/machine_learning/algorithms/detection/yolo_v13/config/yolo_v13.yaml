@@ -7,7 +7,7 @@ algorithm:
   topk: 10
   alpha: 0.5
   beta: 6.0
-  close_mosaic: 30
+  close_mosaic: 10
 
   # loss weight
   box: 7.5 # (float) box loss gain
@@ -22,19 +22,19 @@ algorithm:
   nbs: 64 # (int) nominal batch size, -1 represent no 
 
 optimizer:
-  type: "Adam"
-  learning_rate: 1.0e-3
-  final_factor: 0.01
-  beta1: 0.937
-  beta2: 0.999
-  eps: 1.0e-8
-  weight_decay: 0.0005
-
-  # type: "SGD"
-  # learning_rate: 0.01
+  # type: "Adam"
+  # learning_rate: 1.0e-3
   # final_factor: 0.01
-  # momentum: 0.937
+  # beta1: 0.937
+  # beta2: 0.999
+  # eps: 1.0e-8
   # weight_decay: 0.0005
+
+  type: "SGD"
+  learning_rate: 0.01
+  final_factor: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
 
   grad_clip: 1.0
   warmup_epochs: 3.0
@@ -56,5 +56,5 @@ net:
 data_loader:
   num_workers: 6
   shuffle: True
-  batch_size: 32
+  batch_size: 256
   

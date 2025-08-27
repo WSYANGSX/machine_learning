@@ -13,7 +13,7 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap, match_predictions
 
 
 class YoloMM(AlgorithmBase):
@@ -269,23 +269,9 @@ class YoloMM(AlgorithmBase):
                 pred_classes = pred[:, 5]
 
                 # calculate IoU
-                ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
+                iou = box_iou(tbox, pred_boxes)  # shape: [n_pred, n_gt]
                 # Find the best matching real box for each prediction box
-                best_iou, best_idx = ious.max(1)
-                # create the tp matching matrix
-                tp = torch.zeros(pred.shape[0], self.niou, dtype=torch.bool, device=self.device)
-
-                if len(labels):
-                    # check the category matching and IoU threshold
-                    class_matches = pred_classes == tcls[best_idx]
-                    iou_matches = best_iou > self.iou_thres
-
-                    # comprehensive matching conditions
-                    matches = class_matches & iou_matches
-
-                    # mark correctly matched
-                    for iou_idx, iou_thresh in enumerate(self.iouv):
-                        tp[:, iou_idx] = matches & (best_iou > iou_thresh)
+                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
 
                 # record statistical information
                 stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))

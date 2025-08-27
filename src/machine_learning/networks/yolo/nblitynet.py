@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from machine_learning.networks import BaseNet
 from machine_learning.modules.head import DetectV8
-from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel
+from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, MFD, CHyperACEV2
 
 from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
 
@@ -236,6 +236,8 @@ class NblityNet(BaseNet):
             }
         )  # smaller size
 
+        self.mfd = MFD(p=0.15)
+
         # neck
         self.neck = nn.ModuleDict(
             {
@@ -282,6 +284,9 @@ class NblityNet(BaseNet):
             thermals = layer(thermals)
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
                 thermal_skips.append(thermals)
+
+        # random modal dropout
+        img_skips, thermal_skips = self.mfd([img_skips, thermal_skips])
 
         pixels_fuse = [img_skips[i] + thermal_skips[i] for i in range(len(img_skips))]
 
