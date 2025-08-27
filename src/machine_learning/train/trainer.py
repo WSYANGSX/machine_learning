@@ -2,6 +2,7 @@ from typing import Any, Mapping, Union
 import os
 import torch
 from tqdm import trange
+from datetime import datetime
 from prettytable import PrettyTable
 
 from torch.utils.data import Dataset
@@ -66,7 +67,9 @@ class Trainer:
         return self._algorithm
 
     def _configure_writer(self):
-        log_path = self.cfg.log_dir
+        self.dt_suffix = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+        log_path = self.cfg.log_dir + self.dt
         log_path = os.path.abspath(log_path)
 
         try:
@@ -139,7 +142,7 @@ class Trainer:
         self.train(start_epoch)
 
     def save_checkpoint(self, epoch: int, val_return: dict, best_loss: float, is_best: bool = False) -> None:
-        model_path = self.cfg.model_dir
+        model_path = self.cfg.model_dir + self.dt_suffix
         model_path = os.path.abspath(model_path)
 
         try:

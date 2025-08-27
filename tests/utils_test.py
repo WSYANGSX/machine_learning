@@ -1,5 +1,4 @@
-import torch
-import numpy as np
+from datetime import datetime
 
-a = torch.tensor([[1, 2, 3], [4, 5, 6]])
-print(a.max(1))
+a = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+print(a)
