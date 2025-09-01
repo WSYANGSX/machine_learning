@@ -1,13 +1,12 @@
 algorithm: 
   name: "yolo_mm"
   img_size: 640
-  amp: True # (bool) Automatic Mixed Precision (AMP) training, choices=[True, False], True runs AMP check
   use_dfl: True
   reg_max: 16
   topk: 10
   alpha: 0.5
   beta: 6.0
-  close_mosaic: 30
+  close_mosaic: 10
 
   # loss weight
   box: 7.5 # (float) box loss gain
@@ -56,5 +55,5 @@ net:
 data_loader:
   num_workers: 6
   shuffle: True
-  batch_size: 32
+  batch_size: 256
   

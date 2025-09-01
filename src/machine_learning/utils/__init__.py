@@ -78,3 +78,7 @@ def cfg_to_dict(cfg: BaseCfg) -> dict:
     for key, val in cfg.__dict__.items():
         cfg_dict.update({key: val})
     return cfg_dict
+
+
+def get_gpu_mem() -> float:
+    return torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0

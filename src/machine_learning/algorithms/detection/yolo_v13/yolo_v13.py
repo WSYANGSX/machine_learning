@@ -1,10 +1,12 @@
 from __future__ import annotations
-from typing import Literal, Mapping, Any, Sequence
+from typing import Literal, Mapping, Any, Sequence, Union
+from tqdm import tqdm
 
 import torch
 import numpy as np
 import torch.nn as nn
 from torch.cuda.amp import autocast
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
@@ -13,28 +15,32 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap, match_predictions
 
 
 class YoloV13(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
+        data: Mapping[str, Union[Dataset, Any]],
         net: BaseNet,
-        name: str | None = "yolo_v13",
+        name: str | None = "yolov13",
         device: Literal["cuda", "cpu", "auto"] = "auto",
+        amp: bool = True,
     ) -> None:
         """
-        Implementation of YoloMM object detection algorithm
+        Implementation of YoloV13 object detection algorithm
 
         Args:
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            net (BaseNet): Models required by the YOLOMM algorithm.
-            name (str): Name of the algorithm. Defaults to "yolo_mm".
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
+            net (BaseNet): Models required by the YoloV13 algorithm.
+            name (str): Name of the algorithm. Defaults to "yolov13".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device)
+        super().__init__(cfg=cfg, net=net, name=name, device=device, data=data, amp=amp)
 
         # main parameters of the algorithm
         self.img_size = self.cfg["algorithm"].get("img_size", None)
@@ -45,7 +51,7 @@ class YoloV13(AlgorithmBase):
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
         self.nc = self.net.nc
         self.no = self.nc + self.reg_max * 4
-        self.close_mosaic = self.cfg["algorithm"]["close_mosaic"]
+        self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
 
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
@@ -152,34 +158,31 @@ class YoloV13(AlgorithmBase):
         self.set_train()
 
         # close mosaic
-        if epoch == (self.cfg["train"]["epochs"] - self.close_mosaic):
-            if hasattr(self.train_loader.dataset, "mosaic"):
-                self.train_loader.dataset.mosaic = False
+        self.close_mosaic(epoch)
 
         total_loss = 0.0
 
-        for batch_idx, (imgs, iid_cls_bboxes) in enumerate(self.train_loader):
-            # warmup
+        pbar = tqdm(enumerate(self.train_loader), total=self.num_batches)
+        for batch_idx, (imgs, iid_cls_bboxes) in pbar:
+            # Warmup
             batch_inters = epoch * self.num_batches + batch_idx
             self.warmup(batch_inters, epoch)
 
-            # load data
+            # Load data
             imgs = imgs.to(self.device, non_blocking=True)
             targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
 
+            # Loss calculation
             with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
                 pred1, pred2, pred3 = self.net(imgs)
                 loss, loss_components = self.criterion(
                     preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
                 )
 
-            if self.scaler:
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
-
-            if batch_inters - self.last_opt_step >= self.accumulate:
-                self.optimizer_step(batch_inters)
+            # Gradient backpropagation
+            self.backward(loss)
+            # Parameter optimization
+            self.optimizer_step(batch_inters)
 
             total_loss += loss.item()
 
@@ -191,6 +194,12 @@ class YoloV13(AlgorithmBase):
         avg_loss = total_loss / len(self.train_loader)
 
         return {"loss": avg_loss}
+
+    def close_mosaic(self, epoch: int) -> None:
+        if epoch == self.close_mosaic_epoch:
+            if hasattr(self.train_loader.dataset, "mosaic"):
+                LOGGER.info("Closing dataloader mosaic...")
+                self.train_loader.dataset.mosaic = False
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -265,24 +274,11 @@ class YoloV13(AlgorithmBase):
                 pred_boxes = pred[:, :4]
                 pred_scores = pred[:, 4]
                 pred_classes = pred[:, 5]
-                tp = torch.zeros(pred.shape[0], self.niou, dtype=torch.bool, device=self.device)
 
-                if len(tbox) > 0:
-                    # calculate IoU
-                    ious = box_iou(pred_boxes, tbox)  # shape: [n_pred, n_gt]
-                    # Find the best matching real box for each prediction box
-                    best_iou, best_idx = ious.max(1)
-
-                    # check the category matching and IoU threshold
-                    class_matches = pred_classes == tcls[best_idx]
-                    iou_matches = best_iou > self.iou_thres
-
-                    # comprehensive matching conditions
-                    matches = class_matches & iou_matches
-
-                    # mark correctly matched
-                    for iou_idx, iou_thresh in enumerate(self.iouv):
-                        tp[:, iou_idx] = matches & (best_iou > iou_thresh)
+                # calculate IoU
+                iou = box_iou(tbox, pred_boxes)  # shape: [n_pred, n_gt]
+                # Find the best matching real box for each prediction box
+                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
 
                 # record statistical information
                 stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))

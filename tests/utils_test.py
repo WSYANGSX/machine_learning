@@ -1,4 +1,8 @@
-from datetime import datetime
+import time
+import tqdm
+import numpy as np
 
-a = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-print(a)
+a = [1, 2]
+b = [3,5]
+
+print(a+b)

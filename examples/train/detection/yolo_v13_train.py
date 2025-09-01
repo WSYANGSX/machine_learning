@@ -32,7 +32,7 @@ def main():
     # Step 2: Build networks
     num_classes = data["class_nums"]
     img_size = yolomm_cfg["algorithm"]["img_size"]
-    net = V13Net(img_shape=(3, img_size, img_size), nc=num_classes)
+    net = V13Net(img_shape=(3, img_size, img_size), nc=num_classes, scale="n")
 
     # Step 2: Build the algorithm
     yolo_v13 = YoloV13(cfg=yolomm_cfg, net=net)
@@ -45,6 +45,7 @@ def main():
         log_interval=10,
         save_interval=10,
         save_best=True,
+        amp=True,
     )
     trainer = Trainer(trainer_cfg, yolo_v13, data)
 

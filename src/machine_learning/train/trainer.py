@@ -1,11 +1,9 @@
-from typing import Any, Mapping, Union
+from typing import Any
 import os
 import torch
-from tqdm import trange
 from datetime import datetime
 from prettytable import PrettyTable
 
-from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.cfg import BaseCfg
@@ -24,7 +22,6 @@ class TrainCfg(BaseCfg):
     log_interval: int = field(default=10)
     save_interval: int = field(default=10)
     save_best: bool = field(default=True)
-    amp: bool = field(default=False)
 
 
 class Trainer:
@@ -32,7 +29,6 @@ class Trainer:
         self,
         cfg: TrainCfg,
         algo: AlgorithmBase,
-        data: Mapping[str, Union[Dataset, Any]],
     ) -> None:
         """
         The trainer of all machine learning algorithm
@@ -46,8 +42,10 @@ class Trainer:
         self.cfg = cfg
         self._algorithm = algo
 
-        self.amp = self.cfg.amp
         self.epochs = self.cfg.epochs
+
+        # datetime suffix for logging
+        self.dt_suffix = datetime.now().strftime("%Y-%m-%d_%H-%M")
 
         # ------------------ configure global random seed ------------------
         set_seed(self.cfg.seed)
@@ -55,7 +53,6 @@ class Trainer:
 
         # ------------------------ initilaize algo -------------------------
         self._algorithm._add_cfg("train", cfg_to_dict(self.cfg))
-        self._algorithm._initialize(data=data, amp=self.amp)
         print_cfg("Configuration", self._algorithm.cfg)
 
         # ------------------------ configure writer ------------------------
@@ -66,10 +63,12 @@ class Trainer:
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
 
-    def _configure_writer(self):
-        self.dt_suffix = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    @property
+    def train_metrics(self) -> list[str]:
+        return ["Epoch", "gpu_mem"] + self.algorithm.t_metrics
 
-        log_path = self.cfg.log_dir + self.dt
+    def _configure_writer(self):
+        log_path = self.cfg.log_dir + self.dt_suffix
         log_path = os.path.abspath(log_path)
 
         try:
@@ -86,53 +85,58 @@ class Trainer:
 
     def train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
-        LOGGER.info("Start training...")
+        LOGGER.info(f"Start training for {self.epochs} epochs...")
 
         self._setup_train()
 
-        for epoch in trange(start_epoch, self.cfg.epochs):
-            train_res = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
-            val_res = self.algorithm.validate()
+        for epoch in range(start_epoch, self.cfg.epochs):
+            print(("\n" + "%10s" * len(self.train_metrics)) % tuple(self.train_metrics))
+
+            train_metrics = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+            val_metrics = self.algorithm.validate()
 
             # adjust the learning rate
             if len(self.algorithm.schedulers) == 1:  # single net, single optimizer
                 scheduler = self.algorithm.schedulers["scheduler"]
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    scheduler.step(val_res["loss"])
+                    scheduler.step(val_metrics["vloss"])
                 else:
                     scheduler.step()
             elif len(self.algorithm.schedulers) > 1:  # multi nets, multi optimizers
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(val_res[name + " loss"])
+                        scheduler.step(val_metrics[name + "loss"])
                     else:
                         scheduler.step()
 
             # log the train loss
-            for key, val in train_res.items():
+            for key, val in train_metrics.items():
                 self.writer.add_scalar(f"{key}/train", val, epoch)
 
             # log the val loss
-            for key, val in val_res.items():
-                if key == "save metric":
+            for key, val in val_metrics.items():
+                if key == "sloss":
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save" loss item in val loss dict in algo
-            if self.cfg.save_best and "save metric" in val_res:
-                if val_res["save metric"] < self.best_loss:
-                    self.best_loss = val_res["save metric"]
-                    self.save_checkpoint(epoch, val_res, self.best_loss, is_best=True)
+            if self.cfg.save_best and "sloss" in val_metrics:
+                if val_metrics["sloss"] < self.best_loss:
+                    self.best_loss = val_metrics["sloss"]
+                    self.save_checkpoint(epoch, val_metrics, self.best_loss, is_best=True)
             else:
                 LOGGER.info("Saving of the best loss model skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
-                self.save_checkpoint(epoch, val_res, self.best_loss, is_best=False)
+                self.save_checkpoint(epoch, val_metrics, self.best_loss, is_best=False)
 
-            # print log information
-            self.log_epoch_info(epoch, train_res, val_res)
+            # print epoch information
+            if epoch != self.cfg.epochs:
+                self.log_epoch_info()
+            else:
+                self.log_epoch_info(val_metrics)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)
@@ -157,18 +161,24 @@ class Trainer:
 
         self._algorithm.save(epoch, val_return, best_loss, save_path)
 
-    def log_epoch_info(self, epoch: int, train_info: dict[Any], val_info: dict[Any]) -> None:
+    def log_epoch_info(
+        self,
+        trian_metrics: dict[Any] | None = None,
+        val_metrics: dict[Any] | None = None,
+    ) -> None:
         log_table = PrettyTable()
-        log_table.title = "Evaluation indicators: " + f"Epoch {epoch}"
-        log_table.field_names = ["Indicator", "Value"]
+        log_table.title = "epoch info"
+        log_table.field_names = ["metrics", "Value"]
 
         rows = []
-        for key, val in train_info.items():
-            rows.append([f"Train: {key}", val])
-        for key, val in val_info.items():
-            rows.append([f"Val: {key}", val])
+        if trian_metrics:
+            for key, val in trian_metrics.items():
+                rows.append([f"train: {key}", val])
+        if val_metrics:
+            for key, val in val_metrics.items():
+                rows.append([f"train: {key}", val])
         for key, opt in self._algorithm._optimizers.items():
-            rows.append([f"{key.capitalize()} learning rate", opt.param_groups[0]["lr"]])
+            rows.append([f"{key} lr", opt.param_groups[0]["lr"]])
 
         log_table.add_rows(rows)
-        print(log_table)
+        LOGGER.info("Epoch information\n" + log_table.get_string())

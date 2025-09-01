@@ -2,6 +2,7 @@ from typing import Literal, Mapping, Any, Union
 
 import os
 import yaml
+from tqdm import tqdm
 from abc import ABC, abstractmethod
 
 import torch
@@ -12,6 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
+from machine_learning.utils import get_gpu_mem
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
 
@@ -20,9 +22,11 @@ class AlgorithmBase(ABC):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
+        data: Mapping[str, Union[Dataset, Any]],
         net: BaseNet | None = None,
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
+        amp: bool = False,
     ):
         """Base class of all algorithms
 
@@ -32,6 +36,8 @@ class AlgorithmBase(ABC):
             name (str, optional): Name of the algorithm. Defaults to None.
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
+            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset, may contain data information of the specific dataset.
         """
         super().__init__()
 
@@ -44,8 +50,11 @@ class AlgorithmBase(ABC):
             self._add_net("net", self.net)
 
         self.training = False  # training mode or not
-        self.amp = False  # automatic mixed precision
-        self.scaler = None
+
+        # --------------------- configure AMP of algo --------------------
+        self.amp = amp
+        self.scaler = GradScaler() if self.amp else None
+        LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
 
         # ------------------------ configure device -----------------------
         self._device = self._configure_device(device)
@@ -61,6 +70,21 @@ class AlgorithmBase(ABC):
 
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
+
+        # ------------------------ initialize algo ------------------------
+        self._initialize(data)
+
+        # ---------------------- initialize metrics -----------------------
+        self.train_metrics = {}
+        self.val_metrics = {}
+
+    @property
+    def t_metrics(self) -> list:
+        return list(self.train_metrics.keys())  # "tloss"
+
+    @property
+    def v_metrics(self) -> list:
+        return list(self.val_metrics.keys())  # "vloss", "sloss"
 
     @property
     def name(self) -> str:
@@ -90,11 +114,6 @@ class AlgorithmBase(ABC):
         """initialization algorithm, needs to be called before the training starts."""
 
         LOGGER.info("Algorithm initializing...")
-
-        # --------------------- configure AMP of algo --------------------
-        if amp:
-            self.amp = amp
-            self.scaler = GradScaler()
 
         # --------------------- configure nets of algo --------------------
         self._configure_nets()
@@ -216,7 +235,7 @@ class AlgorithmBase(ABC):
             )
             self._add_optimizer("optimizer", self.optimizer)
 
-        if self.opt_cfg["type"] == "Adam":
+        elif self.opt_cfg["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
                 params=self.net.parameters(),
                 lr=self.opt_cfg["lr"],
@@ -275,27 +294,61 @@ class AlgorithmBase(ABC):
 
         return "\n".join(summary)
 
+    def log_pbar(
+        self,
+        mode: Literal["train", "val"],
+        pbar: tqdm,
+        epoch: int | None = None,
+        **kwargs,
+    ) -> None:
+        if mode == "train":
+            epoch_str = "%g/%g" % (epoch, self.cfg["train"]["epochs"] - 1)
+            mem = "%.3gG" % get_gpu_mem()
+
+            for i in self.t_metrics:
+                if i not in kwargs.keys():
+                    raise ValueError(f"Print indices {i} not provided in kwargs parameters.")
+
+            format_str = "%10s" * 2 + "%10.4g" * len(self.t_metrics)
+            args = (epoch_str, mem) + tuple(kwargs[i] for i in self.t_metrics)
+        else:
+            for i in self.v_metrics:
+                if i not in kwargs.keys():
+                    raise ValueError(f"Print indices {i} not provided in kwargs parameters.")
+
+            format_str = "%10s" * 2 + "%10.4g" * len(self.v_metrics)
+            args = ("", "") + tuple(kwargs[i] for i in self.v_metrics)
+
+        s = format_str % args
+        pbar.set_description(s)
+
     @abstractmethod
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
         """Train a single epoch"""
         pass
 
-    def optimizer_step(self, batch_inters: int) -> None:
+    def backward(self, loss: torch.Tensor) -> None:
         if self.scaler:
-            self.scaler.unscale_(
-                self.optimizer
-            )  # unscale gradients, necessary if gradient clipping is performed after.
-        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
-
-        if self.scaler:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.scaler.scale(loss).backward()
         else:
-            self.optimizer.step()
+            loss.backward()
 
-        self.optimizer.zero_grad()
+    def optimizer_step(self, batch_inters: int) -> None:
+        if batch_inters - self.last_opt_step >= self.accumulate:
+            if self.scaler:
+                self.scaler.unscale_(
+                    self.optimizer
+                )  # unscale gradients, necessary if gradient clipping is performed after.
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
 
-        self.last_opt_step = batch_inters
+            if self.scaler:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                self.optimizer.step()
+
+            self.optimizer.zero_grad()
+            self.last_opt_step = batch_inters
 
     @abstractmethod
     def validate(self) -> dict[str, float]:

@@ -1,13 +1,15 @@
 algorithm: 
-  name: "yolo_v13"
+  # common
+  name: "yolov13"
+  nbs: 64 # (int) nominal batch size, -1 represent no
+
   img_size: 640
-  amp: True # (bool) Automatic Mixed Precision (AMP) training, choices=[True, False], True runs AMP check
   use_dfl: True
   reg_max: 16
   topk: 10
   alpha: 0.5
   beta: 6.0
-  close_mosaic: 10
+  close_mosaic_epoch: 10
 
   # loss weight
   box: 7.5 # (float) box loss gain
@@ -19,22 +21,20 @@ algorithm:
   conf_thres_val: 0.001
   conf_thres_det: 0.25
 
-  nbs: 64 # (int) nominal batch size, -1 represent no 
-
 optimizer:
-  # type: "Adam"
-  # learning_rate: 1.0e-3
-  # final_factor: 0.01
-  # beta1: 0.937
-  # beta2: 0.999
-  # eps: 1.0e-8
-  # weight_decay: 0.0005
-
-  type: "SGD"
-  learning_rate: 0.01
+  type: "Adam"
+  learning_rate: 1.0e-3
   final_factor: 0.01
-  momentum: 0.937
+  beta1: 0.937
+  beta2: 0.999
+  eps: 1.0e-8
   weight_decay: 0.0005
+
+  # type: "SGD"
+  # learning_rate: 0.01
+  # final_factor: 0.01
+  # momentum: 0.937
+  # weight_decay: 0.0005
 
   grad_clip: 1.0
   warmup_epochs: 3.0

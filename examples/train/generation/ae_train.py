@@ -23,6 +23,7 @@ def main():
     # Step 3: Build the algorithm
     auto_encoder = AutoEncoder(
         "./src/machine_learning/algorithms/generation/auto_encoder/config/config.yaml",
+        data,
         net,
     )
 
@@ -31,13 +32,15 @@ def main():
         log_dir="./logs/auto_encoder/",
         model_dir="./checkpoints/auto_encoder/",
     )
-    trainer = Trainer(trainer_cfg, auto_encoder, data)
+    trainer = Trainer(trainer_cfg, auto_encoder)
 
     # Step 5: Train the model
     trainer.train()
 
     # Step 6: Evaluate the model
-    # auto_encoder.load("/home/yangxf/my_projects/machine_learning/checkpoints/auto_encoder/best_model.pth")
+    # auto_encoder.load(
+    #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-01_09-08/best_model.pth"
+    # )
     auto_encoder.eval(5)
 
 
