@@ -16,7 +16,7 @@ from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap, match_predictions
 
 
-class YoloMM(AlgorithmBase):
+class MMIC(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],

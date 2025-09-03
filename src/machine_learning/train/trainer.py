@@ -3,6 +3,7 @@ import os
 import torch
 from datetime import datetime
 from prettytable import PrettyTable
+from numbers import Integral, Real
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -36,8 +37,6 @@ class Trainer:
         Args:
             cfg (TrainCfg): The configuration of the trainer.
             algo (AlgorithmBase): The algorithm to be trained.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
         """
         self.cfg = cfg
         self._algorithm = algo
@@ -53,6 +52,7 @@ class Trainer:
 
         # ------------------------ initilaize algo -------------------------
         self._algorithm._add_cfg("train", cfg_to_dict(self.cfg))
+        self._algorithm._initialize()
         print_cfg("Configuration", self._algorithm.cfg)
 
         # ------------------------ configure writer ------------------------
@@ -62,10 +62,6 @@ class Trainer:
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
-
-    @property
-    def train_metrics(self) -> list[str]:
-        return ["Epoch", "gpu_mem"] + self.algorithm.t_metrics
 
     def _configure_writer(self):
         log_path = self.cfg.log_dir + self.dt_suffix
@@ -90,8 +86,6 @@ class Trainer:
         self._setup_train()
 
         for epoch in range(start_epoch, self.cfg.epochs):
-            print(("\n" + "%10s" * len(self.train_metrics)) % tuple(self.train_metrics))
-
             train_metrics = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
             val_metrics = self.algorithm.validate()
 
@@ -111,11 +105,13 @@ class Trainer:
 
             # log the train loss
             for key, val in train_metrics.items():
+                if not isinstance(val, (Real, Integral)):
+                    continue
                 self.writer.add_scalar(f"{key}/train", val, epoch)
 
             # log the val loss
             for key, val in val_metrics.items():
-                if key == "sloss":
+                if (key == "sloss") or (not isinstance(val, (Real, Integral))):
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
@@ -181,4 +177,4 @@ class Trainer:
             rows.append([f"{key} lr", opt.param_groups[0]["lr"]])
 
         log_table.add_rows(rows)
-        LOGGER.info("Epoch information\n" + log_table.get_string())
+        LOGGER.info("\n" + log_table.get_string())

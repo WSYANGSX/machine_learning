@@ -398,21 +398,21 @@ def nms_rotated(boxes, scores, threshold=0.45):
 
 
 def non_max_suppression(
-    prediction: torch.Tensor,
-    conf_thres: float = 0.25,
-    iou_thres: float = 0.45,
-    classes: list[int] = None,
-    agnostic: bool = False,
-    multi_label: bool = False,
-    labels: list[list[Union[int, float, torch.Tensor]]] = (),
-    max_det: int = 300,
-    nc: int = 0,  # number of classes (optional)
-    max_time_img: float = 0.05,
-    max_nms: int = 30000,
-    max_wh: int = 7680,
-    in_place: bool = True,
-    rotated: bool = False,
-) -> list[torch.Tensor]:
+    prediction,
+    conf_thres=0.25,
+    iou_thres=0.45,
+    classes=None,
+    agnostic=False,
+    multi_label=False,
+    labels=(),
+    max_det=300,
+    nc=0,  # number of classes (optional)
+    max_time_img=0.05,
+    max_nms=30000,
+    max_wh=7680,
+    in_place=True,
+    rotated=False,
+):
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
 
@@ -449,17 +449,18 @@ def non_max_suppression(
     # Checks
     assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
     assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
-
+    if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
+        prediction = prediction[0]  # select only inference output
     if classes is not None:
         classes = torch.tensor(classes, device=prediction.device)
 
-    if prediction.shape[-1] == 6:  # end-to-end model （xyxy/xywh, conf, cls）
+    if prediction.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
         output = [pred[pred[:, 4] > conf_thres][:max_det] for pred in prediction]
         if classes is not None:
             output = [pred[(pred[:, 5:6] == classes).any(1)] for pred in output]
         return output
 
-    bs = prediction.shape[0]  # batch size
+    bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
     nc = nc or (prediction.shape[1] - 4)  # number of classes
     nm = prediction.shape[1] - nc - 4  # number of masks
     mi = 4 + nc  # mask start index
@@ -470,8 +471,7 @@ def non_max_suppression(
     time_limit = 2.0 + max_time_img * bs  # seconds to quit after
     multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
 
-    prediction = prediction.transpose(-1, -2)  # shape(bs, no, na) to shape(bs, na, no)
-    # When use oriented Bounding Boxes (OBB), xyxy format is inefficiency
+    prediction = prediction.transpose(-1, -2)  # shape(1,84,6300) to shape(1,6300,84)
     if not rotated:
         if in_place:
             prediction[..., :4] = xywh2xyxy(prediction[..., :4])  # xywh to xyxy
@@ -495,7 +495,7 @@ def non_max_suppression(
 
         # If none remain process next image
         if not x.shape[0]:
-            continue  # output[xi] is still empty
+            continue
 
         # Detections matrix nx6 (xyxy, conf, cls)
         box, cls, mask = x.split((4, nc, nm), 1)

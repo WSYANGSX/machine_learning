@@ -1,3 +1,5 @@
+from typing import Sequence
+
 import os
 import yaml
 import random
@@ -61,15 +63,24 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
         else:
             print(key, ":", end="")
             print(f"\033[{len(key)}D", end="")  # 光标回退，控制对齐
-            print("\t" * 5, val)
+            if isinstance(val, (tuple, list)) and len(val) > 10:
+                if isinstance(val, tuple):
+                    bracket_open, bracket_close = "(", ")"
+                else:
+                    bracket_open, bracket_close = "[", "]"
+                parts = [str(x) for x in val[:5]] + ["..."] + [str(x) for x in val[-5:]]
+                s = bracket_open + ", ".join(parts) + bracket_close
+                print("\t" * 5, s)
+            else:
+                print("\t" * 5, val)
 
 
 def print_cfg(title: str, cfg: dict) -> None:
     """Print cfg dict nicely."""
-    print("=" * 90)
+    print("=" * 110)
     print(f"{title}:")
     print_dict(cfg)
-    print("=" * 90)
+    print("=" * 110)
 
 
 def cfg_to_dict(cfg: BaseCfg) -> dict:

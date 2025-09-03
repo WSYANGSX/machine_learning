@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from machine_learning.networks import BaseNet
 from machine_learning.modules.head import DetectV8
-from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, MFD, CHyperACEV2
+from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, MFD
 
 from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
 
@@ -185,7 +185,7 @@ from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, Downsa
 #         self.head.Head.bias_init()
 
 
-class NblityNet(BaseNet):
+class MMICNet(BaseNet):
     def __init__(
         self,
         img_shape: Sequence[int],

@@ -1,5 +1,6 @@
 algorithm: 
   name: "auto_encoder"
+  nbs: -1
 
 optimizer:
   type: "Adam"
@@ -22,4 +23,3 @@ data_loader:
   num_workers: 4
   shuffle: True
   batch_size: 1024
-  subdevision: 1

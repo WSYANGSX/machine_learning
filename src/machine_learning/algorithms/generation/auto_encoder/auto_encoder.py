@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
@@ -36,23 +36,25 @@ class AutoEncoder(AlgorithmBase):
         """
         super().__init__(cfg=cfg, data=data, net=net, name=name, device=device)
 
-        # modifying the algorithm's metrics
-        self.train_metrics = {"tloss": None}
-        self.val_metrics = {"vloss": None, "sloss": None}
-
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         """Train a single epoch"""
-        self.set_train()
+        super().train_epoch(epoch, writer, log_interval)
+
+        # metrics
+        metrics = {"tloss": None}
+        self.print_metric_titles("train", metrics)
 
         tloss = None
 
-        pbar = tqdm(enumerate(self.train_loader), total=self.num_batches)
+        pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
         for batch_idx, (data, _) in pbar:
-            batch_inters = epoch * self.num_batches + batch_idx
+            batch_inters = epoch * self.train_batches + batch_idx
 
             data = data.to(self.device, non_blocking=True)
 
-            with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
+            with autocast(
+                device_type=str(self.device), enabled=self.amp
+            ):  # Ensure that the autocast scope correctly covers the forward computation
                 output = self.net(data)
                 loss = self.criterion(output, data)
 
@@ -60,24 +62,27 @@ class AutoEncoder(AlgorithmBase):
             self.optimizer_step(batch_inters)
 
             tloss = (tloss * batch_idx + loss.item()) / (batch_idx + 1) if tloss is not None else loss.item()
-            self.train_metrics["tloss"] = tloss
+            metrics["tloss"] = tloss
 
             if batch_idx % log_interval == 0:
                 writer.add_scalar("loss/train_batch", loss.item(), batch_inters)  # batch loss
 
-            self.log_pbar("train", pbar, epoch, **self.train_metrics)
+            self.pbar_log("train", pbar, epoch, **metrics)
 
-        return self.train_metrics
+        return metrics
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
-        self.set_eval()
+        super().validate()
+
+        # metrics
+        metrics = {"vloss": None, "sloss": None}
+        self.print_metric_titles("val", metrics)
 
         vloss = None
 
-        print(("%10s" * (len(self.v_metrics) + 2)) % ("", "", *self.v_metrics))
-        pbar = tqdm(enumerate(self.val_loader), total=len(self.val_loader))
+        pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for batch_idx, (data, _) in pbar:
             data = data.to(self.device, non_blocking=True)
             recon = self.net(data)
@@ -86,13 +91,13 @@ class AutoEncoder(AlgorithmBase):
             vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
 
             # add value to val_metrics
-            self.val_metrics["vloss"] = vloss
-            self.val_metrics["sloss"] = vloss
+            metrics["vloss"] = vloss
+            metrics["sloss"] = vloss
 
             # log
-            self.log_pbar("val", pbar, **self.val_metrics)
+            self.pbar_log("val", pbar, **metrics)
 
-        return self.val_metrics
+        return metrics
 
     def criterion(self, recon: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
         fun = nn.MSELoss()

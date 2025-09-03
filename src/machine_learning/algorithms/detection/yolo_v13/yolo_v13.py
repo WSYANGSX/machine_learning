@@ -1,11 +1,10 @@
-from __future__ import annotations
 from typing import Literal, Mapping, Any, Sequence, Union
 from tqdm import tqdm
 
 import torch
 import numpy as np
 import torch.nn as nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
@@ -15,7 +14,8 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap, match_predictions
+from ultralytics.utils.metrics import ConfusionMatrix, DetMetrics
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, match_predictions
 
 
 class YoloV13(AlgorithmBase):
@@ -39,11 +39,11 @@ class YoloV13(AlgorithmBase):
             name (str): Name of the algorithm. Defaults to "yolov13".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
+            amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
         """
         super().__init__(cfg=cfg, net=net, name=name, device=device, data=data, amp=amp)
 
         # main parameters of the algorithm
-        self.img_size = self.cfg["algorithm"].get("img_size", None)
         self.iou_thres = self.cfg["algorithm"]["iou_thres"]
         self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
         self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
@@ -52,6 +52,9 @@ class YoloV13(AlgorithmBase):
         self.nc = self.net.nc
         self.no = self.nc + self.reg_max * 4
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
+        self.max_det = self.cfg["algorithm"]["max_det"]
+        self.single_cls = self.cfg["algorithm"]["single_cls"]
+        self.plots = self.cfg["algorithm"]["plots"]
 
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
@@ -155,45 +158,69 @@ class YoloV13(AlgorithmBase):
             LOGGER.warning(f"Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
-        self.set_train()
+        super().train_epoch(epoch, writer, log_interval)
 
         # close mosaic
         self.close_mosaic(epoch)
 
-        total_loss = 0.0
+        # metrics
+        metrics = {
+            "tloss": None,
+            "bloss": None,
+            "dloss": None,
+            "closs": None,
+            "instances": None,
+            "img_size": None,
+        }
+        self.print_metric_titles("train", metrics)
 
-        pbar = tqdm(enumerate(self.train_loader), total=self.num_batches)
-        for batch_idx, (imgs, iid_cls_bboxes) in pbar:
+        tloss = None
+
+        pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
+        for batch_idx, (imgs, targets) in pbar:
             # Warmup
-            batch_inters = epoch * self.num_batches + batch_idx
+            batch_inters = epoch * self.train_batches + batch_idx
             self.warmup(batch_inters, epoch)
 
             # Load data
             imgs = imgs.to(self.device, non_blocking=True)
-            targets = iid_cls_bboxes.to(self.device)  # (img_ids, class_ids, bboxes)
+            targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
 
             # Loss calculation
-            with autocast(enabled=self.amp):  # Ensure that the autocast scope correctly covers the forward computation
-                pred1, pred2, pred3 = self.net(imgs)
-                loss, loss_components = self.criterion(
-                    preds=[pred1, pred2, pred3], targets=targets, img_size=imgs.size(2)
-                )
+            with autocast(
+                device_type=str(self.device), enabled=self.amp
+            ):  # Ensure that the autocast scope correctly covers the forward computation
+                preds = self.net(imgs)
+                loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # Gradient backpropagation
             self.backward(loss)
             # Parameter optimization
             self.optimizer_step(batch_inters)
 
-            total_loss += loss.item()
+            # Losses
+            tloss = (tloss * batch_idx + loss.item()) / (batch_idx + 1) if tloss is not None else loss.item()
+            bloss = lc["bloss"]
+            closs = lc["closs"]
+            dloss = lc["dloss"]
+
+            # Metrics
+            metrics["tloss"] = tloss
+            metrics["bloss"] = bloss
+            metrics["closs"] = closs
+            metrics["dloss"] = dloss
+            metrics["img_size"] = imgs.size(2)
+            metrics["instances"] = targets.size(0)
 
             if batch_idx % log_interval == 0:
-                writer.add_scalar("box_loss/train_batch", loss_components["box_loss"], batch_inters)
-                writer.add_scalar("cls_loss/train_batch", loss_components["cls_loss"], batch_inters)
-                writer.add_scalar("dfl_loss/train_batch", loss_components["dfl_loss"], batch_inters)
+                writer.add_scalar("bloss/train_batch", bloss, batch_inters)
+                writer.add_scalar("closs/train_batch", closs, batch_inters)
+                writer.add_scalar("dloss/train_batch", dloss, batch_inters)
 
-        avg_loss = total_loss / len(self.train_loader)
+            # log
+            self.pbar_log("train", pbar, epoch, **metrics)
 
-        return {"loss": avg_loss}
+        return metrics
 
     def close_mosaic(self, epoch: int) -> None:
         if epoch == self.close_mosaic_epoch:
@@ -202,118 +229,145 @@ class YoloV13(AlgorithmBase):
                 self.train_loader.dataset.mosaic = False
 
     @torch.no_grad()
-    def validate(self) -> dict[str, float]:
-        self.set_eval()
+    def validate(self):
+        super().validate()
 
-        metrics = {}
-        total_loss, total_box_loss, total_cls_loss, total_dfl_loss = 0.0, 0.0, 0.0, 0.0
+        # metrics
+        metrics = {
+            "class": None,
+            "images": None,
+            "instances": None,
+            "vloss": None,
+            "precision": None,
+            "recall": None,
+            "mAP50": None,
+            "mAP75": None,
+            "mAP50-95": None,
+        }
+        self.print_metric_titles("val", metrics)
 
-        # Initiate the evaluation indicators
-        stats = []
-        for _, (imgs, targets) in enumerate(self.val_loader):
+        vloss = None
+        self.seen = 0
+
+        self.stats = dict(tp=[], conf=[], pred_cls=[], target_cls=[], target_img=[])
+        self.confusion_matrix = ConfusionMatrix(nc=self.nc, conf=self.conf_thres_val)
+        self.metrics = DetMetrics(save_dir=self.cfg["train"]["log_dir"])
+
+        pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
+        for batch_idx, (imgs, targets) in pbar:
             imgs = imgs.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
-            img_size = imgs.size(2)
 
-            preds = self.net(imgs)
-            loss, loss_components = self.criterion(preds=preds, targets=targets, img_size=img_size)
+            dpreds, preds = self.net(imgs)
 
-            total_loss += loss.item()
-            total_box_loss += loss_components["box_loss"]
-            total_cls_loss += loss_components["cls_loss"]
-            total_dfl_loss += loss_components["dfl_loss"]
-
-            # Merge multi-scale predictions
-            x = []
-            for pred in preds:
-                bs, _, h, w = pred.shape
-                pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
-                x.append(pred)
-            x = torch.cat(x, 1)
-            # Separate the bounding box from the category score
-            box, cls = x.split((self.reg_max * 4, self.nc), 2)
-
-            # decode preds
-            strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
-            anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
-            dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
-            prediction = torch.cat((dbox, cls.sigmoid()), 2)
+            loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
+            vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
 
             # NMS
             preds = non_max_suppression(
-                prediction.permute(0, 2, 1), conf_thres=self.conf_thres_val, iou_thres=self.iou_thres
+                dpreds,
+                conf_thres=self.conf_thres_val,
+                iou_thres=self.iou_thres,
+                multi_label=True,
+                max_det=self.max_det,
+                agnostic=self.single_cls,
             )
 
-            # prepare targets
-            scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
-            targets_abs = targets.clone()
-            bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
-            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy
+            scale = torch.tensor([imgs.size(3), imgs.size(2)] * 2, device=self.device)
+            self.update_metrics(preds, targets, scale)
 
-            for si, pred in enumerate(preds):
-                # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
-                labels = targets_abs[targets_abs[:, 0] == si, 1:]
+            # metrics within the loop
+            metrics["vloss"] = vloss
+            metrics["class"] = "all"
 
-                # extract the category and coordinates of the real box
-                tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
-                tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
+            if batch_idx == pbar.total - 1:
+                self.get_stats()
+                self.metrics.confusion_matrix = self.confusion_matrix
 
-                if len(pred) == 0:
-                    if len(labels):
-                        stats.append(
-                            (
-                                torch.zeros(0, self.niou, dtype=torch.bool),  # TP
-                                torch.Tensor(),  # confidence scores
-                                torch.Tensor(),  # pred_classes
-                                tcls.cpu(),  # ground truth classes
-                            )
-                        )
-                    continue
+                # metrics for final
+                metrics["images"] = self.seen
+                metrics["vloss"] = vloss
+                metrics["instances"] = self.nt_per_class.sum()
+                metrics["precision"] = self.metrics.mean_results()[0]
+                metrics["recall"] = self.metrics.mean_results()[1]
+                metrics["mAP50"] = self.metrics.mean_results()[2]
+                metrics["mAP75"] = self.metrics.mean_results()[3]
+                metrics["mAP50-95"] = self.metrics.mean_results()[4]
 
-                # Prediction box format: [x1, y1, x2, y2, conf, class]
-                pred_boxes = pred[:, :4]
-                pred_scores = pred[:, 4]
-                pred_classes = pred[:, 5]
-
-                # calculate IoU
-                iou = box_iou(tbox, pred_boxes)  # shape: [n_pred, n_gt]
-                # Find the best matching real box for each prediction box
-                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
-
-                # record statistical information
-                stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))
-
-        # calculate the average loss
-        num_batches = len(self.val_loader)
-        metrics["loss"] = total_loss / num_batches
-        metrics["box_loss"] = total_box_loss / num_batches
-        metrics["cls_loss"] = total_cls_loss / num_batches
-        metrics["dfl_loss"] = total_dfl_loss / num_batches
-        metrics["save metric"] = metrics["loss"]
-
-        # calculate mAP metrics
-        if stats:
-            tp, conf, pred_cls, target_cls = zip(*stats)
-            tp = np.concatenate(tp, 0)
-            conf = np.concatenate(conf, 0)
-            pred_cls = np.concatenate(pred_cls, 0)
-            target_cls = np.concatenate(target_cls, 0)
-            metrics.update(compute_ap(self.cfg["data"]["class_names"], tp, conf, pred_cls, target_cls, self.iouv))
+            self.pbar_log("val", pbar, **metrics)
 
         return metrics
 
+    def _prepare_target(self, si: int, target: torch.Tensor, scale: torch.Tensor):
+        """Prepares a batch of images and annotations for validation."""
+        idx = target[:, 0] == si
+        cls = target[:, 1][idx]
+        bbox = target[:, 2:6][idx]
+        if len(cls):
+            bbox = xywh2xyxy(bbox) * scale  # target boxes
+        return {"cls": cls, "bbox": bbox}
+
+    def _process_batch(self, detections, gt_bboxes, gt_cls):
+        iou = box_iou(gt_bboxes, detections[:, :4])
+        return match_predictions(detections[:, 5], gt_cls, iou, self.iouv)
+
+    def update_metrics(self, preds: torch.Tensor, targets: torch.Tensor, scale: torch.Tensor):
+        """Metrics."""
+        for si, pred in enumerate(preds):
+            self.seen += 1
+            npr = len(pred)
+            stat = dict(
+                conf=torch.zeros(0, device=self.device),
+                pred_cls=torch.zeros(0, device=self.device),
+                tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
+            )
+            ptarget = self._prepare_target(si, targets, scale)
+            cls, bbox = ptarget.pop("cls"), ptarget.pop("bbox")
+            nl = len(cls)
+            stat["target_cls"] = cls
+            stat["target_img"] = cls.unique()
+            if npr == 0:
+                if nl:
+                    for k in self.stats.keys():
+                        self.stats[k].append(stat[k])
+                    if self.plots:
+                        self.confusion_matrix.process_batch(detections=None, gt_bboxes=bbox, gt_cls=cls)
+                continue
+
+            # Predictions
+            if self.single_cls:
+                pred[:, 5] = 0
+            stat["conf"] = pred[:, 4]
+            stat["pred_cls"] = pred[:, 5]
+
+            # Evaluate
+            if nl:
+                stat["tp"] = self._process_batch(pred, bbox, cls)
+            if self.plots:
+                self.confusion_matrix.process_batch(pred, bbox, cls)
+            for k in self.stats.keys():
+                self.stats[k].append(stat[k])
+
+    def get_stats(self):
+        """Returns metrics statistics and results dictionary."""
+        stats = {k: torch.cat(v, 0).cpu().numpy() for k, v in self.stats.items()}  # to numpy
+        self.nt_per_class = np.bincount(stats["target_cls"].astype(int), minlength=self.nc)
+        self.nt_per_image = np.bincount(stats["target_img"].astype(int), minlength=self.nc)
+        stats.pop("target_img", None)
+        if len(stats) and stats["tp"].any():
+            self.metrics.process(**stats)
+        return self.metrics.results_dict
+
     def warmup(self, batch_inters: int, epoch: int) -> int:
         nw = (
-            max(round(self.opt_cfg["warmup_epochs"] * self.num_batches), 100)
+            max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
             if self.opt_cfg["warmup_epochs"] > 0
             else -1
         )  # warmup batches
 
         if batch_inters <= nw:
             xi = [0, nw]  # x interp
-            self.accumulate = max(
-                1, int(np.interp(batch_inters, xi, [1, self.nominal_batch_size / self.batch_size]).round())
-            )
+            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
             for j, x in enumerate(self.optimizer.param_groups):
                 # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                 x["lr"] = np.interp(
@@ -332,12 +386,12 @@ class YoloV13(AlgorithmBase):
             + "please use detect method to detect objects in an image."
         )
 
-    def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, img_size: int):
-        cls_loss = torch.zeros(1, device=self.device)
-        box_loss = torch.zeros(1, device=self.device)
-        dfl_loss = torch.zeros(1, device=self.device)
+    def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, imgs_shape: tuple[int]):
+        closs = torch.zeros(1, device=self.device)
+        bloss = torch.zeros(1, device=self.device)
+        dloss = torch.zeros(1, device=self.device)
 
-        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
+        strides = torch.tensor([imgs_shape[2] // pred.size(2) for pred in preds], device=self.device)
         pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
             (self.reg_max * 4, self.nc), 1
         )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
@@ -349,8 +403,7 @@ class YoloV13(AlgorithmBase):
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
 
         # Targets
-        scale_tensor = torch.tensor([img_size] * 4, device=self.device)
-        targets = torch.cat((targets[:, [0]], targets[:, [1]], targets[:, 2:6]), 1)
+        scale_tensor = torch.tensor([imgs_shape[3], imgs_shape[2]] * 2, device=self.device)
         targets = self.preprocess(targets, bs, scale_tensor=scale_tensor)
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
@@ -371,29 +424,24 @@ class YoloV13(AlgorithmBase):
         target_scores_sum = max(target_scores.sum(), 1)
 
         # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        cls_loss = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum  # BCE
+        closs = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum  # BCE
 
         # Bbox loss
         if fg_mask.sum():
             target_bboxes /= stride_tensor
-            box_loss, dfl_loss = self.bbox_loss(
+            bloss, dloss = self.bbox_loss(
                 pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
             )
 
-        cls_loss *= self.cls_weight  # box gain
-        box_loss *= self.box_weight  # cls gain
-        dfl_loss *= self.dfl_weight  # dfl gain
+        bloss *= self.box_weight
+        closs *= self.cls_weight
+        dloss *= self.dfl_weight
 
-        total_loss = (box_loss + cls_loss + dfl_loss) * bs
+        tloss = (bloss + closs + dloss) * bs
 
-        loss_component = {
-            "box_loss": box_loss.item(),
-            "cls_loss": cls_loss.item(),
-            "dfl_loss": dfl_loss.item(),
-        }
+        loss_component = {"bloss": bloss.item(), "closs": closs.item(), "dloss": dloss.item()}
 
-        return total_loss, loss_component
+        return tloss, loss_component
 
     def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, xywh: bool = False):
         """Decode predicted object bounding box coordinates from anchor points and distribution."""
@@ -402,9 +450,10 @@ class YoloV13(AlgorithmBase):
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
-    def preprocess(self, targets, batch_size, scale_tensor):
+    def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor):
         """Preprocesses the target counts and matches with the input batch size to output a tensor."""
         nl, ne = targets.shape
+
         if nl == 0:
             out = torch.zeros(batch_size, 0, ne - 1, device=self.device)
         else:

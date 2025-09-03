@@ -3,13 +3,16 @@ algorithm:
   name: "yolov13"
   nbs: 64 # (int) nominal batch size, -1 represent no
 
-  img_size: 640
+  # train
   use_dfl: True
   reg_max: 16
   topk: 10
   alpha: 0.5
   beta: 6.0
   close_mosaic_epoch: 10
+  max_det: 300
+  single_cls: False
+  plots: True # (bool) save plots and images during train/val
 
   # loss weight
   box: 7.5 # (float) box loss gain

@@ -4,9 +4,10 @@ import os
 import yaml
 from tqdm import tqdm
 from abc import ABC, abstractmethod
+from numbers import Integral, Real
 
 import torch
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset, DataLoader
@@ -38,6 +39,7 @@ class AlgorithmBase(ABC):
             "auto"-automatic selection by algorithm.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
+            amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
         """
         super().__init__()
 
@@ -64,27 +66,27 @@ class AlgorithmBase(ABC):
         self._validate_config()
 
         self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
-        self.nominal_batch_size = self.cfg["algorithm"].get("nbs", -1)
-        self.accumulate = max(1, round(self.nominal_batch_size / self.batch_size))
+        self.nbs = self.cfg["algorithm"].get("nbs", -1)
+        self.accumulate = max(1, round(self.nbs / self.batch_size))
         self.last_opt_step = -1
 
         # ---------------------- configure algo name ----------------------
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
         # ------------------------ initialize algo ------------------------
-        self._initialize(data)
-
-        # ---------------------- initialize metrics -----------------------
-        self.train_metrics = {}
-        self.val_metrics = {}
+        self._init_dependent_on_data(data)
 
     @property
-    def t_metrics(self) -> list:
-        return list(self.train_metrics.keys())  # "tloss"
+    def train_batches(self) -> int:
+        return self._train_batches
 
     @property
-    def v_metrics(self) -> list:
-        return list(self.val_metrics.keys())  # "vloss", "sloss"
+    def val_batches(self) -> int:
+        return self._val_batches
+
+    @property
+    def test_batches(self) -> int | None:
+        return self._test_batches
 
     @property
     def name(self) -> str:
@@ -110,9 +112,8 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
-    def _initialize(self, data: Mapping[str, Union[Dataset, Any]], amp: bool = False) -> None:
-        """initialization algorithm, needs to be called before the training starts."""
-
+    def _initialize(self) -> None:
+        """initialization the algorithm, called by trainer."""
         LOGGER.info("Algorithm initializing...")
 
         # --------------------- configure nets of algo --------------------
@@ -123,9 +124,6 @@ class AlgorithmBase(ABC):
 
         # --------------------- configure schedulers ----------------------
         self._configure_schedulers()
-
-        # ------------------------ configure data -------------------------
-        self._initialize_dependent_on_data(data)
 
     def _add_cfg(self, name, cfg: Any) -> None:
         # add additional configuration parameters may used by algo, e.g. traincfg
@@ -171,7 +169,7 @@ class AlgorithmBase(ABC):
                 net._initialize_weights()
             net.view_structure()
 
-    def _initialize_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+    def _init_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
 
         Args:
@@ -194,7 +192,7 @@ class AlgorithmBase(ABC):
             num_workers=self.cfg["data_loader"].get("num_workers", 4),
             collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
         )
-        self.num_batches = len(self.train_loader)
+        self._train_batches = len(self.train_loader)
 
         self.val_loader = DataLoader(
             dataset=val_dataset,
@@ -203,6 +201,7 @@ class AlgorithmBase(ABC):
             num_workers=self.cfg["data_loader"].get("num_workers", 4),
             collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
         )
+        self._val_batches = len(self.val_loader)
 
         if "test_dataset" in data and isinstance(data["test_dataset"], Dataset):
             test_dataset = data.pop("test_dataset")
@@ -213,8 +212,10 @@ class AlgorithmBase(ABC):
                 num_workers=self.cfg["data_loader"].get("num_workers", 4),
                 collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
             )
+            self._test_batches = len(self.test_loader)
         else:
             self.test_loader = None
+            self._test_batches = None
 
         if data:
             for key, val in data.items():
@@ -294,38 +295,46 @@ class AlgorithmBase(ABC):
 
         return "\n".join(summary)
 
-    def log_pbar(
+    def pbar_log(
         self,
         mode: Literal["train", "val"],
         pbar: tqdm,
         epoch: int | None = None,
         **kwargs,
     ) -> None:
+        args = []
+        format_str = "%-12s" * 2
+
         if mode == "train":
             epoch_str = "%g/%g" % (epoch, self.cfg["train"]["epochs"] - 1)
             mem = "%.3gG" % get_gpu_mem()
-
-            for i in self.t_metrics:
-                if i not in kwargs.keys():
-                    raise ValueError(f"Print indices {i} not provided in kwargs parameters.")
-
-            format_str = "%10s" * 2 + "%10.4g" * len(self.t_metrics)
-            args = (epoch_str, mem) + tuple(kwargs[i] for i in self.t_metrics)
+            args.extend([epoch_str, mem])
         else:
-            for i in self.v_metrics:
-                if i not in kwargs.keys():
-                    raise ValueError(f"Print indices {i} not provided in kwargs parameters.")
+            args.extend(["", ""])
 
-            format_str = "%10s" * 2 + "%10.4g" * len(self.v_metrics)
-            args = ("", "") + tuple(kwargs[i] for i in self.v_metrics)
+        for _, val in kwargs.items():
+            if isinstance(val, Integral):
+                format_str += "%-12d"
+                args.append(val)
+            elif isinstance(val, Real):
+                format_str += "%-12.4g"
+                args.append(val)
+            elif isinstance(val, str):
+                format_str += "%-12s"
+                args.append(val)
+            elif val is None:
+                format_str += "%-12s"
+                args.append("")
+            else:
+                format_str += "%-12s"
+                args.append(str(val))
 
-        s = format_str % args
+        s = format_str % tuple(args)
         pbar.set_description(s)
 
-    @abstractmethod
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
         """Train a single epoch"""
-        pass
+        self.set_train()
 
     def backward(self, loss: torch.Tensor) -> None:
         if self.scaler:
@@ -350,10 +359,9 @@ class AlgorithmBase(ABC):
             self.optimizer.zero_grad()
             self.last_opt_step = batch_inters
 
-    @abstractmethod
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
-        pass
+        self.set_eval()
 
     @abstractmethod
     def eval(self, *args, **kwargs) -> None:
@@ -447,3 +455,9 @@ class AlgorithmBase(ABC):
         for net in self.nets.values():
             net.eval()
         self.training = False
+
+    def print_metric_titles(self, mode: Literal["train", "val"], metrics: dict[str, Any]):
+        if mode == "train":
+            print(("\n" + "%-12s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
+        elif mode == "val":
+            print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))

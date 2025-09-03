@@ -27,15 +27,15 @@ def main():
     data = YoloParser(parser_cfg).create()  # (class_names, train_dataset, val_dataset)
 
     # Step 1: Parse configurations
-    yolomm_cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v13/config/yolo_v13.yaml")
+    cfg = load_config_from_yaml("./src/machine_learning/algorithms/detection/yolo_v13/config/yolo_v13.yaml")
 
     # Step 2: Build networks
     num_classes = data["class_nums"]
-    img_size = yolomm_cfg["algorithm"]["img_size"]
+    img_size = 640
     net = V13Net(img_shape=(3, img_size, img_size), nc=num_classes, scale="n")
 
     # Step 2: Build the algorithm
-    yolo_v13 = YoloV13(cfg=yolomm_cfg, net=net)
+    yolo_v13 = YoloV13(cfg=cfg, net=net, data=data)
 
     # Step 5: Configure the trainer
     trainer_cfg = TrainCfg(
@@ -45,9 +45,8 @@ def main():
         log_interval=10,
         save_interval=10,
         save_best=True,
-        amp=True,
     )
-    trainer = Trainer(trainer_cfg, yolo_v13, data)
+    trainer = Trainer(trainer_cfg, yolo_v13)
 
     # Step 6: Train the model
     trainer.train()

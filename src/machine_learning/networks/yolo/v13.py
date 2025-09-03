@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 
 from machine_learning.networks import BaseNet
-from machine_learning.modules.head import DetectV8
 
-from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
+from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel, Detect
 
 
 class V13Net(BaseNet):
@@ -27,13 +26,13 @@ class V13Net(BaseNet):
         self.img_shape = img_shape  # (3, height, width)
         self.nc = nc
         self.scale = scale
-        self.img_in_channels = self.img_shape[0]
+        self.in_channels = self.img_shape[0]
 
         if self.scale == "n":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.img_in_channels, 16, 3, 2),  # layer 0  (3, 640, 640) -> (16, 319, 319)
+                    "Conv_1": Conv(self.in_channels, 16, 3, 2),  # layer 0  (3, 640, 640) -> (16, 319, 319)
                     "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # layer 1 (16, 319, 319) -> (32, 160, 160)
                     "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # layer 2 (32, 160, 160) -> (64, 160, 160)
                     "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # layer 3 (64, 160, 160) -> (64, 80, 80)
@@ -73,13 +72,13 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = nn.ModuleDict({"Head": DetectV8(nc=self.nc, ch=(64, 128, 256))})
+            self.head = Detect(nc=self.nc, ch=(64, 128, 256))
 
         elif self.scale == "s":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.img_in_channels, 32, 3, 2),  # layer 0  (3, 640, 640) -> (32, 319, 319)
+                    "Conv_1": Conv(self.in_channels, 32, 3, 2),  # layer 0  (3, 640, 640) -> (32, 319, 319)
                     "Conv_2": Conv(32, 64, 3, 2, 1, 2),  # layer 1 (32, 319, 319) -> (64, 160, 160)
                     "DSC3k2_1": DSC3k2(64, 128, 1, False, 0.25),  # layer 2 (64, 160, 160) -> (128, 160, 160)
                     "Conv_3": Conv(128, 128, 3, 2, 1, 4),  # layer 3 (128, 160, 160) -> (128, 80, 80)
@@ -119,13 +118,13 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = nn.ModuleDict({"Head": DetectV8(nc=self.nc, ch=(128, 256, 512))})
+            self.head = Detect(nc=self.nc, ch=(128, 256, 512))
 
         elif self.scale == "l":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.img_in_channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
+                    "Conv_1": Conv(self.in_channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
                     "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
                     "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
                     "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
@@ -165,13 +164,13 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = nn.ModuleDict({"Head": DetectV8(nc=self.nc, ch=(256, 512, 512))})
+            self.head = Detect(nc=self.nc, ch=(256, 512, 512))
 
         elif self.scale == "x":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.img_in_channels, 96, 3, 2),  # layer 0  (3, 640, 640) -> (96, 319, 319)
+                    "Conv_1": Conv(self.in_channels, 96, 3, 2),  # layer 0  (3, 640, 640) -> (96, 319, 319)
                     "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # layer 1 (96, 319, 319) -> (192, 160, 160)
                     "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # layer 2 (192, 160, 160) -> (384, 160, 160)
                     "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # layer 3 (384, 160, 160) -> (384, 80, 80)
@@ -211,7 +210,10 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = nn.ModuleDict({"Head": DetectV8(nc=self.nc, ch=(384, 768, 768))})
+            self.head = Detect(nc=self.nc, ch=(384, 768, 768))
+
+        # init stride
+        self._initialize_strides()
 
     def forward(self, imgs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
@@ -250,9 +252,7 @@ class V13Net(BaseNet):
         d4 = self.neck.DSC3k2_4(self.neck.Cat_4([self.neck.Conv_3(d3), f3]))
         det3 = self.neck.FullPAD_Tunnel_7([d4, img_enhanced[2]])
 
-        # ----- head -----
-
-        return self.head.Head([det1, det2, det3])
+        return self.head([det1, det2, det3])
 
     def view_structure(self) -> None:
         super().view_structure()
@@ -260,12 +260,16 @@ class V13Net(BaseNet):
         from torchinfo import summary
 
         img_input = torch.randn(1, *self.img_shape, device=self.device)
-
         summary(self, input_data=img_input)
 
     def _initialize_weights(self):
         super()._initialize_weights()
-        self.head.Head.bias_init()
+        self.head.bias_init()
+
+    def _initialize_strides(self):
+        img_input = torch.randn(1, *self.img_shape, device=self.device)
+        self.stride = torch.tensor([self.img_shape[1] / x.shape[-2] for x in self.forward(img_input)])
+        self.head.stride = self.stride
 
 
 if __name__ == "__main__":
