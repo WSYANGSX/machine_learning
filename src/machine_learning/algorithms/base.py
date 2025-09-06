@@ -306,7 +306,7 @@ class AlgorithmBase(ABC):
         format_str = "%-12s" * 2
 
         if mode == "train":
-            epoch_str = "%g/%g" % (epoch, self.cfg["train"]["epochs"] - 1)
+            epoch_str = "%g/%g" % (epoch + 1, self.cfg["train"]["epochs"])
             mem = "%.3gG" % get_gpu_mem()
             args.extend([epoch_str, mem])
         else:
@@ -331,6 +331,24 @@ class AlgorithmBase(ABC):
 
         s = format_str % tuple(args)
         pbar.set_description(s)
+
+    def set_train(self) -> None:
+        """Set the pattern of all the nets in the algorithm to training"""
+        for net in self.nets.values():
+            net.train()
+        self.training = True
+
+    def set_eval(self) -> None:
+        """Set the pattern of all the nets in the algorithm to eval"""
+        for net in self.nets.values():
+            net.eval()
+        self.training = False
+
+    def print_metric_titles(self, mode: Literal["train", "val"], metrics: dict[str, Any]):
+        if mode == "train":
+            print(("\n" + "%-12s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
+        elif mode == "val":
+            print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
         """Train a single epoch"""
@@ -417,6 +435,7 @@ class AlgorithmBase(ABC):
         # load the nets' parameters
         for key, val in self.nets.items():
             val.load_state_dict(state["nets"][key])
+            val.to(self.device)
 
         # load the optimizers' parameters
         for key, val in self.optimizers.items():
@@ -443,21 +462,3 @@ class AlgorithmBase(ABC):
                 self.scaler = None
 
         return state
-
-    def set_train(self) -> None:
-        """Set the pattern of all the nets in the algorithm to training"""
-        for net in self.nets.values():
-            net.train()
-        self.training = True
-
-    def set_eval(self) -> None:
-        """Set the pattern of all the nets in the algorithm to eval"""
-        for net in self.nets.values():
-            net.eval()
-        self.training = False
-
-    def print_metric_titles(self, mode: Literal["train", "val"], metrics: dict[str, Any]):
-        if mode == "train":
-            print(("\n" + "%-12s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
-        elif mode == "val":
-            print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))

@@ -2,6 +2,7 @@ algorithm:
   # common
   name: "yolov13"
   nbs: 64 # (int) nominal batch size, -1 represent no
+  image_size: 640
 
   # train
   use_dfl: True

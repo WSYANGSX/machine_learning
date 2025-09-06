@@ -16,15 +16,13 @@ class DetectV8(nn.Module):
         nc: int = 80,  # number of classes
         ch: Tuple[int, ...] = (256, 512, 512),  # input channels for each scale
         reg_max: int = 16,  # DFL channels
-        stride: Tuple[int, ...] = (8, 16, 32),  # feature map strides
     ):
         super().__init__()
-        assert len(ch) == len(stride), "ch must be the same longth with stride."
 
         self.nc = nc  # number of classes
         self.reg_max = reg_max  # DFL parameters
         self.no = nc + reg_max * 4  # channels of each anchor (cls + reg)
-        self.stride = stride  # stride
+        self.stride = None  # stride
 
         # Calculation of the number of channels in the middle layer
         dfl_hidden_ch = max(16, ch[0] // 4, self.reg_max * 4)  # The number of channels in the hidden layer of the DFL

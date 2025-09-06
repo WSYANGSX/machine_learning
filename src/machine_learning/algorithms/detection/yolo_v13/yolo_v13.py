@@ -1,12 +1,14 @@
 from typing import Literal, Mapping, Any, Sequence, Union
 from tqdm import tqdm
 
+import cv2
 import torch
 import numpy as np
 import torch.nn as nn
 from torch.amp import autocast
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
@@ -14,8 +16,17 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from ultralytics.utils.metrics import ConfusionMatrix, DetMetrics
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, match_predictions
+from machine_learning.utils.image import resize, visualize_img_with_bboxes
+from machine_learning.utils.detection import (
+    non_max_suppression,
+    box_iou,
+    xywh2xyxy,
+    match_predictions,
+    compute_ap,
+    pad_to_square,
+)
+
+torch.set_printoptions(threshold=torch.inf)
 
 
 class YoloV13(AlgorithmBase):
@@ -44,6 +55,7 @@ class YoloV13(AlgorithmBase):
         super().__init__(cfg=cfg, net=net, name=name, device=device, data=data, amp=amp)
 
         # main parameters of the algorithm
+        self.image_size = self.cfg["algorithm"]["image_size"]
         self.iou_thres = self.cfg["algorithm"]["iou_thres"]
         self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
         self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
@@ -56,19 +68,21 @@ class YoloV13(AlgorithmBase):
         self.single_cls = self.cfg["algorithm"]["single_cls"]
         self.plots = self.cfg["algorithm"]["plots"]
 
-        self.topk = self.cfg["algorithm"]["topk"]
-        self.alpha = self.cfg["algorithm"]["alpha"]
-        self.beta = self.cfg["algorithm"]["beta"]
+        # weight
         self.box_weight = self.cfg["algorithm"].get("box")
         self.cls_weight = self.cfg["algorithm"].get("cls")
         self.dfl_weight = self.cfg["algorithm"].get("dfl")
 
         self.use_dfl = self.reg_max > 1
+        self.topk = self.cfg["algorithm"]["topk"]
+        self.alpha = self.cfg["algorithm"]["alpha"]
+        self.beta = self.cfg["algorithm"]["beta"]
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
         self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
-        self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
+        # IoU vector for mAP@0.5:0.95
+        self.iouv = torch.linspace(0.5, 0.95, 10)
         self.niou = self.iouv.numel()
 
     def _configure_optimizers(self) -> None:
@@ -234,10 +248,10 @@ class YoloV13(AlgorithmBase):
 
         # metrics
         metrics = {
-            "class": None,
+            "class": "all",
             "images": None,
-            "instances": None,
             "vloss": None,
+            "sloss": None,
             "precision": None,
             "recall": None,
             "mAP50": None,
@@ -247,25 +261,27 @@ class YoloV13(AlgorithmBase):
         self.print_metric_titles("val", metrics)
 
         vloss = None
+        stats = []
         self.seen = 0
-
-        self.stats = dict(tp=[], conf=[], pred_cls=[], target_cls=[], target_img=[])
-        self.confusion_matrix = ConfusionMatrix(nc=self.nc, conf=self.conf_thres_val)
-        self.metrics = DetMetrics(save_dir=self.cfg["train"]["log_dir"])
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for batch_idx, (imgs, targets) in pbar:
             imgs = imgs.to(self.device, non_blocking=True)
             targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
 
-            dpreds, preds = self.net(imgs)
+            preds = self.net(imgs)
 
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
             vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
+            metrics["vloss"] = vloss
+            metrics["sloss"] = vloss
+
+            # prepare preds
+            predictions = self.postprocess_pred(preds, imgs.size(2))
 
             # NMS
             preds = non_max_suppression(
-                dpreds,
+                predictions.permute(0, 2, 1),
                 conf_thres=self.conf_thres_val,
                 iou_thres=self.iou_thres,
                 multi_label=True,
@@ -273,90 +289,85 @@ class YoloV13(AlgorithmBase):
                 agnostic=self.single_cls,
             )
 
-            scale = torch.tensor([imgs.size(3), imgs.size(2)] * 2, device=self.device)
-            self.update_metrics(preds, targets, scale)
+            # prepare targets
+            scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
+            targets_abs = targets.clone()
+            bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
+            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy
 
-            # metrics within the loop
-            metrics["vloss"] = vloss
-            metrics["class"] = "all"
+            for si, pred in enumerate(preds):
+                self.seen += 1
+                # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
+                labels = targets_abs[targets_abs[:, 0] == si, 1:]
 
-            if batch_idx == pbar.total - 1:
-                self.get_stats()
-                self.metrics.confusion_matrix = self.confusion_matrix
+                # extract the category and coordinates of the real box
+                tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
+                tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
 
-                # metrics for final
-                metrics["images"] = self.seen
-                metrics["vloss"] = vloss
-                metrics["instances"] = self.nt_per_class.sum()
-                metrics["precision"] = self.metrics.mean_results()[0]
-                metrics["recall"] = self.metrics.mean_results()[1]
-                metrics["mAP50"] = self.metrics.mean_results()[2]
-                metrics["mAP75"] = self.metrics.mean_results()[3]
-                metrics["mAP50-95"] = self.metrics.mean_results()[4]
+                if len(pred) == 0:
+                    if len(labels):
+                        stats.append(
+                            (
+                                torch.zeros(0, self.niou, dtype=torch.bool),  # TP
+                                torch.Tensor(),  # confidence scores
+                                torch.Tensor(),  # pred_classes
+                                tcls.cpu(),  # ground truth classes
+                            )
+                        )
+                    continue
+
+                # Prediction box format: [x1, y1, x2, y2, conf, class]
+                pred_boxes = pred[:, :4]
+                pred_scores = pred[:, 4]
+                pred_classes = pred[:, 5]
+
+                # calculate IoU
+                iou = box_iou(tbox, pred_boxes)  # shape: [n_pred, n_gt]
+                # Find the best matching real box for each prediction box
+                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
+
+                # record statistical information
+                stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))
+
+            metrics["images"] = self.seen
+
+            if batch_idx == self.val_batches - 1:
+                # calculate mAP metrics
+                if stats:
+                    tp, conf, pred_cls, target_cls = zip(*stats)
+                    tp = np.concatenate(tp, 0)
+                    conf = np.concatenate(conf, 0)
+                    pred_cls = np.concatenate(pred_cls, 0)
+                    target_cls = np.concatenate(target_cls, 0)
+                    result = compute_ap(self.cfg["data"]["class_names"], tp, conf, pred_cls, target_cls, self.iouv)
+
+                    metrics["mAP50"] = result["mAP_50"]
+                    metrics["mAP50-95"] = result["mAP"]
+                    metrics["mAP75"] = result["mAP_75"]
+                    metrics["precision"] = result["precision"]
+                    metrics["recall"] = result["recall"]
 
             self.pbar_log("val", pbar, **metrics)
 
         return metrics
 
-    def _prepare_target(self, si: int, target: torch.Tensor, scale: torch.Tensor):
-        """Prepares a batch of images and annotations for validation."""
-        idx = target[:, 0] == si
-        cls = target[:, 1][idx]
-        bbox = target[:, 2:6][idx]
-        if len(cls):
-            bbox = xywh2xyxy(bbox) * scale  # target boxes
-        return {"cls": cls, "bbox": bbox}
+    def postprocess_pred(self, preds: torch.Tensor, img_size: int) -> list[torch.Tensor]:
+        # decode preds
+        x = []
+        for pred in preds:
+            bs, _, h, w = pred.shape
+            pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
+            x.append(pred)
+        x = torch.cat(x, 1)
+        # Separate the bounding box from the category score
+        box, cls = x.split((self.reg_max * 4, self.nc), 2)
 
-    def _process_batch(self, detections, gt_bboxes, gt_cls):
-        iou = box_iou(gt_bboxes, detections[:, :4])
-        return match_predictions(detections[:, 5], gt_cls, iou, self.iouv)
+        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
+        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
+        dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
+        predictions = torch.cat((dbox, cls.sigmoid()), 2)
 
-    def update_metrics(self, preds: torch.Tensor, targets: torch.Tensor, scale: torch.Tensor):
-        """Metrics."""
-        for si, pred in enumerate(preds):
-            self.seen += 1
-            npr = len(pred)
-            stat = dict(
-                conf=torch.zeros(0, device=self.device),
-                pred_cls=torch.zeros(0, device=self.device),
-                tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
-            )
-            ptarget = self._prepare_target(si, targets, scale)
-            cls, bbox = ptarget.pop("cls"), ptarget.pop("bbox")
-            nl = len(cls)
-            stat["target_cls"] = cls
-            stat["target_img"] = cls.unique()
-            if npr == 0:
-                if nl:
-                    for k in self.stats.keys():
-                        self.stats[k].append(stat[k])
-                    if self.plots:
-                        self.confusion_matrix.process_batch(detections=None, gt_bboxes=bbox, gt_cls=cls)
-                continue
-
-            # Predictions
-            if self.single_cls:
-                pred[:, 5] = 0
-            stat["conf"] = pred[:, 4]
-            stat["pred_cls"] = pred[:, 5]
-
-            # Evaluate
-            if nl:
-                stat["tp"] = self._process_batch(pred, bbox, cls)
-            if self.plots:
-                self.confusion_matrix.process_batch(pred, bbox, cls)
-            for k in self.stats.keys():
-                self.stats[k].append(stat[k])
-
-    def get_stats(self):
-        """Returns metrics statistics and results dictionary."""
-        stats = {k: torch.cat(v, 0).cpu().numpy() for k, v in self.stats.items()}  # to numpy
-        self.nt_per_class = np.bincount(stats["target_cls"].astype(int), minlength=self.nc)
-        self.nt_per_image = np.bincount(stats["target_img"].astype(int), minlength=self.nc)
-        stats.pop("target_img", None)
-        if len(stats) and stats["tp"].any():
-            self.metrics.process(**stats)
-        return self.metrics.results_dict
+        return predictions
 
     def warmup(self, batch_inters: int, epoch: int) -> int:
         nw = (
@@ -469,8 +480,46 @@ class YoloV13(AlgorithmBase):
 
         return out
 
-    def detect(self, img: torch.Tensor, thermal: torch.Tensor) -> None:
-        pass
+    @torch.no_grad()
+    def detect(self, img_path: str | FilePath) -> None:
+        self.set_eval()
+
+        # read image
+        origin_img = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        H, W, _ = origin_img.shape
+
+        # scale to square
+        pad_img = pad_to_square(img=origin_img, pad_values=0)
+
+        # to tensor / normalize
+        tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
+        img = tfs(pad_img)
+        img = resize(img, size=self.image_size).unsqueeze(0).to(self.device)
+
+        # input image to model
+        preds = self.net(img)
+
+        predictions = self.postprocess_pred(preds, img.size(2))
+
+        # NMS
+        preds = non_max_suppression(
+            predictions.permute(0, 2, 1),
+            conf_thres=self.conf_thres_det,
+            iou_thres=self.iou_thres,
+            multi_label=True,
+            max_det=self.max_det,
+            agnostic=self.single_cls,
+        )
+
+        # rescale to img coordiante
+        pred = preds[0]
+
+        bboxes, conf, cls = pred.split((4, 1, 1), dim=1)
+        bboxes = np.array(bboxes.cpu(), dtype=np.float32)
+        cls = [int(cid) for cid in cls]
+
+        # visiualization
+        visualize_img_with_bboxes(img[0].permute(1, 2, 0).cpu().numpy(), bboxes, cls, self.cfg["data"]["class_names"])
 
 
 """

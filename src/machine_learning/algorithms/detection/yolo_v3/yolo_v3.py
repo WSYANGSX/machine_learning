@@ -20,7 +20,7 @@ from machine_learning.utils.detection import (
     bbox_iou,
     xywh2xyxy,
     pad_to_square,
-    rescale_boxes,
+    rescale_bboxes,
 )
 
 

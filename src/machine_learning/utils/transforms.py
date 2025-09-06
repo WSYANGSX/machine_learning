@@ -48,6 +48,14 @@ class ImgTransform(TransformBase):
         self.to_tensor = to_tensor
 
         # Build a conversion pipeline
+        self.base_pipeline = A.Compose(
+            [A.LongestMaxSize(max_size=640), A.PadIfNeeded(min_height=640, min_width=640)],
+            bbox_params=self.aug_cfg.bbox_params,
+            keypoint_params=self.aug_cfg.keypoint_params,
+            additional_targets=self.aug_cfg.additional_targets,
+            p=self.aug_cfg.probility,
+            seed=self.aug_cfg.seed,
+        )
         self.augmentation_pipeline = self._build_augmentation_pipeline(self.aug_cfg.augs)
         self.postprocess_pipeline = self._build_postprocess_pipeline()
 
@@ -81,7 +89,7 @@ class ImgTransform(TransformBase):
             seed=self.aug_cfg.seed,
         )
 
-    def _apply_augmentation(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Application Data Augmentation"""
         _necessary_data_type = ["image"]
 
@@ -108,14 +116,15 @@ class ImgTransform(TransformBase):
                 if key in data:
                     transform_args[key] = data[key]
 
-        # apply transform
-        transformed_data = self.augmentation_pipeline(**transform_args)
-
-        return transformed_data
+        return transform_args
 
     def __call__(self, data: Dict[str, Any], augment: bool = True) -> Dict[str, Union[torch.Tensor, np.ndarray]]:
+        data = self._prepare_data(data)
+
+        data = self.base_pipeline(**data)
+
         if augment:
-            data = self._apply_augmentation(data)
+            data = self.augmentation_pipeline(**data)
 
         data = self.postprocess_pipeline(**data)
 

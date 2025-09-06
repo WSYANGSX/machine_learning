@@ -130,9 +130,9 @@ class Trainer:
 
             # print epoch information
             if epoch != self.cfg.epochs:
-                self.log_epoch_info()
+                self.epoch_info()
             else:
-                self.log_epoch_info(val_metrics)
+                self.epoch_info(val_metrics)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)
@@ -150,20 +150,21 @@ class Trainer:
         except OSError as e:
             raise RuntimeError(f"Failed to create log directory at {model_path}: {e}")
 
-        filename = f"checkpoint_epoch_{epoch}.pth"
+        filename = f"checkpoint_epoch_{epoch + 1}.pth"
         if is_best:
             filename = "best_model.pth"
         save_path = os.path.join(model_path, filename)
 
         self._algorithm.save(epoch, val_return, best_loss, save_path)
 
-    def log_epoch_info(
+    def epoch_info(
         self,
+        epoch: int,
         trian_metrics: dict[Any] | None = None,
         val_metrics: dict[Any] | None = None,
     ) -> None:
         log_table = PrettyTable()
-        log_table.title = "epoch info"
+        log_table.title = f"Epoch info:{epoch + 1}"
         log_table.field_names = ["metrics", "Value"]
 
         rows = []

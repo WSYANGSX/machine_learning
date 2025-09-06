@@ -4,8 +4,9 @@ import torch
 import torch.nn as nn
 
 from machine_learning.networks import BaseNet
+from machine_learning.modules.head import DetectV8
 
-from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel, Detect
+from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
 
 
 class V13Net(BaseNet):
@@ -72,7 +73,7 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = Detect(nc=self.nc, ch=(64, 128, 256))
+            self.head = DetectV8(nc=self.nc, ch=(64, 128, 256))
 
         elif self.scale == "s":
             # backbone
@@ -118,7 +119,7 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = Detect(nc=self.nc, ch=(128, 256, 512))
+            self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
         elif self.scale == "l":
             # backbone
@@ -164,7 +165,7 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = Detect(nc=self.nc, ch=(256, 512, 512))
+            self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
         elif self.scale == "x":
             # backbone
@@ -210,7 +211,7 @@ class V13Net(BaseNet):
                 }
             )
             # head
-            self.head = Detect(nc=self.nc, ch=(384, 768, 768))
+            self.head = DetectV8(nc=self.nc, ch=(384, 768, 768))
 
         # init stride
         self._initialize_strides()

@@ -100,8 +100,8 @@ def pad_to_square(
     return output
 
 
-def rescale_boxes(
-    boxes: Union[torch.Tensor, np.ndarray], img_size: int, org_img_w: int, org_img_h: int
+def rescale_bboxes(
+    bboxes: Union[torch.Tensor, np.ndarray], img_size: int, org_img_w: int, org_img_h: int
 ) -> Union[torch.Tensor, np.ndarray]:
     """
     Convert the bounding box coordinates output by the object detection model from the coordinate system of the padded
@@ -116,12 +116,12 @@ def rescale_boxes(
     unpad_w = img_size - pad_x
 
     # remap the bounding box
-    boxes[:, 0] = ((boxes[:, 0] - pad_x // 2) / unpad_w) * org_img_w
-    boxes[:, 1] = ((boxes[:, 1] - pad_y // 2) / unpad_h) * org_img_h
-    boxes[:, 2] = ((boxes[:, 2] - pad_x // 2) / unpad_w) * org_img_w
-    boxes[:, 3] = ((boxes[:, 3] - pad_y // 2) / unpad_h) * org_img_h
+    bboxes[:, 0] = ((bboxes[:, 0] - pad_x // 2) / unpad_w) * org_img_w
+    bboxes[:, 1] = ((bboxes[:, 1] - pad_y // 2) / unpad_h) * org_img_h
+    bboxes[:, 2] = ((bboxes[:, 2] - pad_x // 2) / unpad_w) * org_img_w
+    bboxes[:, 3] = ((bboxes[:, 3] - pad_y // 2) / unpad_h) * org_img_h
 
-    return boxes
+    return bboxes
 
 
 def box_iou(box1, box2, eps=1e-7):
@@ -398,21 +398,21 @@ def nms_rotated(boxes, scores, threshold=0.45):
 
 
 def non_max_suppression(
-    prediction,
-    conf_thres=0.25,
-    iou_thres=0.45,
-    classes=None,
-    agnostic=False,
-    multi_label=False,
-    labels=(),
-    max_det=300,
-    nc=0,  # number of classes (optional)
+    prediction: torch.Tensor,
+    conf_thres: float = 0.25,
+    iou_thres: float = 0.45,
+    classes: list[int] = None,
+    agnostic: bool = False,
+    multi_label: bool = False,
+    labels: list[list[Union[int, float, torch.Tensor]]] = (),
+    max_det: int = 300,
+    nc: int = 0,  # number of classes (optional)
     max_time_img=0.05,
     max_nms=30000,
     max_wh=7680,
     in_place=True,
     rotated=False,
-):
+) -> list[torch.Tensor]:
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
 

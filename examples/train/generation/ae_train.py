@@ -3,7 +3,7 @@ from machine_learning.train import Trainer, TrainCfg
 from machine_learning.networks.auto_encoder import AENet
 from machine_learning.utils.transforms import ImgTransform
 from machine_learning.utils.aug import DEFAULT_AUG
-from machine_learning.data.parsers import ParserCfg, MinistParser
+from machine_learning.dataset.parsers import ParserCfg, MinistParser
 
 
 def main():

@@ -37,22 +37,11 @@ def main():
     # Step 2: Build the algorithm
     yolo_v13 = YoloV13(cfg=cfg, net=net, data=data)
 
-    # Step 5: Configure the trainer
-    trainer_cfg = TrainCfg(
-        log_dir="./logs/yolo_v13/",
-        model_dir="./checkpoints/yolo_v13/",
-        epochs=600,
-        log_interval=10,
-        save_interval=10,
-        save_best=True,
-    )
-    trainer = Trainer(trainer_cfg, yolo_v13)
-
     # Step 6: Train the model
-    # trainer.train()
-    trainer.train_from_checkpoint(
+    yolo_v13.load(
         "/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v13/2025-09-05_11-40/checkpoint_epoch_49.pth"
     )
+    yolo_v13.detect("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/train/000000000049.jpg")
 
 
 if __name__ == "__main__":
