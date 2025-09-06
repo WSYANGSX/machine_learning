@@ -14,9 +14,9 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.networks import BaseNet
-from machine_learning.utils import get_gpu_mem
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils import get_gpu_mem, print_cfg
 
 
 class AlgorithmBase(ABC):
@@ -112,9 +112,11 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
-    def _initialize(self) -> None:
+    def _initialize(self, cfg: dict[Any]) -> None:
         """initialization the algorithm, called by trainer."""
-        LOGGER.info("Algorithm initializing...")
+        # ------------------------- add train cfg -------------------------
+        self._add_cfg("train", cfg)
+        print_cfg("Configuration", self.cfg)
 
         # --------------------- configure nets of algo --------------------
         self._configure_nets()
@@ -390,7 +392,7 @@ class AlgorithmBase(ABC):
         """
         pass
 
-    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str) -> None:
+    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str, ckpt_dir: str) -> None:
         """Save checkpoint"""
         state = {
             "epoch": epoch,
@@ -400,6 +402,7 @@ class AlgorithmBase(ABC):
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
+            "ckpt_dir": ckpt_dir,
         }
 
         for key, val in val_info.items():

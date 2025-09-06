@@ -30,18 +30,20 @@ def main():
     # Step 4: Configure the trainer
     trainer_cfg = TrainCfg(
         log_dir="./logs/auto_encoder/",
-        model_dir="./checkpoints/auto_encoder/",
+        ckpt_dir="./checkpoints/auto_encoder/",
     )
     trainer = Trainer(trainer_cfg, auto_encoder)
 
     # Step 5: Train the model
-    trainer.train()
+    trainer.train_from_checkpoint(
+        "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-06_11-34/checkpoint_epoch_10.pth"
+    )
 
-    # Step 6: Evaluate the model
-    # auto_encoder.load(
-    #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-01_09-08/best_model.pth"
-    # )
-    auto_encoder.eval(5)
+    # # Step 6: Evaluate the model
+    # # auto_encoder.load(
+    # #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-01_09-08/best_model.pth"
+    # # )
+    # auto_encoder.eval(5)
 
 
 if __name__ == "__main__":
