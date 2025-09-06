@@ -19,4 +19,4 @@ def set_logger(name: str, verbose: bool = True):
     return logger
 
 
-LOGGER = set_logger("Machine learning")
+LOGGER = set_logger("ML")
