@@ -121,7 +121,7 @@ class ImgTransform(TransformBase):
     def __call__(self, data: Dict[str, Any], augment: bool = True) -> Dict[str, Union[torch.Tensor, np.ndarray]]:
         data = self._prepare_data(data)
 
-        data = self.base_pipeline(**data)
+        # data = self.base_pipeline(**data)
 
         if augment:
             data = self.augmentation_pipeline(**data)

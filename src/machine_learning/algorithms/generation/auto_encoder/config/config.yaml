@@ -17,6 +17,9 @@ scheduler:
   patience: 5  
 
 net:
+  args:
+    img_size: 28
+    z_dim: 128
   initialize_weights: True
 
 data_loader:

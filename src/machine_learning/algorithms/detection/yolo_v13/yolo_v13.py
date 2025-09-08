@@ -85,7 +85,7 @@ class YoloV13(AlgorithmBase):
         self.iouv = torch.linspace(0.5, 0.95, 10)
         self.niou = self.iouv.numel()
 
-    def _configure_optimizers(self) -> None:
+    def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
 
         self.optimizer = None
@@ -146,7 +146,7 @@ class YoloV13(AlgorithmBase):
 
         self._add_optimizer("optimizer", self.optimizer)
 
-    def _configure_schedulers(self) -> None:
+    def _init_schedulers(self) -> None:
         self.sch_config = self._cfg["scheduler"]
 
         self.scheduler = None

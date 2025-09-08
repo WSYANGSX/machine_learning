@@ -13,10 +13,10 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.networks import BaseNet
+from machine_learning.networks import BaseNet, NET_MAPS
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils import get_gpu_mem, print_cfg
+from machine_learning.utils import get_gpu_mem
 
 
 class AlgorithmBase(ABC):
@@ -33,7 +33,7 @@ class AlgorithmBase(ABC):
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            net (Mapping[str, BaseNet]): Neural neural required by the algorithm.
+            net (BaseNet): Neural neural required by the algorithm, provided by other algorithms externally.
             name (str, optional): Name of the algorithm. Defaults to None.
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
@@ -43,37 +43,36 @@ class AlgorithmBase(ABC):
         """
         super().__init__()
 
+        LOGGER.info("Algorithm initializing by self...")
+
+        # buffers
         self._nets = {}  # nets buffer
         self._optimizers = {}  # optimizers buffer
         self._schedulers = {}  # schedulers buffer
 
-        self.net = net
-        if self.net:
-            self._add_net("net", self.net)
-
-        self.training = False  # training mode or not
-
-        # --------------------- configure AMP of algo --------------------
-        self.amp = amp
-        self.scaler = GradScaler() if self.amp else None
-        LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
-
-        # ------------------------ configure device -----------------------
-        self._device = self._configure_device(device)
-
-        # -------------------- load algo configuration --------------------
+        # cfg
         self._cfg = self._load_config(cfg)
         self._validate_config()
 
-        self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
-        self.nbs = self.cfg["algorithm"].get("nbs", -1)
-        self.accumulate = max(1, round(self.nbs / self.batch_size))
-        self.last_opt_step = -1
-
-        # ---------------------- configure algo name ----------------------
+        # name
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
-        # ------------------------ initialize algo ------------------------
+        # device
+        self._device = self._configure_device(device)
+
+        # settings
+        self.training = False  # training mode or not
+        self.last_opt_step = -1
+        self.nbs = self.cfg["algorithm"].get("nbs", -1)
+        self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
+        self.accumulate = max(1, round(self.nbs / self.batch_size))
+
+        # build nets
+        self._build_net(net)
+
+        # initialize
+        self._init_nets()
+        self._init_amp(amp)
         self._init_dependent_on_data(data)
 
     @property
@@ -112,26 +111,33 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
-    def _initialize(self, cfg: dict[Any]) -> None:
-        """initialization the algorithm, called by trainer."""
-        # ------------------------- add train cfg -------------------------
+    def _build_net(self, net: BaseNet) -> None:
+        LOGGER.info(f"Building network of {self.name}...")
+
+        self.net = net
+
+        if self.net is not None:
+            self._add_net("net", self.net)
+        else:
+            if issubclass(NET_MAPS[self.name], BaseNet):
+                args = self.cfg["net"].get("args", {})
+                if args is None:
+                    raise ValueError("When a net is not created from the outside, the net parameters must be provided.")
+                self.net = NET_MAPS[self.name](**args)
+                self._add_net("net", self.net)
+
+    def _init_on_trainer(self, cfg: dict[Any]) -> None:
+        """Initialize the optimizers, and schedulers."""
         self._add_cfg("train", cfg)
-        print_cfg("Configuration", self.cfg)
-
-        # --------------------- configure nets of algo --------------------
-        self._configure_nets()
-
-        # --------------------- configure optimizers ----------------------
-        self._configure_optimizers()
-
-        # --------------------- configure schedulers ----------------------
-        self._configure_schedulers()
+        self._init_optimizers()
+        self._init_schedulers()
 
     def _add_cfg(self, name, cfg: Any) -> None:
         # add additional configuration parameters may used by algo, e.g. traincfg
         self._cfg.update({name: cfg})
 
     def _add_net(self, name: str, net: BaseNet) -> None:
+        LOGGER.info(f"Adding network {net.__class__.__name__}...")
         self._nets.update({name: net})
 
     def _add_optimizer(self, name: str, optimizer: Optimizer) -> None:
@@ -163,13 +169,21 @@ class AlgorithmBase(ABC):
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
 
-    def _configure_nets(self):
+    def _init_nets(self):
         """Configure nets of the algo, initialize the weight parameters of nets and show their structures"""
+        LOGGER.info(f"Initializing the networks of {self.name}...")
+
         for net in self.nets.values():
             net.to(self._device)
             if self.cfg["net"]["initialize_weights"]:
                 net._initialize_weights()
             net.view_structure()
+
+    def _init_amp(self, amp: bool) -> None:
+        LOGGER.info(f"Initializing the amp of {self.name}...")
+        self.amp = amp
+        self.scaler = GradScaler() if self.amp else None
+        LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
 
     def _init_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
         """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
@@ -178,6 +192,8 @@ class AlgorithmBase(ABC):
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
         """
+        LOGGER.info(f"Initializing the data of {self.name}...")
+
         self.cfg["data"] = {}
 
         _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
@@ -223,8 +239,10 @@ class AlgorithmBase(ABC):
             for key, val in data.items():
                 self.cfg["data"][key] = val
 
-    def _configure_optimizers(self):
+    def _init_optimizers(self):
         """Configure the training optimizer"""
+        LOGGER.info(f"Initializing the optimizers of {self.name}...")
+
         self.opt_cfg = self._cfg["optimizer"]
 
         self.optimizer = None
@@ -251,8 +269,10 @@ class AlgorithmBase(ABC):
         else:
             ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
 
-    def _configure_schedulers(self):
+    def _init_schedulers(self):
         """Configure the learning rate scheduler"""
+        LOGGER.info(f"Initializing the schedulers of {self.name}...")
+
         self.sch_config = self._cfg["scheduler"]
 
         self.scheduler = None

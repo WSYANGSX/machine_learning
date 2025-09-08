@@ -1,5 +1,3 @@
-from typing import Sequence
-
 import os
 import yaml
 import random
@@ -24,7 +22,7 @@ def set_seed(seed: int = 23) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def load_config_from_yaml(file_path: FilePath) -> dict:
+def load_cfg_from_yaml(file_path: FilePath) -> dict:
     """Load the yaml file into a dictionary."""
     assert os.path.splitext(file_path)[1] == ".yaml" or os.path.splitext(file_path)[1] == ".yml", (
         "Please ultilize a yaml configuration file."
@@ -59,7 +57,7 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
             indent += 1
             print(key, ":")
             print_dict(val, indent)
-            indent = 0
+            indent -= 1
         else:
             print(key, ":", end="")
             print(f"\033[{len(key)}D", end="")  # 光标回退，控制对齐
@@ -70,9 +68,9 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
                     bracket_open, bracket_close = "[", "]"
                 parts = [str(x) for x in val[:5]] + ["..."] + [str(x) for x in val[-5:]]
                 s = bracket_open + ", ".join(parts) + bracket_close
-                print("\t" * 5, s)
+                print("\t" * (7 - indent), s)
             else:
-                print("\t" * 5, val)
+                print("\t" * (7 - indent), val)
 
 
 def print_cfg(title: str, cfg: dict) -> None:
@@ -83,7 +81,7 @@ def print_cfg(title: str, cfg: dict) -> None:
     print("=" * 110)
 
 
-def cfg_to_dict(cfg: BaseCfg) -> dict:
+def cfg2dict(cfg: BaseCfg) -> dict:
     """Convert the cfg class to a dictionary."""
     cfg_dict = {}
     for key, val in cfg.__dict__.items():

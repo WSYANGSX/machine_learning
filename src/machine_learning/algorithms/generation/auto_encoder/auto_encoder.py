@@ -18,7 +18,7 @@ class AutoEncoder(AlgorithmBase):
         self,
         cfg: FilePath | Mapping[str, Any],
         data: Mapping[str, Union[Dataset, Any]],
-        net: BaseNet,
+        net: BaseNet | None = None,
         name: str | None = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
@@ -29,7 +29,7 @@ class AutoEncoder(AlgorithmBase):
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
-            net (Mapping[str, BaseNet]): Neural neural required by the AutoEncoder algorithm.
+            net (BaseNet): Neural neural required by the AutoEncoder algorithm.
             name (str, optional): Name of the algorithm. Defaults to "auto_encoder".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.

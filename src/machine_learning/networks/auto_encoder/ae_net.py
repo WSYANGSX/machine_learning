@@ -3,17 +3,17 @@ from machine_learning.networks import BaseNet
 
 
 class AENet(BaseNet):
-    def __init__(self, image_shape: tuple[int], z_dim: int) -> None:
+    def __init__(self, img_size: int, z_dim: int) -> None:
         """
         auto_encoder network
 
         Args:
-            image_shape (tuple[int]): the shape of the input image.
+            img_size (int): the size of the input image.
             z_dim (int): the dimension of the feature space.
         """
         super().__init__()
 
-        self.image_shape = image_shape
+        self.img_size = img_size
         self.z_dim = z_dim
 
         self.encoder = nn.Sequential(
@@ -52,4 +52,4 @@ class AENet(BaseNet):
 
         from torchinfo import summary
 
-        summary(self, input_size=(1, *self.image_shape))
+        summary(self, input_size=(1, 1, self.img_size, self.img_size))

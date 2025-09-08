@@ -7,7 +7,7 @@ from .mmic import MMICNet
 
 __all__ = ["BaseNet", "UNet", "DarkNet53", "AENet", "Generator", "Discriminator", "MMICNet"]
 
-net_maps = {
+NET_MAPS = {
     "auto_encoder": AENet,
     "gan": {"g": Generator, "d": Discriminator},
     "yolo_v3": DarkNet53,

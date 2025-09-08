@@ -11,7 +11,7 @@ from machine_learning.utils.cfg import BaseCfg
 from machine_learning.utils.logger import LOGGER
 from dataclasses import dataclass, field, MISSING
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils import set_seed, cfg_to_dict
+from machine_learning.utils import set_seed, cfg2dict, print_cfg
 
 
 @dataclass
@@ -51,19 +51,20 @@ class Trainer:
         set_seed(self.cfg.seed)
         LOGGER.info(f"Current seed: {self.cfg.seed}")
 
-        # ------------------------ initilaize algo -------------------------
-        LOGGER.info("Algorithm initializing...")
-        self._algorithm._initialize(cfg_to_dict(self.cfg))
+        # ------------------------ add train cfg  --------------------------
+        LOGGER.info("Algorithm initializing by trainer...")
+        self.algorithm._init_on_trainer(cfg2dict(self.cfg))
+        print_cfg("Total configuration", self.algorithm.cfg)
 
         # ------------------------ configure writer ------------------------
-        self._configure_writer()
+        self._init_writer()
         self.best_loss = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
 
-    def _configure_writer(self):
+    def _init_writer(self):
         log_path = self.cfg.log_dir + self.dt_suffix
         log_path = os.path.abspath(log_path)
 

@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 from machine_learning.utils.cfg import BaseCfg
 from machine_learning.utils.transforms import TransformBase
 from machine_learning.dataset.dataset import YoloDataset, YoloMMDataset, ImgDataset
-from machine_learning.utils import load_config_from_yaml, list_from_txt, print_cfg
+from machine_learning.utils import load_cfg_from_yaml, list_from_txt, print_cfg
 
 
 @dataclass
@@ -88,7 +88,7 @@ class MinistParser(ParserBase):
         """
         Parse minist dataset metadata
         """
-        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         print_cfg("Information of dataset", metadata)
 
@@ -135,7 +135,7 @@ class MinistParser(ParserBase):
         val_dataset = ImgDataset(val_data, val_labels, self.transforms, augment=False)
 
         return {
-            "image_shape": metadata["image_shape"],
+            "image_size": metadata["image_size"],
             "train_dataset": trian_dataset,
             "val_dataset": val_dataset,
         }
@@ -148,7 +148,7 @@ class YoloParser(ParserBase):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])
 
@@ -234,7 +234,7 @@ class FlirAlignedParser(ParserBase):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         print_cfg("Information of dataset", metadata)
 
@@ -324,7 +324,7 @@ class VEDAIParser(ParserBase):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_config_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         print_cfg("Information of dataset", metadata)
 

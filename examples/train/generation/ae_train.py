@@ -16,15 +16,14 @@ def main():
     data = parser.create()
 
     # Step 2: Build the network
-    image_shape = data["image_shape"]
+    image_size = data["image_size"]
     output_size = 128
-    net = AENet(image_shape, output_size)
+    net = AENet(image_size, output_size)
 
     # Step 3: Build the algorithm
     auto_encoder = AutoEncoder(
         "./src/machine_learning/algorithms/generation/auto_encoder/config/config.yaml",
         data,
-        net,
     )
 
     # Step 4: Configure the trainer
@@ -35,14 +34,12 @@ def main():
     trainer = Trainer(trainer_cfg, auto_encoder)
 
     # Step 5: Train the model
-    trainer.train_from_checkpoint(
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-06_11-34/checkpoint_epoch_10.pth"
-    )
+    trainer.train()
 
     # # Step 6: Evaluate the model
-    # # auto_encoder.load(
-    # #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-01_09-08/best_model.pth"
-    # # )
+    # auto_encoder.load(
+    #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-06_11-34/best_model.pth"
+    # )
     # auto_encoder.eval(5)
 
 
