@@ -8,91 +8,39 @@ from typing import Any
 import os
 import struct
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, MISSING
 
 import numpy as np
 from torch.utils.data import Dataset
-from machine_learning.utils.cfg import BaseCfg
-from machine_learning.utils.transforms import TransformBase
-from machine_learning.dataset.dataset import YoloDataset, YoloMMDataset, ImgDataset
 from machine_learning.utils import load_cfg_from_yaml, list_from_txt, print_cfg
-
-
-@dataclass
-class ParserCfg(BaseCfg):
-    """Basic parser configuration"""
-
-    dataset_dir: str = MISSING  # Missing value must be provide when create.
-    labels: bool = MISSING
-    tfs: TransformBase | None = None
-
-
-@dataclass
-class YoloParserCfg(ParserCfg):
-    """YOLO parser configuration"""
-
-    img_size: int = 416
-    multiscale: bool = False
-    img_size_stride: int | None = 32
 
 
 class ParserBase(ABC):
     """Dataset parser abstract base class."""
 
-    def __init__(self, parser_cfg: ParserCfg) -> None:
+    def __init__(self, data_cfg: dict[str, Any]) -> None:
         super().__init__()
-        self.cfg = parser_cfg
+        self.data_cfg = data_cfg
 
-        self.dataset_dir = self.cfg.dataset_dir
-        self.labels = self.cfg.labels
-        self.transforms = self.cfg.tfs
+        self.dataset_name = self.data_cfg["name"]
+        self.dataset_path = self.data_cfg["path"]
 
     @abstractmethod
     def parse(self) -> dict[str, Any]:
-        """Parse the information of the data set
+        """Parse the train、val and test data or data_path of the dataset.
 
         Returns:
-            dict[str, Any]: Meta-information return value.
+            dict[str, Any]: train、val and test data or data_path value.
         """
         pass
-
-    @abstractmethod
-    def create(self) -> dict[str, Dataset]:
-        """Create a dataset based on the parsed data information of the dataset.
-
-        Returns:
-            dict[str, Dataset]: Return the dictionary containing the training (train_dataset), validation (val_dataset)
-            datasets and special meta info of dataset.
-        """
-        pass
-
-    def __str__(self) -> str:
-        return (
-            f"{self.__class__.__name__}("
-            f"dataset_dir={self.dataset_dir}, "
-            f"labels={self.labels}, "
-            f"transforms={self.transforms})"
-        )
 
 
 class MinistParser(ParserBase):
     r"""
-    The minist handwritten digit set data parser, due to the small volume of misit data sets, adopts a full data loading
-    method.
+    The minist handwritten digit set data parser.
     """
 
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
-
-    def parse(self) -> dict[str, Any]:
-        """
-        Parse minist dataset metadata
-        """
-        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
-
-        print_cfg("Information of dataset", metadata)
-
-        return metadata
+    def __init__(self, data_cfg: dict[str, Any]):
+        super().__init__(data_cfg)
 
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
@@ -110,128 +58,64 @@ class MinistParser(ParserBase):
 
             return labels, magic, num_labels
 
-    def create(self) -> dict[str, Dataset]:
-        """Create data based on the configuration information of MinistParser
-
-        Returns:
-            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
+    def parse(self) -> dict[str, Any]:
         """
-        metadata = self.parse()
+        Parse minist dataset metadata
+        """
+        train_dir = os.path.join(self.dataset_path, "train")
+        val_dir = os.path.join(self.dataset_path, "val")
 
-        train_data_dir = os.path.join(self.dataset_dir, "train")
-        val_data_dir = os.path.join(self.dataset_dir, "test")
+        # data
+        train_imgs = self.load_idx3_ubyte(os.path.join(train_dir, "images.idx3-ubyte"))[0]
+        val_imgs = self.load_idx3_ubyte(os.path.join(val_dir, "images.idx3-ubyte"))[0]
 
-        # load data
-        train_data = self.load_idx3_ubyte(os.path.join(train_data_dir, "images_train.idx3-ubyte"))[0]
-        val_data = self.load_idx3_ubyte(os.path.join(val_data_dir, "images_test.idx3-ubyte"))[0]
-
-        if self.cfg.labels:
-            train_labels = self.load_idx1_ubyte(os.path.join(train_data_dir, "labels_train.idx1-ubyte"))[0]
-            val_labels = self.load_idx1_ubyte(os.path.join(val_data_dir, "labels_test.idx1-ubyte"))[0]
-        else:
-            train_labels, val_labels = None, None
-
-        trian_dataset = ImgDataset(train_data, train_labels, self.transforms, augment=False)
-        val_dataset = ImgDataset(val_data, val_labels, self.transforms, augment=False)
+        # labels
+        train_labels = self.load_idx1_ubyte(os.path.join(train_dir, "labels.idx1-ubyte"))[0]
+        val_labels = self.load_idx1_ubyte(os.path.join(val_dir, "labels.idx1-ubyte"))[0]
 
         return {
-            "image_size": metadata["image_size"],
-            "train_dataset": trian_dataset,
-            "val_dataset": val_dataset,
+            "train": {"imgs": train_imgs, "labels": train_labels},
+            "val": {"imgs": val_imgs, "labels": val_labels},
         }
 
 
 class YoloParser(ParserBase):
-    r"""Yolo format data set parser."""
+    """
+    Yolo format data set parser
+    """
 
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
+    def __init__(self, data_cfg: dict[str, dict[str, Any]]):
+        super().__init__(data_cfg)
+
+        self.train = self.data_cfg["train"]
+        self.val = self.data_cfg["val"]
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        # train、 val list
+        train_imgs = list_from_txt(os.path.join(self.dataset_path, self.train))
+        val_imgs = list_from_txt(os.path.join(self.dataset_path, self.val))
 
-        class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])
-
-        print_cfg("Information of dataset", metadata)
-
-        classes = list_from_txt(class_names_file)
-
-        train_img_dir = os.path.join(self.dataset_dir, "images/train2017/")
-        train_labels_dir = os.path.join(self.dataset_dir, "annotations/train2017/")
-
-        val_img_dir = os.path.join(self.dataset_dir, "images/val2017/")
-        val_labels_dir = os.path.join(self.dataset_dir, "annotations/val2017/")
-
-        # train、 val imgs list
-        train_img_ls = list_from_txt(self.dataset_dir + "/train2017.txt")
-        val_img_ls = list_from_txt(self.dataset_dir + "/val2017.txt")
-
-        train_img_ls = [img.rsplit("/", 1)[1] for img in train_img_ls]
-        val_img_ls = [img.rsplit("/", 1)[1] for img in val_img_ls]
-
-        train_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in train_img_ls]
-        val_labels_ls = [img.rsplit(".", 1)[0] + ".txt" for img in val_img_ls]
+        train_labels = [img.replace("images", "labels", 1).replace("jpg", "txt", 1) for img in train_imgs]
+        val_labels = [img.replace("images", "labels", 1).replace("jpg", "txt", 1) for img in val_imgs]
 
         # abs path
-        train_img_paths = [train_img_dir + img for img in train_img_ls]
-        val_img_paths = [val_img_dir + img for img in val_img_ls]
+        train_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in train_imgs]
+        val_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in val_imgs]
 
-        train_labels_paths = [train_labels_dir + label for label in train_labels_ls]
-        val_labels_paths = [val_labels_dir + label for label in val_labels_ls]
-
-        return {
-            "class_names": classes,
-            "calss_nums": len(classes),
-            "train_img_paths": train_img_paths,
-            "val_img_paths": val_img_paths,
-            "train_labels_paths": train_labels_paths,
-            "val_labels_paths": val_labels_paths,
-        }
-
-    def create(self) -> dict[str, Dataset]:
-        """Create a dataset based on the configuration information of YoloParser.
-
-        Returns:
-            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
-        """
-        # 解析类别和路径信息
-        metadata = self.parse()
-        class_names = metadata["class_names"]
-
-        trian_dataset = YoloDataset(
-            img_paths=metadata["train_img_paths"],
-            label_paths=metadata["train_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=True,
-            mosaic=True,
-        )
-        val_dataset = YoloDataset(
-            metadata["val_img_paths"],
-            metadata["val_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=False,
-            mosaic=False,
-        )
+        train_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in train_labels]
+        val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
         return {
-            "class_names": class_names,
-            "class_nums": len(class_names),
-            "train_dataset": trian_dataset,
-            "val_dataset": val_dataset,
+            "train": {"imgs": train_imgs, "labels": train_labels},
+            "val": {"imgs": val_imgs, "labels": val_labels},
         }
 
 
-class FlirAlignedParser(ParserBase):
+class FlirParser(ParserBase):
     r"""Multimodal Yolo format data set parser."""
 
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
+    def __init__(self, data_cfg: dict[str, Any]):
+        super().__init__(data_cfg)
 
     def parse(self) -> dict[str, Any]:
         metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
@@ -276,48 +160,8 @@ class FlirAlignedParser(ParserBase):
             "val_labels_paths": val_labels_paths,
         }
 
-    def create(self) -> dict[str, Dataset]:
-        """Create a dataset based on the configuration information of YoloParser.
 
-        Returns:
-            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
-        """
-        # 解析类别和路径信息
-        metadata = self.parse()
-        class_names = metadata["class_names"]
-
-        trian_dataset = YoloMMDataset(
-            img_paths=metadata["train_img_paths"],
-            thermal_paths=metadata["train_theraml_paths"],
-            label_paths=metadata["train_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=True,
-            mosaic=True,
-        )
-        val_dataset = YoloMMDataset(
-            metadata["val_img_paths"],
-            metadata["val_theraml_paths"],
-            metadata["val_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=False,
-            mosaic=False,
-        )
-
-        return {
-            "class_names": class_names,
-            "class_nums": len(class_names),
-            "train_dataset": trian_dataset,
-            "val_dataset": val_dataset,
-        }
-
-
-class VEDAIParser(ParserBase):
+class VedaiParser(ParserBase):
     r"""Multimodal VEDAI data set parser."""
 
     def __init__(self, parser_cfg: ParserCfg):

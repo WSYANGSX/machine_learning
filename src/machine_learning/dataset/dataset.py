@@ -1,506 +1,330 @@
-from typing import Sequence, Any
+from typing import Any, Optional
+
 import random
-import warnings
-from PIL import Image
-import torch
 import numpy as np
 from torch.utils.data import Dataset
 import albumentations as A
 
-from machine_learning.utils.transforms import TransformBase, ImgTransform
 from machine_learning.utils.image import resize
+from machine_learning.utils.logger import LOGGER
+from machine_learning.utils.transforms import TransformBase, ImgTransform
 
 
-class SimpleDataset(Dataset):
-    r"""
-    Simple full Load the dataset of data.
+class DatasetBase(Dataset):
+    """
+    Base dataset class for loading and processing data.
 
-    It is suitable for small datasets, occupies less memory space and speeds up data reading.
+    Args:
+        data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
+        cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
+        augment (bool, optional): If True, data augmentation is applied. Defaults to True.
+        hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
+        batch_size (int, optional): Size of batches. Defaults to None.
+        fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+
+    Attributes:
+        data_files (list): List of data file paths.
+        labels (list): List of label data dictionaries.
+        length (int): Number of data in the dataset.
+        ds (list): List of loaded data.
+        npy_files (list): List of numpy file paths.
+        transforms (callable): Image transformation function.
     """
 
     def __init__(
         self,
-        data: np.ndarray,
-        labels: np.ndarray | None = None,
-        tansform: TransformBase | None = None,
-    ) -> None:
-        """
-        Initialize the fully load dataset
-
-        Args:
-            data (np.ndarray, torch.Tensor): Data
-            labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
-            tansforms (Compose, BaseTransform, optional): Data converter. Defaults to None.
-        """
+        data: np.ndarray | list[str],
+        labels: np.ndarray | list[str],
+        cache: bool = False,
+        augment: bool = True,
+        hyp: dict[str, Any] | None = None,
+        batch_size: int = 16,
+        fraction: float = 1.0,
+    ):
+        """Initialize BaseDataset with given configuration and options."""
         super().__init__()
-
         self.data = data
         self.labels = labels
 
-        self.transform = tansform
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __getitem__(self, index):
-        pass
-
-
-class LazyDataset(Dataset):
-    r"""
-    Lazily load dataset.
-
-    It is used for large datasets, reducing memory space occupation, but the data reading speed is relatively slow.
-    """
-
-    def __init__(
-        self,
-        data_paths: Sequence[str],
-        label_paths: Sequence[int],
-        transform: TransformBase | None = None,
-    ):
-        """
-        Initialize the Lazily load dataset
-
-        Args:
-            data_paths (Sequence[str]): Data address list.
-            label_paths: (Sequence[int]): Labels address list.
-            transform (Compose, BaseTransform, optional): Data converter. Defaults to None.
-        """
-        super().__init__()
-
-        self.data_paths = data_paths
-        self.label_paths = label_paths
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.data_paths)
-
-    def __getitem__(self, index) -> Any:
-        pass
-
-
-class ImgDataset(SimpleDataset):
-    r"""
-    Fully load the dataset of image.
-
-    It is suitable for small datasets, occupies less memory space and speeds up data reading.
-    """
-
-    def __init__(
-        self,
-        imgs: np.ndarray | torch.Tensor,
-        labels: np.ndarray | torch.Tensor | None = None,
-        tansform: ImgTransform | None = None,
-        augment: bool = False,
-    ) -> None:
-        """
-        Initialize the fully load dataset
-
-        Args:
-            data (np.ndarray, torch.Tensor): Data
-            labels (np.ndarray, torch.Tensor, optional): Labels. Defaults to None.
-            tansforms (Compose, BaseTransform, optional): Data converter. Defaults to None.
-        """
-        super().__init__(data=imgs, labels=labels, tansform=tansform)
-
         self.augment = augment
-        self.transform = tansform
+        self.fraction = fraction
+        self.batch_size = batch_size
+
+        # Buffer thread for data fusion
+        self.buffer = []
+        self.max_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
+        self.im_files = self.get_img_files(self.img_path)
+        self.labels = self.get_labels()
+
+        # Cache images (options are cache = True, False, None, "ram", "disk")
+        self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
+        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        if self.cache == "ram" and self.check_cache_ram():
+            if hyp.deterministic:
+                LOGGER.warning(
+                    "WARNING ⚠️ cache='ram' may produce non-deterministic training results. "
+                    "Consider cache='disk' as a deterministic alternative if your disk space allows."
+                )
+            self.cache_data()
+        elif self.cache == "disk" and self.check_cache_disk():
+            self.cache_data()
+
+        # Transforms
+        self.transforms = self.build_transforms(hyp=hyp)
 
     @property
-    def imgs(self):
-        return self.data
+    def length(self) -> int:
+        return len(self.labels)
 
-    def __len__(self) -> int:
-        return len(self.imgs)
+    def get_img_files(self, img_path):
+        """Read image files."""
+        try:
+            f = []  # image files
+            for p in img_path if isinstance(img_path, list) else [img_path]:
+                p = Path(p)  # os-agnostic
+                if p.is_dir():  # dir
+                    f += glob.glob(str(p / "**" / "*.*"), recursive=True)
+                    # F = list(p.rglob('*.*'))  # pathlib
+                elif p.is_file():  # file
+                    with open(p) as t:
+                        t = t.read().strip().splitlines()
+                        parent = str(p.parent) + os.sep
+                        f += [x.replace("./", parent) if x.startswith("./") else x for x in t]  # local to global path
+                        # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
+                else:
+                    raise FileNotFoundError(f"{self.prefix}{p} does not exist")
+            im_files = sorted(x.replace("/", os.sep) for x in f if x.split(".")[-1].lower() in IMG_FORMATS)
+            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
+            assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
+        except Exception as e:
+            raise FileNotFoundError(f"{self.prefix}Error loading data from {img_path}\n{HELP_URL}") from e
+        if self.fraction < 1:
+            im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
+        return im_files
+
+    def update_labels(self, include_class: Optional[list]):
+        """Update labels to include only these classes (optional)."""
+        include_class_array = np.array(include_class).reshape(1, -1)
+        for i in range(len(self.labels)):
+            if include_class is not None:
+                cls = self.labels[i]["cls"]
+                bboxes = self.labels[i]["bboxes"]
+                segments = self.labels[i]["segments"]
+                keypoints = self.labels[i]["keypoints"]
+                j = (cls == include_class_array).any(1)
+                self.labels[i]["cls"] = cls[j]
+                self.labels[i]["bboxes"] = bboxes[j]
+                if segments:
+                    self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
+                if keypoints is not None:
+                    self.labels[i]["keypoints"] = keypoints[j]
+            if self.single_cls:
+                self.labels[i]["cls"][:, 0] = 0
+
+    def load_image(self, i, rect_mode=True):
+        """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
+        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                try:
+                    im = np.load(fn)
+                except Exception as e:
+                    LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
+                    Path(fn).unlink(missing_ok=True)
+                    im = cv2.imread(f)  # BGR
+            else:  # read image
+                im = cv2.imread(f)  # BGR
+            if im is None:
+                raise FileNotFoundError(f"Image Not Found {f}")
+
+            h0, w0 = im.shape[:2]  # orig hw
+            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+
+            # Add to buffer if training with augmentations
+            if self.augment:
+                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+                self.buffer.append(i)
+                if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
+                    j = self.buffer.pop(0)
+                    if self.cache != "ram":
+                        self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+
+            return im, (h0, w0), im.shape[:2]
+
+        return self.ims[i], self.im_hw0[i], self.im_hw[i]
+
+    def cache_images(self):
+        """Cache images to memory or disk."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_image, "RAM")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(self.ni))
+            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+            for i, x in pbar:
+                if self.cache == "disk":
+                    b += self.npy_files[i].stat().st_size
+                else:  # 'ram'
+                    self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
+                    b += self.ims[i].nbytes
+                pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
+            pbar.close()
+
+    def cache_images_to_disk(self, i):
+        """Saves an image as an *.npy file for faster loading."""
+        f = self.npy_files[i]
+        if not f.exists():
+            np.save(f.as_posix(), cv2.imread(self.im_files[i]), allow_pickle=False)
+
+    def check_cache_disk(self, safety_margin=0.5):
+        """Check image caching requirements vs available disk space."""
+        import shutil
+
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        n = min(self.ni, 30)  # extrapolate from 30 random images
+        for _ in range(n):
+            im_file = random.choice(self.im_files)
+            im = cv2.imread(im_file)
+            if im is None:
+                continue
+            b += im.nbytes
+            if not os.access(Path(im_file).parent, os.W_OK):
+                self.cache = None
+                LOGGER.info(f"{self.prefix}Skipping caching images to disk, directory not writeable ⚠️")
+                return False
+        disk_required = b * self.ni / n * (1 + safety_margin)  # bytes required to cache dataset to disk
+        total, used, free = shutil.disk_usage(Path(self.im_files[0]).parent)
+        if disk_required > free:
+            self.cache = None
+            LOGGER.info(
+                f"{self.prefix}{disk_required / gb:.1f}GB disk space required, "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{free / gb:.1f}/{total / gb:.1f}GB free, not caching images to disk ⚠️"
+            )
+            return False
+        return True
+
+    def check_cache_ram(self, safety_margin=0.5):
+        """Check image caching requirements vs available memory."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        n = min(self.ni, 30)  # extrapolate from 30 random images
+        for _ in range(n):
+            im = cv2.imread(random.choice(self.im_files))  # sample image
+            if im is None:
+                continue
+            ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
+            b += im.nbytes * ratio**2
+        mem_required = b * self.ni / n * (1 + safety_margin)  # GB required to cache dataset into RAM
+        mem = psutil.virtual_memory()
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.info(
+                f"{self.prefix}{mem_required / gb:.1f}GB RAM required to cache images "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching images ⚠️"
+            )
+            return False
+        return True
+
+    def set_rectangle(self):
+        """Sets the shape of bounding boxes for YOLO detections as rectangles."""
+        bi = np.floor(np.arange(self.ni) / self.batch_size).astype(int)  # batch index
+        nb = bi[-1] + 1  # number of batches
+
+        s = np.array([x.pop("shape") for x in self.labels])  # hw
+        ar = s[:, 0] / s[:, 1]  # aspect ratio
+        irect = ar.argsort()
+        self.im_files = [self.im_files[i] for i in irect]
+        self.labels = [self.labels[i] for i in irect]
+        ar = ar[irect]
+
+        # Set training image shapes
+        shapes = [[1, 1]] * nb
+        for i in range(nb):
+            ari = ar[bi == i]
+            mini, maxi = ari.min(), ari.max()
+            if maxi < 1:
+                shapes[i] = [maxi, 1]
+            elif mini > 1:
+                shapes[i] = [1, 1 / mini]
+
+        self.batch_shapes = np.ceil(np.array(shapes) * self.imgsz / self.stride + self.pad).astype(int) * self.stride
+        self.batch = bi  # batch index of image
 
     def __getitem__(self, index):
-        img = self.imgs[index]
+        """Returns transformed label information for given index."""
+        return self.transforms(self.get_image_and_label(index))
 
-        if self.labels is not None:
-            label = self.labels[index]
-            if self.transform:
-                transformed_data = self.transform(data={"image": img}, augment=self.augment)
-                img = transformed_data["image"]
-            label = torch.tensor(label)
+    def get_image_and_label(self, index):
+        """Get and return label information from the dataset."""
+        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        label.pop("shape", None)  # shape is for rect, remove it
+        label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["ratio_pad"] = (
+            label["resized_shape"][0] / label["ori_shape"][0],
+            label["resized_shape"][1] / label["ori_shape"][1],
+        )  # for evaluation
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_labels_info(label)
 
-            return img, label
-        else:
-            if self.transform:
-                transformed_data = self.transform(data={"image": img}, augment=self.augment)
-                img = transformed_data["image"]
+    def __len__(self):
+        """Returns the length of the labels list for the dataset."""
+        return len(self.labels)
 
-            return img
+    def update_labels_info(self, label):
+        """Custom your label format here."""
+        return label
 
-
-class YoloDataset(LazyDataset):
-    r"""
-    Yolo object detection type dataset.
-
-    The object detection dataset is generally large. The inherited lazy loading dataset reduces the memory space
-    occupation, but the data reading speed is relatively slow.
-    """
-
-    def __init__(
-        self,
-        img_paths: Sequence[str],
-        label_paths: Sequence[int],
-        transform: ImgTransform = None,
-        img_size: int = 640,
-        multiscale: bool = False,
-        img_size_stride: int | None = 32,
-        augment: bool = False,
-        mosaic: bool = False,
-    ):
-        """YoloDataset Inherits from LazyDataset, used for loading the yolo detection data
-
-        Args:
-            data_paths (Sequence[str]): Yolo data address list.
-            label_paths: (Sequence[int]): Yolo labels address list.
-            transform: (YoloTransform): Yolo data converter. Defaults to None.
-            img_size: (int): The default required dim of the detected image. Defaults to 640.
-            multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
-            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults
-            to None.
-            augment: (bool): Whether to enable image augment. Defaults to True.
+    def build_transforms(self, hyp=None):
         """
-        super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
+        Users can customize augmentations here.
 
-        self.img_size = img_size
-        self.multiscale = multiscale
-        self.augment = augment
-        self.mosaic = mosaic
-
-        if self.multiscale:
-            self.img_size_stride = img_size_stride
-            self.min_size = self.img_size - 3 * img_size_stride
-            self.max_size = self.img_size + 3 * img_size_stride
-
-        self.batch_count = 0
-
-        self.buffer = []
-        self.max_buffer_length = 1000
-
-    def __len__(self) -> int:
-        return len(self.data_paths)
-
-    def load_data(self, index) -> tuple:
-        #  Image
-        try:
-            img_path = self.data_paths[index % len(self.data_paths)]
-            img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-        except Exception:
-            print(f"Could not read image '{img_path}'.")
-            return None
-
-        #  Label
-        try:
-            label_path = self.label_paths[index % len(self.data_paths)]
-
-            # Ignore warning if file is empty
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                labels = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
-
-                if labels.size > 0:
-                    labels = labels.reshape(-1, 5)
-                    valid_mask = (labels[:, 3] > 0) & (labels[:, 4] > 0)
-                    labels = labels[valid_mask]
-
-                bboxes = labels[:, 1:5]
-                category_ids = labels[:, 0]
-
-        except Exception:
-            print(f"Could not read label '{label_path}'.")
-            return None
-
-        return img, bboxes, category_ids, img_path
-
-    def __getitem__(self, index) -> tuple:
-        img0, bboxes0, category_ids0, img_path0 = self.load_data(index=index)
-
-        # mosaic
-        if self.mosaic:
-            if len(self.buffer) > self.max_buffer_length:
-                self.buffer.pop(0)
-            self.buffer.append(index)
-
-            mosaic_transform = A.Compose(
-                [
-                    A.Mosaic(
-                        grid_yx=(2, 2),
-                        cell_shape=(320, 320),
-                        fit_mode="contain",
-                        target_size=(640, 640),
-                        metadata_key="mosaic_metadata",
-                        p=0.8,
-                    ),
-                ],
-                bbox_params=A.BboxParams(
-                    format="yolo",
-                    label_fields=["category_ids"],
-                    min_visibility=0.1,
-                    min_height=0.01,
-                    min_width=0.01,
-                    clip=True,
-                ),
-                p=1,
-            )
-
-            mosaic_data = []
-            for _ in range(3):
-                random_index = random.choice(self.buffer)
-                img, bboxes, category_ids, _ = self.load_data(index=random_index)
-                mosaic_data.append(
-                    {
-                        "image": img,
-                        "bboxes": bboxes,
-                        "category_ids": category_ids,
-                    }
-                )
-
-            primary_data = {
-                "image": img0,
-                "bboxes": bboxes0,
-                "category_ids": category_ids0,
-                "mosaic_metadata": mosaic_data[:],
-            }
-            result = mosaic_transform(**primary_data)
-
-            img = result["image"]
-            bboxes = result["bboxes"]
-            category_ids = result["category_ids"]
-
-        #  Transform
-        if self.transform:
-            try:
-                transformed_data = self.transform(
-                    data={"image": img0, "bboxes": bboxes0, "category_ids": category_ids0}, augment=self.augment
-                )
-                img = transformed_data["image"]
-                bboxes = torch.tensor(transformed_data["bboxes"])
-                category_ids = torch.tensor(transformed_data["category_ids"])
-
-            except Exception as e:
-                print(f"Could not apply transform to image: {img_path0}. {e}")
-                return
-
-        return img, torch.cat([category_ids.view(-1, 1), bboxes], dim=-1)
-
-    def collate_fn(self, batch) -> tuple:
-        self.batch_count += 1
-
-        # Drop invalid images
-        batch = [data for data in batch if data is not None]
-
-        imgs_ls, cls_bboxes_ls = list(zip(*batch))
-
-        # Selects new image size every tenth batch
-        if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_size_stride))
-
-        # Resize images to input shape
-        imgs = torch.stack([resize(img, self.img_size) for img in imgs_ls])
-
-        iid_cls_bboxes = torch.cat(
-            [
-                torch.cat([torch.full((bboxes.shape[0], 1), i, device=bboxes.device), bboxes], dim=-1)
-                for i, bboxes in enumerate(cls_bboxes_ls)
-            ],
-            dim=0,
-        )
-
-        return imgs, iid_cls_bboxes
-
-
-class YoloMMDataset(LazyDataset):
-    r"""
-    Yolo multimodal object detection type dataset.
-
-    The object detection dataset is generally large. The inherited lazy loading dataset reduces the memory space
-    occupation, but the data reading speed is relatively slow.
-    """
-
-    def __init__(
-        self,
-        img_paths: Sequence[str],
-        thermal_paths: Sequence[str],
-        label_paths: Sequence[int],
-        transform: ImgTransform = None,
-        img_size: int = 640,
-        multiscale: bool = False,
-        img_size_stride: int | None = 32,
-        augment: bool = False,
-        mosaic: bool = False,
-    ):
-        """YoloMM dataset Inherits from LazyDataset, used for loading the yolo detection data
-
-        Args:
-            img_paths (Sequence[str]): imgs data address list.
-            thermal_paths (Sequence[str]): thermal data address list.
-            label_paths: (Sequence[int]): Labels address list.
-            transform: (YoloTransform): Yolo data converter. Defaults to None.
-            img_size: (int): The default required dim of the detected image. Defaults to 416.
-            multiscale: (bool): Whether to enable multi-size image training. Defaults to False.
-            img_size_stride: (int): The stride of image size change when multi-size image training is enabled. Defaults
-            to None.
-            augment: (bool): Whether to enable image augment. Defaults to False.
-            mosaic: (bool): Whether to enable image mosaic. Defaults to False.
+        Example:
+            ```python
+            if self.augment:
+                # Training transforms
+                return Compose([])
+            else:
+                # Val transforms
+                return Compose([])
+            ```
         """
-        super().__init__(data_paths=img_paths, label_paths=label_paths, transform=transform)
+        raise NotImplementedError
 
-        self.thermal_paths = thermal_paths
+    def get_labels(self):
+        """
+        Users can customize their own format here.
 
-        self.img_size = img_size
-        self.multiscale = multiscale
-        self.augment = augment
-        self.mosaic = mosaic
-
-        if self.multiscale:
-            self.img_size_stride = img_size_stride
-            self.min_size = self.img_size - 3 * img_size_stride
-            self.max_size = self.img_size + 3 * img_size_stride
-
-        self.batch_count = 0
-
-        self.buffer = []
-        self.max_buffer_length = 100
-
-    def __len__(self) -> int:
-        return len(self.data_paths)
-
-    def load_data(self, index) -> tuple:
-        #  Image
-        try:
-            img_path = self.data_paths[index % len(self.data_paths)]
-            img = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
-        except Exception:
-            print(f"Could not read image '{img_path}'.")
-            return None
-
-        #  Thremal
-        try:
-            thermal_path = self.thermal_paths[index % len(self.data_paths)]
-            thermal = np.array(Image.open(thermal_path).convert("L"), dtype=np.uint8)
-        except Exception:
-            print(f"Could not read thermal image '{thermal_path}'.")
-            return None
-
-        #  Label
-        try:
-            label_path = self.label_paths[index % len(self.data_paths)]
-
-            # Ignore warning if file is empty
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                labels = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
-                bboxes = labels[:, 1:5]
-                category_ids = labels[:, 0]
-
-        except Exception:
-            print(f"Could not read label '{label_path}'.")
-            return None
-
-        return img, thermal, bboxes, category_ids, img_path
-
-    def __getitem__(self, index) -> tuple:
-        img, thermal, bboxes, category_ids, img_path = self.load_data(index=index)
-
-        # mosaic
-        if self.mosaic:
-            if len(self.buffer) > self.max_buffer_length:
-                self.buffer.pop(0)
-            self.buffer.append(index)
-
-            mosaic_transform = A.Compose(
-                [
-                    A.Mosaic(
-                        grid_yx=(2, 2),
-                        cell_shape=(320, 320),
-                        fit_mode="contain",
-                        target_size=(640, 640),
-                        metadata_key="mosaic_metadata",
-                        p=0.6,
-                    ),
-                ],
-                bbox_params=A.BboxParams(
-                    format="yolo",
-                    label_fields=["category_ids"],
-                    min_visibility=0.1,
-                    min_height=0.01,
-                    min_width=0.01,
-                    clip=True,
-                ),
-                p=1,
+        Note:
+            Ensure output is a dictionary with the following keys:
+            ```python
+            dict(
+                im_file=im_file,
+                shape=shape,  # format: (height, width)
+                cls=cls,
+                bboxes=bboxes,  # xywh
+                segments=segments,  # xy
+                keypoints=keypoints,  # xy
+                normalized=True,  # or False
+                bbox_format="xyxy",  # or xywh, ltwh
             )
+            ```
+        """
+        raise NotImplementedError
 
-            mosaic_data = []
-            for _ in range(3):
-                random_index = random.choice(self.buffer)
-                img, thermal, bboxes, category_ids, _ = self.load_data(index=random_index)
-                mosaic_data.append(
-                    {
-                        "image": img,
-                        "mask": thermal,
-                        "bboxes": bboxes,
-                        "category_ids": category_ids,
-                    }
-                )
 
-            primary_data = {
-                "image": img,
-                "mask": thermal,
-                "bboxes": bboxes,
-                "category_ids": category_ids,
-                "mosaic_metadata": mosaic_data[:],
-            }
-            result = mosaic_transform(**primary_data)
+class ImgDataset(DatasetBase):
+    def __init__(self):
+        super().__init__()
 
-            img = result["image"]
-            thermal = result["mask"]
-            bboxes = result["bboxes"]
-            category_ids = result["category_ids"]
 
-        #  Transform
-        if self.transform:
-            try:
-                transformed_data = self.transform(
-                    data={"image": img, "thermal": thermal, "bboxes": bboxes, "category_ids": category_ids},
-                    augment=self.augment,
-                )
-                img = transformed_data["image"]
-                thermal = transformed_data["thermal"]
-                bboxes = torch.tensor(transformed_data["bboxes"])
-                category_ids = torch.tensor(transformed_data["category_ids"])
-
-            except Exception:
-                print(f"Could not apply transform to image: {img_path}.")
-                return
-
-        return img, thermal, torch.cat([category_ids.view(-1, 1), bboxes], dim=-1)
-
-    def collate_fn(self, batch) -> tuple:
-        self.batch_count += 1
-
-        # Drop invalid images
-        batch = [data for data in batch if data is not None]
-
-        imgs_ls, thermal_ls, cls_bboxes_ls = list(zip(*batch))
-
-        # Selects new image size every tenth batch
-        if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, self.img_size_stride))
-
-        # Resize images to input shape
-        imgs = torch.stack([resize(img, self.img_size) for img in imgs_ls])
-        thermals = torch.stack([resize(thermal, self.img_size) for thermal in thermal_ls])
-
-        iid_cls_bboxes = torch.cat(
-            [
-                torch.cat([torch.full((bboxes.shape[0], 1), i, device=bboxes.device), bboxes], dim=-1)
-                for i, bboxes in enumerate(cls_bboxes_ls)
-            ],
-            dim=0,
-        )
-
-        return imgs, thermals, iid_cls_bboxes
+class MultimodalDataset(DatasetBase):
+    def __init__(self):
+        super().__init__()

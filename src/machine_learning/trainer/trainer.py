@@ -1,16 +1,21 @@
-from typing import Any
+from typing import Any, Mapping
+
 import os
+import yaml
 import torch
 from datetime import datetime
 from prettytable import PrettyTable
 from numbers import Integral, Real
-
+from dataclasses import dataclass, field, MISSING
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import Dataset
 
 from machine_learning.utils.cfg import BaseCfg
 from machine_learning.utils.logger import LOGGER
-from dataclasses import dataclass, field, MISSING
 from machine_learning.algorithms import AlgorithmBase
+from machine_learning.utils.constants import DATACFG_PATH
+from machine_learning.dataset import PARSER_MAPS, ParserBase, ImgDataset, MultimodalDataset
+
 from machine_learning.utils import set_seed, cfg2dict, print_cfg
 
 
@@ -23,12 +28,20 @@ class TrainCfg(BaseCfg):
     log_interval: int = field(default=10)
     save_interval: int = field(default=10)
     save_best: bool = field(default=True)
+    argument: bool = field(default=False)
+    fraction: float = field(default=1.0)  # dataset fraction to train on (default is 1.0, all images in train set)
+    mosaic: float = field(default=1.0)
+    mixup: float = field(default=0.0)
+    copy_paste: float = field(default=0.1)
+    multi_scale: bool = field(default=False)
+    rect: bool = field(default=False)
 
 
 class Trainer:
     def __init__(
         self,
         cfg: TrainCfg,
+        dataset: str | Mapping[str, Any],
         algo: AlgorithmBase,
     ) -> None:
         """
@@ -36,6 +49,7 @@ class Trainer:
 
         Args:
             cfg (TrainCfg): The configuration of the trainer.
+            dataset (str, Mapping[str, Any]): The dataset cfg.
             algo (AlgorithmBase): The algorithm to be trained.
         """
         self.cfg = cfg
@@ -47,22 +61,71 @@ class Trainer:
         self.dt_suffix = datetime.now().strftime("%Y-%m-%d_%H-%M")
         self.ckpt_dir = os.path.abspath(self.cfg.ckpt_dir + self.dt_suffix)
 
-        # ------------------ configure global random seed ------------------
+        # ------------------ init global random seed ------------------
         set_seed(self.cfg.seed)
         LOGGER.info(f"Current seed: {self.cfg.seed}")
 
-        # ------------------------ add train cfg  --------------------------
+        # --------------------- dataset cfg  --------------------------
+        LOGGER.info("Parsing dataset cfg by trainer...")
+        dataset_cfg = self.load_data_cfg(dataset)
+
+        # -------------------- parse dataset --------------------------
+        datasets = self.get_datasets(dataset_cfg)
+
+        # ------------------- add cfg to algo -------------------------
         LOGGER.info("Algorithm initializing by trainer...")
-        self.algorithm._init_on_trainer(cfg2dict(self.cfg))
+        self.algorithm._init_on_trainer(cfg2dict(self.cfg), dataset_cfg, datasets)
         print_cfg("Total configuration", self.algorithm.cfg)
 
-        # ------------------------ configure writer ------------------------
+        # --------------------- init writer ---------------------------
         self._init_writer()
         self.best_loss = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
+
+    def load_data_cfg(self, cfg: str | Mapping[str, Any]) -> dict:
+        if isinstance(cfg, Mapping):
+            cfg = dict(cfg)
+        else:
+            if not (os.path.splitext(cfg)[1] == ".yaml" or os.path.splitext(cfg)[1] == ".yml"):
+                raise ValueError("Input path is not a yaml file path.")
+            cfg_path = os.path.join(DATACFG_PATH, cfg)
+            with open(cfg_path, "r") as f:
+                cfg = yaml.safe_load(f)
+
+        return cfg
+
+    def get_datasets(self, data_cfg: dict[str, Any]) -> dict[str, Dataset]:
+        # get dataset parser
+        dataset_name = data_cfg["name"]
+        parser: ParserBase = PARSER_MAPS[dataset_name](data_cfg)
+
+        # parser data
+        data = parser.parse()
+        trian_data, val_data, test_data = data["train"], data["val"], data.get("test", {})
+
+        # build dataset
+        if len(trian_data) == 2:
+            if "imgs" in trian_data:  # imgs dataset
+                train_dataset = ImgDataset(imgs=trian_data["imgs"], labels=trian_data["labels"])
+                val_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
+                if test_data:
+                    test_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
+                else:
+                    test_dataset = None
+            ...
+
+        else:
+            train_dataset = MultimodalDataset()
+            val_dataset = MultimodalDataset()
+            if test_data:
+                test_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
+            else:
+                test_dataset = None
+
+        return {"train": train_dataset, "val": val_dataset, "test": test_dataset}
 
     def _init_writer(self):
         log_path = self.cfg.log_dir + self.dt_suffix

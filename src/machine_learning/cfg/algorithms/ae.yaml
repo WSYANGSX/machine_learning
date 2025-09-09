@@ -26,3 +26,4 @@ data_loader:
   num_workers: 4
   shuffle: True
   batch_size: 1024
+  

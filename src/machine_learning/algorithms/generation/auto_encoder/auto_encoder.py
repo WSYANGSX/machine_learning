@@ -17,7 +17,6 @@ class AutoEncoder(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        data: Mapping[str, Union[Dataset, Any]],
         net: BaseNet | None = None,
         name: str | None = "auto_encoder",
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -27,14 +26,12 @@ class AutoEncoder(AlgorithmBase):
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
             net (BaseNet): Neural neural required by the AutoEncoder algorithm.
             name (str, optional): Name of the algorithm. Defaults to "auto_encoder".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
         """
-        super().__init__(cfg=cfg, data=data, net=net, name=name, device=device)
+        super().__init__(cfg=cfg, net=net, name=name, device=device)
 
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         """Train a single epoch"""

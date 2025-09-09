@@ -1,4 +1,4 @@
-from typing import Literal, Mapping, Any, Union
+from typing import Literal, Mapping, Any
 
 import os
 import yaml
@@ -13,17 +13,17 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.networks import BaseNet, NET_MAPS
+from machine_learning.utils import get_gpu_mem
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils import get_gpu_mem
+from machine_learning.networks import BaseNet, NET_MAPS
+from machine_learning.utils.constants import ALGOCFG_PATH
 
 
 class AlgorithmBase(ABC):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        data: Mapping[str, Union[Dataset, Any]],
         net: BaseNet | None = None,
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -32,13 +32,11 @@ class AlgorithmBase(ABC):
         """Base class of all algorithms
 
         Args:
-            cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
+            cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             net (BaseNet): Neural neural required by the algorithm, provided by other algorithms externally.
             name (str, optional): Name of the algorithm. Defaults to None.
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
         """
         super().__init__()
@@ -73,7 +71,6 @@ class AlgorithmBase(ABC):
         # initialize
         self._init_nets()
         self._init_amp(amp)
-        self._init_dependent_on_data(data)
 
     @property
     def train_batches(self) -> int:
@@ -126,11 +123,15 @@ class AlgorithmBase(ABC):
                 self.net = NET_MAPS[self.name](**args)
                 self._add_net("net", self.net)
 
-    def _init_on_trainer(self, cfg: dict[Any]) -> None:
-        """Initialize the optimizers, and schedulers."""
-        self._add_cfg("train", cfg)
+    def _init_on_trainer(
+        self, train_cfg: dict[str, Any], dataset_cfg: dict[str, Any], datasets: dict[str, Dataset]
+    ) -> None:
+        """Initialize the optimizers, schedulers and datasets."""
+        self._add_cfg("train", train_cfg)
+        self._add_cfg("dataset", dataset_cfg)
         self._init_optimizers()
         self._init_schedulers()
+        self._init_dataloader(datasets)
 
     def _add_cfg(self, name, cfg: Any) -> None:
         # add additional configuration parameters may used by algo, e.g. traincfg
@@ -151,13 +152,14 @@ class AlgorithmBase(ABC):
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
-    def _load_config(self, config: FilePath | Mapping[str, Any]) -> dict:
-        if isinstance(config, Mapping):
-            cfg = config
+    def _load_config(self, cfg: FilePath | Mapping[str, Any]) -> dict:
+        if isinstance(cfg, Mapping):
+            cfg = dict(cfg)
         else:
-            if not (os.path.splitext(config)[1] == ".yaml" or os.path.splitext(config)[1] == ".yml"):
+            if not (os.path.splitext(cfg)[1] == ".yaml" or os.path.splitext(cfg)[1] == ".yml"):
                 raise ValueError("Input path is not a yaml file path.")
-            with open(config, "r") as f:
+            cfg_path = os.path.join(ALGOCFG_PATH, cfg)
+            with open(cfg_path, "r") as f:
                 cfg = yaml.safe_load(f)
 
         return cfg
@@ -185,23 +187,25 @@ class AlgorithmBase(ABC):
         self.scaler = GradScaler() if self.amp else None
         LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
 
-    def _init_dependent_on_data(self, data: Mapping[str, Union[Dataset, Any]]) -> None:
+    def _init_dataloader(self, datasets: Mapping[str, Dataset]) -> None:
         """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
 
         Args:
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
         """
-        LOGGER.info(f"Initializing the data of {self.name}...")
-
-        self.cfg["data"] = {}
+        LOGGER.info(f"Initializing the dataloaders of {self.name}...")
 
         _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
         for key, type in _necessary_key_type_couples_.items():
-            if key not in data or not isinstance(data[key], type):
+            if key not in datasets or not isinstance(datasets[key], type):
                 raise ValueError(f"Input data mapping has no {key} or {key} is not Dataset type.")
 
-        train_dataset, val_dataset = data.pop("train_dataset"), data.pop("val_dataset")
+        train_dataset, val_dataset, test_dataset = (
+            datasets["train_dataset"],
+            datasets["val_dataset"],
+            datasets["test_dataset"],
+        )
 
         self.train_loader = DataLoader(
             dataset=train_dataset,
@@ -221,8 +225,7 @@ class AlgorithmBase(ABC):
         )
         self._val_batches = len(self.val_loader)
 
-        if "test_dataset" in data and isinstance(data["test_dataset"], Dataset):
-            test_dataset = data.pop("test_dataset")
+        if test_dataset and isinstance(datasets["test_dataset"], Dataset):
             self.test_loader = DataLoader(
                 dataset=test_dataset,
                 batch_size=self.batch_size,
@@ -234,10 +237,6 @@ class AlgorithmBase(ABC):
         else:
             self.test_loader = None
             self._test_batches = None
-
-        if data:
-            for key, val in data.items():
-                self.cfg["data"][key] = val
 
     def _init_optimizers(self):
         """Configure the training optimizer"""

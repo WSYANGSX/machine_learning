@@ -1,0 +1,5 @@
+name: minist
+path: .data/minist
+
+train: train
+val: val

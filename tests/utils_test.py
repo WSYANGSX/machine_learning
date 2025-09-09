@@ -1,3 +1,3 @@
-from machine_learning.networks import AENet, BaseNet
+a = ["a", "b"]
 
-print(issubclass(AENet, BaseNet))
+print(isinstance(a, list[str]))
