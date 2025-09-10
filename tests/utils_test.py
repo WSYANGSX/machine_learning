@@ -1,3 +1,4 @@
-a = ["a", "b"]
+import random
 
-print(isinstance(a, list[str]))
+a = random.randint(0, 1)
+print(a)
