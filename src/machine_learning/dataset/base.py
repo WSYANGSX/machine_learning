@@ -102,26 +102,26 @@ class DatasetBase(Dataset):
     def cache_data(self) -> None:
         """Cache data to memory or disk."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        fcn, storage = (self.cache_data_to_disk, "Disk") if self.cache == "disk" else (self.cache_data_to_ram, "RAM")
+        fcn, storage = (self.cache_data_to_ram, "RAM") if self.cache == "ram" else (self.cache_data_to_disk, "Disk")
         LOGGER.info(f"Caching data to {storage}...")
         with ThreadPool(NUM_THREADS) as pool:
             results = pool.imap(fcn, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
-            for i, _ in pbar:
+            for _, size in pbar:
                 if self.cache == "disk":  # 'disk'
-                    b += self.data_npy_files[i].stat().st_size
+                    b += size
                 else:  # 'ram'
-                    b += self.data[i].nbytes
+                    b += size
                 pbar.desc = f"Caching data ({b / gb:.1f}GB {storage})"
             pbar.close()
 
-    def cache_data_to_ram(self, i: int) -> None:
+    def cache_data_to_ram(self, i: int) -> float:
         """Cache data from paths or .npy file to ram for faster loading."""
         f, fn = self.data_files[i], self.data_npy_files[i]
 
         if fn.exists():
             try:
-                data = np.load(fn, allow_pickle=True)
+                data = np.load(fn)
             except Exception as e:
                 LOGGER.warning(f"Removing corrupt *.npy image file {fn} due to: {e}")
                 Path(fn).unlink(missing_ok=True)
@@ -129,13 +129,22 @@ class DatasetBase(Dataset):
         else:
             data = self.fread(f)
 
-        self.data[i] = data
+        if data is not None:
+            self.data[i] = data
+            return self.data[i].nbytes
+        else:
+            return 0.0
 
-    def cache_data_to_disk(self, i: int) -> None:
+    def cache_data_to_disk(self, i: int) -> float:
         """Cache data from paths to disk with as an .npy file for faster loading."""
         f = self.data_npy_files[i]
         if not f.exists():
-            np.save(f, self.fread(self.data_files[i]), allow_pickle=True)
+            data = self.fread(self.data_files[i])
+            if data is not None:
+                np.save(f, data, allow_pickle=False)
+                return self.data_npy_files[i].stat().st_size
+            else:
+                return 0.0
 
     def cache_labels(self) -> None:
         """Cache labels to memory or disk."""
@@ -154,29 +163,66 @@ class DatasetBase(Dataset):
             pbar.close()
 
     def cache_label_to_ram(self, i: int) -> None:
-        pass
+        """Cache label from paths or .npy file to ram for faster loading."""
+        f, fn = self.label_files[i], self.label_npy_files[i]
+
+        if fn.exists():
+            try:
+                label = np.load(fn)
+            except Exception as e:
+                LOGGER.warning(f"Removing corrupt *.npy image file {fn} due to: {e}")
+                Path(fn).unlink(missing_ok=True)
+                label = self.lread(f)
+        else:
+            label = self.lread(f)
+
+        if label is not None:
+            self.labels[i] = label
+            return self.labels[i].nbytes
+        else:
+            return 0.0
 
     def cache_label_to_disk(self, i: int) -> None:
-        pass
+        """Cache label from paths to disk with as an .npy file for faster loading."""
+        f = self.label_npy_files[i]
+        if not f.exists():
+            label = self.lread(self.label_files[i])
+            if label is not None:
+                np.save(f, label, allow_pickle=False)
+                return self.label_npy_files[i].stat().st_size
+            else:
+                return 0.0
 
     def load(self, i: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
         dt, dtf, dtfn = self.data[i], self.data_files[i], self.data_npy_files[i]
         lb, lbf, lbfn = self.labels[i], self.label_files[i], self.label_npy_files[i]
 
-        if dt is not None and lb is not None:  # cached in RAM
+        # load data
+        if dt is not None:  # cached in RAM
             data = dt
-            label = lb
-        elif dtfn.exists() and lbfn.exists():  # cached in Disk
+        elif dtfn.exists():  # cached in Disk
             try:
-                data, label = np.load(dtfn, allow_pickle=True), np.load(lbfn, allow_pickle=True)
+                data = np.load(dtfn)
             except Exception as e:
                 LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} and {lbfn} due to: {e}")
                 Path(dtfn).unlink(missing_ok=True)
-                Path(lbfn).unlink(missing_ok=True)
-                data, label = self.fread(dtf), self.fread(lbf)
+                data = self.fread(dtf)
         else:
-            data, label = self.fread(dtf), self.fread(lbf)
+            data = self.fread(dtf)
+
+        # load label
+        if lb is not None:  # cached in RAM
+            label = lb
+        elif lbfn.exists():  # cached in Disk
+            try:
+                label = np.load(lbfn)
+            except Exception as e:
+                LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} and {lbfn} due to: {e}")
+                Path(lbfn).unlink(missing_ok=True)
+                label = self.lread(lbf)
+        else:
+            label = self.lread(lbf)
 
         # Add to buffer if training with augmentations
         if self.augment:
@@ -204,10 +250,6 @@ class DatasetBase(Dataset):
 
         return data, label
 
-    def update_labels_info(self, label) -> Union[np.ndarray, None]:
-        """Custom your label format here."""
-        return label
-
     def check_labels_cache_ram(self, safety_margin: float = 0.5) -> bool:
         """Check labels caching requirements vs available memory."""
         b, gb = 0, 1 << 30  # bytes of cached labels, bytes per gigabytes
@@ -215,11 +257,11 @@ class DatasetBase(Dataset):
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            label, label_size = self.label_read(self.label_files[i])
+            label = self.lread(self.label_files[i])
             if label is None:
                 skips += 1
                 continue
-            b += label_size
+            b += label.nbytes
         mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache labels into RAM
         mem = psutil.virtual_memory()
         if mem_required > mem.available:
@@ -274,7 +316,7 @@ class DatasetBase(Dataset):
                 LOGGER.info("Skipping caching data to disk, directory not writeable.")
                 return False
         disk_required = b * self.length / (n - skips) * (1 + safety_margin)  # bytes required to cache data to disk
-        total, used, free = shutil.disk_usage(Path(self.data_files[0]).parent.parent)
+        total, _, free = shutil.disk_usage(Path(self.data_files[0]).parent.parent)
         if disk_required > free:
             self.cache = None
             LOGGER.info(
@@ -285,18 +327,22 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    def label_read(self, path: FilePath) -> tuple[Any, float]:
+    def lread(self, path: FilePath) -> np.ndarray | None:
         """Users implement their own label reading logic, and label format.
 
         Args:
             path (FilePath): label file path.
 
         Returns:
-            tuple[Any, float]: label and the size of label.
+            dict[str, Any] | None: label.
         """
         label = self.fread(path)
-        label_size = asizeof.asizeof(label)
-        return label, label_size
+
+        return label
+
+    def update_labels_info(self, label) -> dict[str, Any]:
+        """Custom your label format here."""
+        return label
 
     @staticmethod
     def fread(path: FilePath) -> np.ndarray | None:
@@ -320,7 +366,7 @@ class DatasetBase(Dataset):
                 return data
 
             elif extension == ".npy":  # numpy
-                data = np.load(path, allow_pickle=True)
+                data = np.load(path)
                 return data
 
             else:

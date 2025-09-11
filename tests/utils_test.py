@@ -1,4 +1,4 @@
 import random
 
-a = random.randint(0, 1)
-print(a)
+a = None
+print(a.nbytes)
