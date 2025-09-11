@@ -9,7 +9,6 @@ import numpy as np
 
 from tqdm import tqdm
 from pathlib import Path
-from pympler import asizeof
 from torch.utils.data import Dataset
 from multiprocessing.pool import ThreadPool
 
