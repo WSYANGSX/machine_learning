@@ -1,4 +1,4 @@
-from typing import Sequence, Literal, overload
+from typing import Sequence, Literal
 
 import cv2
 import torch
@@ -8,20 +8,50 @@ import torch.nn.functional as F
 from machine_learning.types.aliases import FilePath
 
 
-@overload
-def show_image(
-    img: torch.Tensor | np.ndarray,
-    color_mode: Literal["rgb", "gray"],
+def plot_img(
+    img: np.ndarray,
+    color_mode: Literal["rgb", "gray"] = "rgb",
     backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
-): ...
+) -> None:
+    """Plot a single image.
+
+    Args:
+        img (np.ndarray): The image to plot.
+        color_mode (Literal[&quot;rgb&quot;, &quot;gray&quot;], optional): The color mode. Defaults to "rgb".
+        backend (Literal[&quot;pyplot&quot;, &quot;opencv&quot;, &quot;pillow&quot;], optional): The plot backend. Defaults to "pyplot".
+    """
+
+    if img is not None and imgs is not None:
+        raise ValueError("You can not input img and imgs simultaneously.")
+
+    if img is None and imgs is None:
+        raise ValueError("You must provide one of img or imgs parameter.")
+
+    processed_images = []
+
+    if img is not None:  # 单张图片
+        processed_images.append(image_preprocess(img, color_mode))
+
+    if imgs is not None:  # 多张图片
+        imgs = [*imgs]
+        for img in imgs:
+            processed_images.append(image_preprocess(img, color_mode))
+
+    # 显示图像
+    if backend == "opencv":
+        _show_with_opencv(processed_images)
+    elif backend == "pillow":
+        _show_with_pillow(processed_images)
+    else:
+        _show_with_pyplot(processed_images)
 
 
-@overload
-def show_image(
-    imgs: torch.Tensor | np.ndarray,
-    color_mode: Literal["rgb", "gray"],
+def plot_imgs(
+    imgs: np.ndarray,
+    color_mode: Literal["rgb", "gray"] = "rgb",
     backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
-): ...
+) -> None:
+    pass
 
 
 def show_image(
