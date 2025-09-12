@@ -1,10 +1,12 @@
-from typing import Union, Sequence
+from typing import Union, Sequence, Mapping
 
+import cv2
 import math
 import time
 import torch
 import numpy as np
 from copy import deepcopy
+from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
@@ -124,7 +126,7 @@ def rescale_bboxes(
     return bboxes
 
 
-def box_iou(box1, box2, eps=1e-7):
+def box_iou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
     """
     Calculate intersection-over-union (IoU) of boxes. Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
     Based on https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py.
@@ -146,7 +148,15 @@ def box_iou(box1, box2, eps=1e-7):
     return inter / ((a2 - a1).prod(2) + (b2 - b1).prod(2) - inter + eps)
 
 
-def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
+def bbox_iou(
+    box1: torch.Tensor,
+    box2: torch.Tensor,
+    xywh: bool = True,
+    GIoU: bool = False,
+    DIoU: bool = False,
+    CIoU: bool = False,
+    eps: float = 1e-7,
+) -> torch.Tensor:
     """
     Calculates the Intersection over Union (IoU) between bounding boxes.
 
@@ -322,7 +332,7 @@ def compute_ap_single(recall, precision):
     return np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
 
 
-def _get_covariance_matrix(boxes):
+def _get_covariance_matrix(boxes: torch.Tensor) -> torch.Tensor:
     """
     Generating covariance matrix from obbs.
 
@@ -342,7 +352,7 @@ def _get_covariance_matrix(boxes):
     return a * cos2 + b * sin2, a * sin2 + b * cos2, (a - b) * cos * sin
 
 
-def batch_probiou(obb1, obb2, eps=1e-7):
+def batch_probiou(obb1: torch.Tensor | np.ndarray, obb2: torch.Tensor | np.ndarray, eps: float = 1e-7) -> torch.Tensor:
     """
     Calculate the prob IoU between oriented bounding boxes, https://arxiv.org/pdf/2106.06072v1.pdf.
 
@@ -376,7 +386,7 @@ def batch_probiou(obb1, obb2, eps=1e-7):
     return 1 - hd
 
 
-def nms_rotated(boxes, scores, threshold=0.45):
+def nms_rotated(boxes: torch.Tensor, scores: torch.Tensor, threshold: float | None = 0.45):
     """
     NMS for oriented bounding boxes using probiou and fast-nms.
 
@@ -407,11 +417,11 @@ def non_max_suppression(
     labels: list[list[Union[int, float, torch.Tensor]]] = (),
     max_det: int = 300,
     nc: int = 0,  # number of classes (optional)
-    max_time_img=0.05,
-    max_nms=30000,
-    max_wh=7680,
-    in_place=True,
-    rotated=False,
+    max_time_img: float = 0.05,
+    max_nms: int = 30000,
+    max_wh: int = 7680,
+    in_place: bool = True,
+    rotated: bool = False,
 ) -> list[torch.Tensor]:
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
@@ -543,7 +553,7 @@ def match_predictions(
     iou: torch.Tensor,
     iouv: torch.Tensor,
     use_scipy: bool = False,
-):
+) -> torch.Tensor:
     """
     Matches predictions to ground truth objects (pred_classes, true_classes) using IoU.
 
@@ -585,3 +595,103 @@ def match_predictions(
                     matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
                 correct[matches[:, 1].astype(int), i] = True
     return torch.tensor(correct, dtype=torch.bool, device=pred_classes.device)
+
+
+def class_maps(classes: list[str]) -> dict[int, str]:
+    """Create a category mapping from the category list.
+    Args:
+        classes (list[str]): The class names list.
+
+    Returns:
+        dict[int, str]: The mapping from class ids to names.
+    """
+    return {i: classes[i] for i in range(len(classes))}
+
+
+def add_bbox(
+    img: np.ndarray,
+    bbox: np.ndarray,
+    class_name: str,
+    color: tuple[int] = (255, 0, 0),
+    thickness: int = 2,
+) -> np.ndarray:
+    """Add a single bounding box with class name to the image.
+
+    Args:
+        img (np.ndarray): The image to which a bounding box is to be added.
+        bbox (np.ndarray): The bounding box parameters with voc format (x_min, y_min, x_max, y_max).
+        class_name (str): The category name of the object in the bounding box.
+        color (tuple[int]): The color of the bounding box. Default to red.
+        thickness (int): The thickness of the bounding box. Default to 2.
+
+    Returns:
+        np.ndarray: The image with bounding box.
+    """
+    img_copy = deepcopy(img)
+    h, w = img_copy.shape[:2]
+    x_min, y_min, x_max, y_max = map(int, bbox)
+
+    # Add bbox
+    cv2.rectangle(img_copy, (x_min, y_min), (x_max, y_max), color=color, thickness=thickness)
+
+    # Obtain the text size
+    ((text_width, text_height), _) = cv2.getTextSize(class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+    label_height = int(1.3 * text_height)
+
+    # Intelligently adjust the label position (to prevent exceeding the image boundary)
+    if y_min - label_height < 0:  # Insufficient space at the top
+        # Place the label at the bottom inside the bounding box
+        label_y_top = y_min
+        label_y_bottom = label_y_top + label_height
+        text_y = label_y_top + label_height - int(0.3 * text_height)
+    else:  # Normal condition
+        # Place the label at the top of the bounding box
+        label_y_top = y_min - label_height
+        label_y_bottom = y_min
+        text_y = y_min - int(0.3 * text_height)
+
+    # Make sure the label does not extend beyond the bottom of the image
+    if label_y_bottom > h:
+        label_y_top = max(0, h - label_height)
+        label_y_bottom = h
+        text_y = label_y_bottom - int(0.3 * text_height)
+
+    # Draw the label background and text
+    cv2.rectangle(img_copy, (x_min, label_y_top), (x_min + text_width, label_y_bottom), color, -1)
+    cv2.putText(
+        img_copy,
+        text=class_name,
+        org=(x_min, text_y),
+        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+        fontScale=0.35,
+        color=(255, 255, 255),
+        lineType=cv2.LINE_AA,
+    )
+
+    return img_copy
+
+
+def visualize_img_bboxes(
+    img: np.ndarray,
+    bboxes: np.ndarray,
+    class_ids: Sequence[int] | np.ndarray,
+    class_maps: Sequence[str] | Mapping[int, str],
+    cmap: str | None = None,
+) -> None:
+    """Plot the image with bounding boxes.
+
+    Args:
+        img (np.ndarray): The image to which bounding boxes are to be added.
+        bboxes (np.ndarray): The Bounding boxes parameters with voc format (x_min, y_min, x_max, y_max).
+        class_ids (Sequence[int] | np.ndarray): The class numbers of objects in the bounding box.
+        class_maps (Sequence[str] | Mapping[int, str]): The names corresponding to the class numbers of objects.
+        cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
+    """
+    assert len(class_ids) == len(bboxes), "The length of bboxes and class_ids must be the same."
+    for bbox, class_id in zip(bboxes, class_maps):
+        class_name = class_maps[class_id]
+        img = add_bbox(img, bbox, class_name)
+    plt.figure(figsize=(12, 12))
+    plt.axis("off")
+    plt.imshow(img, cmap)
+    plt.show()
