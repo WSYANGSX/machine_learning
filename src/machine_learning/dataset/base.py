@@ -108,7 +108,7 @@ class DatasetBase(Dataset):
     def get_labels_np(self, labels: np.ndarray) -> None:
         """Get labels from matrix input to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching labels from ndarray to RAM...")
+        LOGGER.info("Caching labels from matrix input to RAM...")
         pbar = tqdm(enumerate(labels), total=self.length)
         for i, label in pbar:
             label = self.label_format(label)
@@ -128,7 +128,7 @@ class DatasetBase(Dataset):
     def cache_data_np(self, data: np.ndarray) -> None:
         """Cache np.ndarray format data to buffers"""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching matrix input data to RAM...")
+        LOGGER.info("Caching data from matrix input to RAM...")
         pbar = tqdm(enumerate(data), total=self.length)
         for i, data in pbar:
             self.data[i] = data
