@@ -1,6 +1,7 @@
+from PIL import Image
 from machine_learning.utils import load_cfg_from_yaml
 from machine_learning.dataset import DatasetBase
-from machine_learning.dataset.parsers import CocoTestParser, MinistParser
+from machine_learning.dataset.parsers import MinistParser
 
 
 # data_cfg = load_cfg_from_yaml(
@@ -17,5 +18,7 @@ parser = MinistParser(data_cfg)
 res = parser.parse()
 
 dataset = DatasetBase(data=res["train"]["imgs"], labels=res["train"]["labels"])
-for i in range(10):
-    print(dataset.labels[i])
+
+
+Image.fromarray(dataset.data[512]).show()
+print(dataset.labels[512])

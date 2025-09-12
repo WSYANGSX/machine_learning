@@ -62,8 +62,19 @@ class DatasetBase(Dataset):
         self.data_npy_files = [None] * self.length
 
         # cache labels and data
-        self.get_labels(labels)
-        if isinstance(data, list):
+        # labels
+        if isinstance(labels, np.ndarray):
+            self.get_labels_np(labels)
+        elif isinstance(labels, list):
+            self.label_files = labels[: self.length]
+            self.get_labels(labels)
+        else:
+            raise TypeError(f"The input labels must be of np.ndarray or list type, but got {type(data)}.")
+
+        # data
+        if isinstance(data, np.ndarray):
+            self.cache_data_np(data)
+        elif isinstance(data, list):
             self.data_files = data[: self.length]
             self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
 
@@ -72,6 +83,8 @@ class DatasetBase(Dataset):
                 self.cache_data()
             elif self.cache == "disk" and self.check_cache_disk():
                 self.cache_data()
+        else:
+            raise TypeError(f"The input data must be of np.ndarray or list type, but got {type(data)}.")
 
         # Buffer thread for data fusion
         self.buffer = []
@@ -80,39 +93,48 @@ class DatasetBase(Dataset):
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
 
-    def get_labels(self, labels: np.ndarray | list[str]) -> list[dict[str, Any]]:
-        """Get labels"""
+    def get_labels(self) -> None:
+        """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        fcn = self.cache_labels_np if isinstance(labels, np.ndarray) else self.cache_labels
         LOGGER.info("Caching labels to RAM...")
         with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, zip(range(self.length), labels))
+            results = pool.imap(self.cache_labels, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
             for _, size in pbar:
                 b += size
-                pbar.desc = f"Caching labels ({b / gb:.1f}GB )"
+                pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
             pbar.close()
 
-    def cache_labels_np(self, i: int, labels: np.ndarray) -> float:
-        """
-        Customize your own format here.
+    def get_labels_np(self, labels: np.ndarray) -> None:
+        """Get labels from matrix input to buffers."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info("Caching labels from ndarray to RAM...")
+        pbar = tqdm(enumerate(labels), total=self.length)
+        for i, label in pbar:
+            label = self.label_format(label)
+            self.labels[i] = label
+            b += asizeof.asizeof(self.labels[i])
+            pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
+        pbar.close()
 
-        Note:
-            Ensure output is a dictionary: dict(label=label, ...)
-        """
-        label = {"label": labels[i]}
-        self.labels[i] = label
-
-        return asizeof.asizeof(label)
-
-    def cache_labels(self, i: int, labels: list[str]) -> float:
+    def cache_labels(self, i: int) -> float:
         """Cache label from paths to ram for faster loading."""
-        self.label_files = labels[: self.length]
-
         f = self.label_files[i]
         label = self.lread(f)
+        label = self.label_format(label)
 
         return asizeof.asizeof(label)
+
+    def cache_data_np(self, data: np.ndarray) -> None:
+        """Cache np.ndarray format data to buffers"""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info("Caching matrix input data to RAM...")
+        pbar = tqdm(enumerate(data), total=self.length)
+        for i, data in pbar:
+            self.data[i] = data
+            b += self.data[i].nbytes
+            pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
+        pbar.close()
 
     def cache_data(self) -> None:
         """Cache data to memory or disk."""
@@ -124,7 +146,7 @@ class DatasetBase(Dataset):
             pbar = tqdm(enumerate(results), total=self.length)
             for _, size in pbar:
                 b += size
-                pbar.desc = f"Caching data ({b / gb:.1f}GB {storage})"
+                pbar.desc = f"Caching data ({b / gb:.5f}GB {storage})"
             pbar.close()
 
     def cache_data_to_ram(self, i: int) -> float:
@@ -307,6 +329,11 @@ class DatasetBase(Dataset):
             LOGGER.error(f"Could not read file '{path}': {e}")
             return None
 
+    def label_format(self, label: np.ndarray) -> dict[str, Any]:
+        """format the label from np.ndarray to a custom form."""
+        label = {"label": label}  # Customize
+        return label
+
     def build_transforms(self, hyp=None):
         """
         Users can customize augmentations here.
@@ -321,4 +348,4 @@ class DatasetBase(Dataset):
                 return Compose([])
             ```
         """
-        pass
+        ...
