@@ -9,6 +9,8 @@ import numpy as np
 
 from tqdm import tqdm
 from pathlib import Path
+from copy import deepcopy
+from pympler import asizeof
 from torch.utils.data import Dataset
 from multiprocessing.pool import ThreadPool
 
@@ -50,7 +52,26 @@ class DatasetBase(Dataset):
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
         self.length = math.ceil(len(labels) * self.fraction)
 
-        self.init_cache(data, labels)
+        # init buffers
+        # labels
+        self.labels = [None] * self.length
+        self.label_files = [None] * self.length
+        # data
+        self.data = [None] * self.length
+        self.data_files = [None] * self.length
+        self.data_npy_files = [None] * self.length
+
+        # cache labels and data
+        self.get_labels(labels)
+        if isinstance(data, list):
+            self.data_files = data[: self.length]
+            self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
+
+            # cache data
+            if self.cache == "ram" and self.check_cache_ram():
+                self.cache_data()
+            elif self.cache == "disk" and self.check_cache_disk():
+                self.cache_data()
 
         # Buffer thread for data fusion
         self.buffer = []
@@ -59,44 +80,39 @@ class DatasetBase(Dataset):
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
 
-    def init_cache(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
-        # buffers
-        self.data = [None] * self.length
-        self.labels = [None] * self.length
-        self.data_files = [None] * self.length
-        self.label_files = [None] * self.length
-        self.data_npy_files = [None] * self.length
-        self.label_npy_files = [None] * self.length
+    def get_labels(self, labels: np.ndarray | list[str]) -> list[dict[str, Any]]:
+        """Get labels"""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn = self.cache_labels_np if isinstance(labels, np.ndarray) else self.cache_labels
+        LOGGER.info("Caching labels to RAM...")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, zip(range(self.length), labels))
+            pbar = tqdm(enumerate(results), total=self.length)
+            for _, size in pbar:
+                b += size
+                pbar.desc = f"Caching labels ({b / gb:.1f}GB )"
+            pbar.close()
 
-        # Cache data (options are cache = True, False, None, "ram", "disk")
-        if isinstance(data, np.ndarray):  # full load mode, cache with ram
-            self.cache_np(data, labels)
+    def cache_labels_np(self, i: int, labels: np.ndarray) -> float:
+        """
+        Customize your own format here.
 
-        if isinstance(data, list):
-            self.data_files = data[: self.length]
-            self.label_files = labels[: self.length]
-            self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
-            self.label_npy_files = [Path(f).with_suffix(".npy") for f in self.label_files]
+        Note:
+            Ensure output is a dictionary: dict(label=label, ...)
+        """
+        label = {"label": labels[i]}
+        self.labels[i] = label
 
-            # cache labels
-            self.labels_to_ram = self.check_labels_cache_ram()
-            self.cache_labels()  # Always prioritize caching to ram, unless there is really not enough memory space
+        return asizeof.asizeof(label)
 
-            # cache data
-            if self.cache == "ram" and self.check_data_cache_ram():
-                self.cache_data()
-            elif self.cache == "disk" and self.check_data_cache_disk():
-                self.cache_data()
+    def cache_labels(self, i: int, labels: list[str]) -> float:
+        """Cache label from paths to ram for faster loading."""
+        self.label_files = labels[: self.length]
 
-    def cache_np(self, data: np.ndarray, labels: np.ndarray) -> None:
-        """Cache np.ndarray format data to buffers"""
-        pbar = tqdm(
-            enumerate(zip(data, labels)), total=self.length, desc="Caching data and labels from ndarray to buffers..."
-        )
-        for i, (dt, lb) in pbar:
-            self.data[i] = dt
-            self.labels[i] = lb
-        pbar.close()
+        f = self.label_files[i]
+        label = self.lread(f)
+
+        return asizeof.asizeof(label)
 
     def cache_data(self) -> None:
         """Cache data to memory or disk."""
@@ -107,10 +123,7 @@ class DatasetBase(Dataset):
             results = pool.imap(fcn, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
             for _, size in pbar:
-                if self.cache == "disk":  # 'disk'
-                    b += size
-                else:  # 'ram'
-                    b += size
+                b += size
                 pbar.desc = f"Caching data ({b / gb:.1f}GB {storage})"
             pbar.close()
 
@@ -124,9 +137,9 @@ class DatasetBase(Dataset):
             except Exception as e:
                 LOGGER.warning(f"Removing corrupt *.npy image file {fn} due to: {e}")
                 Path(fn).unlink(missing_ok=True)
-                data = self.fread(f)
+                data = self.dread(f)
         else:
-            data = self.fread(f)
+            data = self.dread(f)
 
         if data is not None:
             self.data[i] = data
@@ -138,64 +151,16 @@ class DatasetBase(Dataset):
         """Cache data from paths to disk with as an .npy file for faster loading."""
         f = self.data_npy_files[i]
         if not f.exists():
-            data = self.fread(self.data_files[i])
+            data = self.dread(self.data_files[i])
             if data is not None:
                 np.save(f, data, allow_pickle=False)
                 return self.data_npy_files[i].stat().st_size
             else:
                 return 0.0
 
-    def cache_labels(self) -> None:
-        """Cache labels to memory or disk."""
-        b, gb = 0, 1 << 30  # bytes of cached labels, bytes per gigabytes
-        fcn, storage = (self.cache_label_to_ram, "RAM") if self.labels_to_ram else (self.cache_label_to_disk, "Disk")
-        LOGGER.info(f"Caching labels to {storage}...")
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, range(self.length))
-            pbar = tqdm(enumerate(results), total=self.length)
-            for i, _ in pbar:
-                if not self.labels_to_ram:  # 'disk'
-                    b += self.label_npy_files[i].stat().st_size
-                else:  # 'ram'
-                    b += self.labels[i].nbytes
-                pbar.desc = f"Caching labels ({b / gb:.1f}GB {storage})"
-            pbar.close()
-
-    def cache_label_to_ram(self, i: int) -> None:
-        """Cache label from paths or .npy file to ram for faster loading."""
-        f, fn = self.label_files[i], self.label_npy_files[i]
-
-        if fn.exists():
-            try:
-                label = np.load(fn)
-            except Exception as e:
-                LOGGER.warning(f"Removing corrupt *.npy image file {fn} due to: {e}")
-                Path(fn).unlink(missing_ok=True)
-                label = self.lread(f)
-        else:
-            label = self.lread(f)
-
-        if label is not None:
-            self.labels[i] = label
-            return self.labels[i].nbytes
-        else:
-            return 0.0
-
-    def cache_label_to_disk(self, i: int) -> None:
-        """Cache label from paths to disk with as an .npy file for faster loading."""
-        f = self.label_npy_files[i]
-        if not f.exists():
-            label = self.lread(self.label_files[i])
-            if label is not None:
-                np.save(f, label, allow_pickle=False)
-                return self.label_npy_files[i].stat().st_size
-            else:
-                return 0.0
-
-    def load(self, i: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
+    def load_data(self, i: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
         dt, dtf, dtfn = self.data[i], self.data_files[i], self.data_npy_files[i]
-        lb, lbf, lbfn = self.labels[i], self.label_files[i], self.label_npy_files[i]
 
         # load data
         if dt is not None:  # cached in RAM
@@ -204,36 +169,22 @@ class DatasetBase(Dataset):
             try:
                 data = np.load(dtfn)
             except Exception as e:
-                LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} and {lbfn} due to: {e}")
+                LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
                 Path(dtfn).unlink(missing_ok=True)
-                data = self.fread(dtf)
+                data = self.dread(dtf)
         else:
-            data = self.fread(dtf)
-
-        # load label
-        if lb is not None:  # cached in RAM
-            label = lb
-        elif lbfn.exists():  # cached in Disk
-            try:
-                label = np.load(lbfn)
-            except Exception as e:
-                LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} and {lbfn} due to: {e}")
-                Path(lbfn).unlink(missing_ok=True)
-                label = self.lread(lbf)
-        else:
-            label = self.lread(lbf)
+            data = self.dread(dtf)
 
         # Add to buffer if training with augmentations
         if self.augment:
             self.data[i] = data
-            self.labels[i] = label  # load to buffer for faster augment
             self.buffer.append(i)
             if len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
                 j = self.buffer.pop(0)
                 if self.cache != "ram":
-                    self.data[j], self.labels[j] = None, None
+                    self.data[j] = None
 
-        return data, label
+        return data
 
     def __len__(self):
         """Returns the length of the labels list for the dataset."""
@@ -244,42 +195,20 @@ class DatasetBase(Dataset):
         return self.transforms(self.get_data_and_label(index))
 
     def get_data_and_label(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
-        data, label = self.load(index)
+        label = deepcopy(self.labels[index])
+        data = self.load_data(index)
         label = self.update_labels_info(label)
 
         return data, label
 
-    def check_labels_cache_ram(self, safety_margin: float = 0.5) -> bool:
-        """Check labels caching requirements vs available memory."""
-        b, gb = 0, 1 << 30  # bytes of cached labels, bytes per gigabytes
-        n = min(self.length, 100)  # extrapolate from 100 random labels
-        skips = 0
-        for _ in range(n):
-            i = random.randint(0, self.length - 1)
-            label = self.lread(self.label_files[i])
-            if label is None:
-                skips += 1
-                continue
-            b += label.nbytes
-        mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache labels into RAM
-        mem = psutil.virtual_memory()
-        if mem_required > mem.available:
-            LOGGER.info(
-                f"{mem_required / gb:.1f}GB RAM required to cache labels "
-                f"with {int(safety_margin * 100)}% safety margin but only "
-                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching labels."
-            )
-            return False
-        return True
-
-    def check_data_cache_ram(self, safety_margin: float = 0.5) -> bool:
+    def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
         """Check data caching requirements vs available memory."""
         b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
         n = min(self.length, 100)  # extrapolate from 100 random data
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            data = self.fread(self.data_files[i])
+            data = self.dread(self.data_files[i])
             if data is None:
                 skips += 1
                 continue
@@ -296,7 +225,7 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    def check_data_cache_disk(self, safety_margin: float = 0.5) -> bool:
+    def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
         """Check data caching requirements vs available disk space."""
         import shutil
 
@@ -305,7 +234,7 @@ class DatasetBase(Dataset):
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            data = self.fread(self.data_files[i])
+            data = self.dread(self.data_files[i])
             if data is None:
                 skips += 1
                 continue
@@ -326,16 +255,16 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    def lread(self, path: FilePath) -> np.ndarray | None:
+    def lread(self, path: FilePath) -> dict[str, Any]:
         """Users implement their own label reading logic, and label format.
 
         Args:
             path (FilePath): label file path.
 
         Returns:
-            dict[str, Any] | None: label.
+            dict[str, Any]: label.
         """
-        label = self.fread(path)
+        label = self.dread(path)
 
         return label
 
@@ -344,7 +273,7 @@ class DatasetBase(Dataset):
         return label
 
     @staticmethod
-    def fread(path: FilePath) -> np.ndarray | None:
+    def dread(path: FilePath) -> np.ndarray | None:
         path = Path(path)
         extension = path.suffix.lower()
 

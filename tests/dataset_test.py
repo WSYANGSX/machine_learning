@@ -17,4 +17,5 @@ parser = MinistParser(data_cfg)
 res = parser.parse()
 
 dataset = DatasetBase(data=res["train"]["imgs"], labels=res["train"]["labels"])
-print(dataset.length)
+for i in range(10):
+    print(dataset.labels[i])
