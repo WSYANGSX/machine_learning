@@ -91,7 +91,7 @@ def add_bbox(
 
 
 def visualize_img_with_bboxes(
-    image: np.ndarray,
+    img: np.ndarray,
     bboxes: np.ndarray,
     category_ids: Sequence[int],
     category_id_to_name: Sequence[str] | Mapping[int, str],
@@ -105,7 +105,7 @@ def visualize_img_with_bboxes(
         category_ids (Sequence[int]): 边界框中物体的类别编号序列.
         category_id_to_name (Sequence[str]): 边界框中物体的类别编号对应的名称序列.
     """
-    img = image.copy()
+    img = img.copy()
     for bbox, category_id in zip(bboxes, category_ids):
         class_name = category_id_to_name[category_id]
         img = add_bbox(img, bbox, class_name)

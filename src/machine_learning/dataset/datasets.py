@@ -4,7 +4,6 @@ import cv2
 import math
 import numpy as np
 from pathlib import Path
-from copy import deepcopy
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
@@ -58,6 +57,7 @@ class YoloDataset(DatasetBase):
         self.pad = pad
         self.single_cls = single_cls
         self.classes = classes
+
         self.task = task
         self.use_segments = self.task == "segment"
         self.use_keypoints = self.task == "pose"
@@ -76,6 +76,9 @@ class YoloDataset(DatasetBase):
         if self.rect:
             assert self.batch_size is not None
             self.set_rectangle()
+
+    def label_format(self, label):
+        return super().label_format(label)
 
     def set_rectangle(self):
         """Sets the shape of bounding boxes for YOLO detections as rectangles."""

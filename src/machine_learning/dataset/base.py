@@ -5,6 +5,7 @@ import cv2
 import math
 import random
 import psutil
+import warnings
 import numpy as np
 
 from tqdm import tqdm
@@ -67,7 +68,7 @@ class DatasetBase(Dataset):
             self.get_labels_np(labels)
         elif isinstance(labels, list):
             self.label_files = labels[: self.length]
-            self.get_labels(labels)
+            self.get_labels()
         else:
             raise TypeError(f"The input labels must be of np.ndarray or list type, but got {type(data)}.")
 
@@ -96,7 +97,7 @@ class DatasetBase(Dataset):
     def get_labels(self) -> None:
         """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching labels to RAM...")
+        LOGGER.info("Caching labels...")
         with ThreadPool(NUM_THREADS) as pool:
             results = pool.imap(self.cache_labels, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
@@ -108,7 +109,7 @@ class DatasetBase(Dataset):
     def get_labels_np(self, labels: np.ndarray) -> None:
         """Get labels from matrix input to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching labels from matrix input to RAM...")
+        LOGGER.info("Caching labels from matrix input...")
         pbar = tqdm(enumerate(labels), total=self.length)
         for i, label in pbar:
             label = self.label_format(label)
@@ -122,13 +123,14 @@ class DatasetBase(Dataset):
         f = self.label_files[i]
         label = self.lread(f)
         label = self.label_format(label)
+        self.labels[i] = label
 
         return asizeof.asizeof(label)
 
     def cache_data_np(self, data: np.ndarray) -> None:
         """Cache np.ndarray format data to buffers"""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching data from matrix input to RAM...")
+        LOGGER.info("Caching data from matrix input...")
         pbar = tqdm(enumerate(data), total=self.length)
         for i, data in pbar:
             self.data[i] = data
@@ -159,9 +161,9 @@ class DatasetBase(Dataset):
             except Exception as e:
                 LOGGER.warning(f"Removing corrupt *.npy image file {fn} due to: {e}")
                 Path(fn).unlink(missing_ok=True)
-                data = self.dread(f)
+                data = self.file_read(f)
         else:
-            data = self.dread(f)
+            data = self.file_read(f)
 
         if data is not None:
             self.data[i] = data
@@ -173,7 +175,7 @@ class DatasetBase(Dataset):
         """Cache data from paths to disk with as an .npy file for faster loading."""
         f = self.data_npy_files[i]
         if not f.exists():
-            data = self.dread(self.data_files[i])
+            data = self.file_read(self.data_files[i])
             if data is not None:
                 np.save(f, data, allow_pickle=False)
                 return self.data_npy_files[i].stat().st_size
@@ -193,9 +195,9 @@ class DatasetBase(Dataset):
             except Exception as e:
                 LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
                 Path(dtfn).unlink(missing_ok=True)
-                data = self.dread(dtf)
+                data = self.file_read(dtf)
         else:
-            data = self.dread(dtf)
+            data = self.file_read(dtf)
 
         # Add to buffer if training with augmentations
         if self.augment:
@@ -214,7 +216,10 @@ class DatasetBase(Dataset):
 
     def __getitem__(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         """Returns transformed label information for given index."""
-        return self.transforms(self.get_data_and_label(index))
+        if self.transforms is not None:
+            return self.transforms(self.get_data_and_label(index))
+        else:
+            return self.get_data_and_label(index)
 
     def get_data_and_label(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         label = deepcopy(self.labels[index])
@@ -230,7 +235,7 @@ class DatasetBase(Dataset):
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            data = self.dread(self.data_files[i])
+            data = self.file_read(self.data_files[i])
             if data is None:
                 skips += 1
                 continue
@@ -256,7 +261,7 @@ class DatasetBase(Dataset):
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            data = self.dread(self.data_files[i])
+            data = self.file_read(self.data_files[i])
             if data is None:
                 skips += 1
                 continue
@@ -286,7 +291,7 @@ class DatasetBase(Dataset):
         Returns:
             dict[str, Any]: label.
         """
-        label = self.dread(path)
+        label = self.file_read(path)
 
         return label
 
@@ -295,7 +300,7 @@ class DatasetBase(Dataset):
         return label
 
     @staticmethod
-    def dread(path: FilePath) -> np.ndarray | None:
+    def file_read(path: FilePath) -> np.ndarray | None:
         path = Path(path)
         extension = path.suffix.lower()
 
@@ -305,14 +310,16 @@ class DatasetBase(Dataset):
 
         try:
             if extension in IMG_TYPES:  # imgs
-                data = cv2.imread(str(path))
+                data = cv2.imread(str(path), cv2.IMREAD_COLOR_RGB)  # rgb
                 if data is None:
                     LOGGER.error("Image Not Found.")
                     return None
                 return data
 
             elif extension == ".txt":  # text
-                data = np.loadtxt(path, dtype=np.float32)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    data = np.loadtxt(path, dtype=np.float32)
                 return data
 
             elif extension == ".npy":  # numpy
