@@ -8,104 +8,146 @@ import torch.nn.functional as F
 from machine_learning.types.aliases import FilePath
 
 
-def plot_img(
-    img: np.ndarray,
-    color_mode: Literal["rgb", "gray"] = "rgb",
+def imgs_tensor2np(imgs: torch.Tensor, bs: bool | None = None) -> np.ndarray:
+    """Convert tensor format images to numpy arrays and adjust the format.
+
+    Args:
+        imgs (torch.Tensor): Input tensor of shape (B, C, H, W) or (C, H, W) or (B, H, W) or (H, W)
+        bs (bool | None): Whether the input tensor include a batch (multiple images). Default to None.
+
+    Returns:
+        Numpy array with shape (B, H, W, C) or (H, W, C) or (H, W) with values in range [0, 255] and dtype uint8.
+    """
+    # Input validation
+    if not isinstance(imgs, torch.Tensor):
+        raise TypeError(f"Expected torch.Tensor, got {type(imgs)}.")
+
+    # Convert to numpy
+    imgs = imgs.detach().cpu().numpy()
+
+    # Determine if input has batch dimension
+    if bs is None:
+        # Auto-detect: if 4D or 3D with first dim > 4 (unlikely to be channels)
+        bs = imgs.ndim == 4 or (imgs.ndim == 3 and imgs.shape[0] > 4)
+
+    # Channel-first to channel-last conversion
+    if imgs.ndim == 4:
+        # (B, C, H, W) -> (B, H, W, C)
+        imgs = imgs.transpose(0, 2, 3, 1)
+    elif imgs.ndim == 3:
+        if bs:
+            # Batch of grayscale images: (B, H, W) -> (B, H, W, 1)
+            imgs = imgs[..., np.newaxis]
+        else:
+            # Single image: (C, H, W) -> (H, W, C)
+            imgs = imgs.transpose(1, 2, 0)
+    elif imgs.ndim == 2:
+        # Single grayscale image: (H, W) -> keep as is
+        pass
+    else:
+        raise ValueError(f"Unsupported tensor shape: {imgs.shape}.")
+
+    # Normalize and convert to uint8
+    if np.issubdtype(imgs.dtype, np.floating):
+        if np.min(imgs) >= 0 and np.max(imgs) <= 1:
+            imgs = (imgs * 255).astype(np.uint8)
+        else:
+            imgs = np.clip(imgs, 0, 255).astype(np.uint8)
+    else:
+        imgs = np.clip(imgs, 0, 255).astype(np.uint8)
+
+    return imgs
+
+
+def imgs_np2tensor(imgs: np.ndarray, bs: bool | None = None) -> torch.Tensor:
+    """Convert numpy array images to tensor format and adjust the format.
+
+    Args:
+        imgs (np.ndarray): Input array of shape (B, H, W, C) or (B, H, W) or (H, W, C) or (H, W)
+        bs (bool | None): Whether the input tensor include a batch (multiple images). Default to None.
+
+    Returns:
+        torch.Tensor: Tensor with shape (B, C, H, W) or (C, H, W) or (H, W) with values normalized to [0, 1] and dtype float32.
+    """
+    # Input validation
+    if not isinstance(imgs, np.ndarray):
+        raise TypeError(f"Expected np.ndarray, got {type(imgs)}.")
+
+    # Make a copy to avoid modifying the original array
+    imgs = imgs.copy()
+
+    # Determine if output should have batch dimension
+    if bs is None:
+        # Auto-detect: if 4D or 3D with first dim > 4 (unlikely to be height)
+        bs = imgs.ndim == 4 or (imgs.ndim == 3 and imgs.shape[0] > 4)
+
+    # Process value range and convert to float32
+    if np.issubdtype(imgs.dtype, np.integer):
+        # Integer types [0, 255] -> normalized float [0, 1]
+        imgs = imgs.astype(np.float32) / 255.0
+    elif np.issubdtype(imgs.dtype, np.floating):
+        if np.min(imgs) < 0 or np.max(imgs) > 1:
+            # Normalize to [0, 1] if not already normalized
+            imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
+        imgs = imgs.astype(np.float32)
+
+    # Channel-last to channel-first conversion
+    if imgs.ndim == 4:
+        # (B, H, W, C) -> (B, C, H, W)
+        imgs = imgs.transpose(0, 3, 1, 2)
+    elif imgs.ndim == 3:
+        if bs:
+            # batch images: (B, H, W) -> (B, 1, H, W)
+            imgs = np.expand_dims(imgs, axis=1)
+        else:
+            # Single image: (H, W, C) -> (C, H, W)
+            imgs = imgs.transpose(2, 0, 1)
+    elif imgs.ndim == 2:
+        # Single grayscale image: (H, W) -> (1, H, W)
+        imgs = np.expand_dims(imgs, axis=0)
+
+    else:
+        raise ValueError(f"Unsupported array shape: {imgs.shape}.")
+
+    # Convert to torch tensor
+    return torch.from_numpy(imgs)
+
+
+def plot_imgs(
+    imgs: list[np.ndarray],
+    cmap: str | None = "rgb",
     backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
 ) -> None:
     """Plot a single image.
 
     Args:
-        img (np.ndarray): The image to plot.
-        color_mode (Literal[&quot;rgb&quot;, &quot;gray&quot;], optional): The color mode. Defaults to "rgb".
+        imgs (np.ndarray): The images to plot.
+        cmap: (str | None = None):cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
         backend (Literal[&quot;pyplot&quot;, &quot;opencv&quot;, &quot;pillow&quot;], optional): The plot backend. Defaults to "pyplot".
     """
+    processed_images = [img_preprocess(img, cmap) for img in imgs]
 
-    if img is not None and imgs is not None:
-        raise ValueError("You can not input img and imgs simultaneously.")
-
-    if img is None and imgs is None:
-        raise ValueError("You must provide one of img or imgs parameter.")
-
-    processed_images = []
-
-    if img is not None:  # 单张图片
-        processed_images.append(image_preprocess(img, color_mode))
-
-    if imgs is not None:  # 多张图片
-        imgs = [*imgs]
-        for img in imgs:
-            processed_images.append(image_preprocess(img, color_mode))
-
-    # 显示图像
     if backend == "opencv":
-        _show_with_opencv(processed_images)
+        _plot_with_opencv(processed_images)
     elif backend == "pillow":
-        _show_with_pillow(processed_images)
+        _plot_with_pillow(processed_images)
     else:
-        _show_with_pyplot(processed_images)
+        _plot_with_pyplot(processed_images)
 
 
-def plot_imgs(
-    imgs: np.ndarray,
-    color_mode: Literal["rgb", "gray"] = "rgb",
-    backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
-) -> None:
-    pass
+def img_preprocess(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
+    """Preprocess the image, including value range normalization, channel order adjustment and color mode conversion.
 
+    Args:
+        img (np.ndarray): The input image.
+        cmap: (str | None = None):cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
 
-def show_image(
-    img: torch.Tensor | np.ndarray | None = None,
-    imgs: Sequence[torch.Tensor | np.ndarray] | torch.Tensor | np.ndarray | None = None,
-    color_mode: Literal["rgb", "gray"] = "rgb",
-    backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
-):
+    Returns:
+        np.ndarray: The preprocessed numpy array image.
     """
-    显示单个或多个图像
-
-    参数说明:
-    figure - 单个图像 (Tensor 或 ndarray)
-    figures - 多个图像列表、元组等或者numpy、Tensor数组
-    color_mode - 颜色模式: "rgb" 或 "gray"
-    backend - 显示后端: "pyplot" | "opencv" | "pillow"
-
-    注意: figure 和 figures 参数互斥，只能使用其中一个
-    """
-
-    if img is not None and imgs is not None:
-        raise ValueError("You can not input img and imgs simultaneously.")
-
-    if img is None and imgs is None:
-        raise ValueError("You must provide one of img or imgs parameter.")
-
-    processed_images = []
-
-    if img is not None:  # 单张图片
-        processed_images.append(image_preprocess(img, color_mode))
-
-    if imgs is not None:  # 多张图片
-        imgs = [*imgs]
-        for img in imgs:
-            processed_images.append(image_preprocess(img, color_mode))
-
-    # 显示图像
-    if backend == "opencv":
-        _show_with_opencv(processed_images)
-    elif backend == "pillow":
-        _show_with_pillow(processed_images)
-    else:
-        _show_with_pyplot(processed_images)
-
-
-def image_preprocess(img: torch.Tensor | np.ndarray, color_mode: Literal["gray", "rgb"]) -> np.ndarray:
-    if isinstance(img, torch.Tensor):
-        img = img.detach().cpu().numpy()
-
-    # 确保是numpy数组
     if not isinstance(img, np.ndarray):
-        raise TypeError(f"不支持的图像类型: {type(img)}")
+        raise TypeError(f"Expected np.ndarray, got {type(img)}.")
 
-    # 处理值范围 (自动检测并归一化到[0, 255])
     if img.dtype == np.float32 or img.dtype == np.float64:
         if img.min() >= 0 and img.max() <= 1:
             img = (img * 255).astype(np.uint8)
@@ -113,91 +155,134 @@ def image_preprocess(img: torch.Tensor | np.ndarray, color_mode: Literal["gray",
             img = np.clip(img, 0, 255).astype(np.uint8)
     elif img.dtype == np.uint16:
         img = (img / 256).astype(np.uint8)
+    elif img.dtype != np.uint8:
+        img = np.clip(img, 0, 255).astype(np.uint8)
 
-    # 处理通道顺序
-    if img.ndim == 3 and img.shape[0] in [1, 3]:  # (C,H,W)
-        img = img.transpose(1, 2, 0).squeeze()  # 转为HWC,并压缩掉维度为1的轴
+    if cmap is not None and img.ndim == 2:
+        reverse = False
+        if cmap.endswith(" r"):
+            cmap = cmap[:-2]
+            reverse = True
 
-    # 处理颜色模式
-    if color_mode == "gray":
-        if img.ndim == 3:  # 彩色转灰度
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    else:
-        if img.ndim == 2:  # 灰度转rgb
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-        elif img.ndim == 3 and img.shape[2] == 4:  # RGBA转RGB
-            img = img[:, :, :3]
+        # Apply color mapping
+        if cmap.lower() in ["gray", "grey", "grays", "greys"]:
+            # Convert to gray
+            if img.ndim == 3 and img.shape[2] == 3:  # RGB to Gray
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            elif img.ndim == 3 and img.shape[2] == 4:  # RGBA to Gray
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+        elif cmap.lower() == "rgb":
+            # Convert to RGB
+            if img.ndim == 2:  # Gray to RGB
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+            elif img.ndim == 3 and img.shape[2] == 4:  # RGBA to RGB
+                img = img[:, :, :3]
+            elif img.ndim == 3 and img.shape[2] == 1:  # Single channel to RGB
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        else:
+            # Apply color mapping (applicable to single-channel images)
+            if img.ndim == 2 or (img.ndim == 3 and img.shape[2] == 1):
+                # Make sure it is a single channel
+                if img.ndim == 3:
+                    img = img[:, :, 0]
+
+                if cmap.lower() == "hot":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_HOT)
+                elif cmap.lower() == "rainbow":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_RAINBOW)
+                elif cmap.lower() in ["viridis", "jet"]:
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
+                elif cmap.lower() == "cool":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_COOL)
+                elif cmap.lower() == "spring":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_SPRING)
+                elif cmap.lower() == "summer":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_SUMMER)
+                elif cmap.lower() == "autumn":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_AUTUMN)
+                elif cmap.lower() == "winter":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_WINTER)
+                elif cmap.lower() == "bone":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_BONE)
+                elif cmap.lower() == "ocean":
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_OCEAN)
+                else:
+                    # Viridis mapping is used by default
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
+
+                # Make sure the output is in RGB format (OpenCV defaults to BGR)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            else:
+                # Multi-channel images, color mapping cannot be applied
+                raise ValueError(f"The color mapping '{cmap}' can only be applied to single-channel images.")
+
+        # Color inversion
+        if reverse:
+            img = 255 - img
+
+    # (H, W) -> (H, W, 1)
+    if img.ndim == 2:
+        img = np.expand_dims(img, axis=-1)
+
+    return img
 
 
-def _show_with_opencv(imgs: list[np.ndarray]) -> None:
+def _plot_with_opencv(imgs: list[np.ndarray]) -> None:
     for i, img in enumerate(imgs):
-        # OpenCV需要BGR格式
-        if img.ndim == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-
-        window_name = f"Image {i + 1}"
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        window_name = f"Image: {i + 1}"
         cv2.imshow(window_name, img)
 
     cv2.waitKey(0)
     cv2.destroyWindow(window_name)
 
 
-def _show_with_pillow(imgs: list[np.ndarray]) -> None:
+def _plot_with_pillow(imgs: list[np.ndarray]) -> None:
     from PIL import Image
 
     for i, img in enumerate(imgs):
-        # 确保值范围在0-255
+        # Make sure the value range is between 0-255
         if img.dtype != np.uint8:
             img = img.astype(np.uint8)
 
-        # 灰度图需要特殊处理
         if img.ndim == 2:
             img = Image.fromarray(img, mode="L")
         else:
             img = Image.fromarray(img, mode="RGB")
 
-        img.show(title=f"Image {i + 1}")
+        img.show(title=f"Image: {i + 1}")
 
 
-def _show_with_pyplot(imgs: list[np.ndarray]) -> None:
-    n = len(imgs)
+def _plot_with_pyplot(imgs: list[np.ndarray]) -> None:
+    for i, img in enumerate(imgs):
+        _ = plt.figure(i + 1, figsize=(6, 6))
 
-    # 创建子图布局
-    if n == 1:
-        fig, ax = plt.subplots(figsize=(6, 6))
-        axs = [ax]
-    else:
-        fig, axs = plt.subplots(1, n, figsize=(n * 4, 4))
-
-    # 显示每个图像
-    for i, (ax, img) in enumerate(zip(axs, imgs)):
         if img.ndim == 2:
-            ax.imshow(img, cmap="gray")
+            plt.imshow(img, cmap="gray")
         else:
-            ax.imshow(img)
-        ax.axis("off")
-        ax.set_title(f"Image {i + 1}")
+            plt.imshow(img)
 
-    plt.tight_layout()
+        plt.axis("off")
+        plt.title(f"Image: {i + 1}")
+        plt.tight_layout()
+
     plt.show()
 
 
-def show_raw_and_recon_images(
-    raw_imgs: torch.Tensor | np.ndarray,
-    recon_imgs: torch.Tensor | np.ndarray,
+def plot_raw_and_recon_imgs(
+    raw_imgs: np.ndarray,
+    recon_imgs: np.ndarray,
     max_per_row: int = 5,
     figsize: tuple = (12, 8),
     titles: Sequence[str] = ("Raw Images", "Reconstructed Images"),
 ) -> None:
-    """
-    显示原始图像和重构图像的对比图
+    """Plot a comparison image between the original image and the reconstructed image.
 
-    参数:
-    raw_imgs - 原始图像 (Tensor 或 ndarray), 形状为 (N, C, H, W) 或 (N, H, W, C)
-    recon_imgs - 重构图像 (Tensor 或 ndarray), 形状应与 raw_imgs 相同
-    max_per_row - 每行最多显示图像数量 (默认为5)
-    figsize - 整个图像的大小 (宽度, 高度)
-    titles - 上下两行的标题 (原始图像标题, 重构图像标题)
+    Args:
+        raw_imgs (np.ndarray): The input image.
+        recon_imgs: (str | None = None):cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: max_per_row
+        figsize
+        titles
     """
     # 转换输入为 numpy 数组
     raw_np = _to_numpy(raw_imgs)
@@ -228,30 +313,6 @@ def show_raw_and_recon_images(
 
     plt.tight_layout()
     plt.show()
-
-
-def _to_numpy(imgs: torch.Tensor | np.ndarray) -> np.ndarray:
-    """将输入转换为 numpy 数组并调整格式"""
-    # 转换 Tensor 到 numpy
-    if isinstance(imgs, torch.Tensor):
-        imgs = imgs.detach().cpu().numpy()
-
-    # 确保是 numpy 数组
-    if not isinstance(imgs, np.ndarray):
-        raise TypeError(f"不支持的图像类型: {type(imgs)}")
-
-    # 调整维度顺序 (N, C, H, W) -> (N, H, W, C)
-    if imgs.ndim == 4 and imgs.shape[1] in [1, 3]:
-        imgs = imgs.transpose(0, 2, 3, 1)
-
-    # 处理值范围 (浮点数归一化到0-255)
-    if imgs.dtype == np.float32 or imgs.dtype == np.float64:
-        if imgs.min() >= 0 and imgs.max() <= 1:
-            imgs = (imgs * 255).astype(np.uint8)
-        else:
-            imgs = np.clip(imgs, 0, 255).astype(np.uint8)
-
-    return imgs
 
 
 def _plot_image_row(ax_row, images, n_images, max_per_row, n_rows, title):
