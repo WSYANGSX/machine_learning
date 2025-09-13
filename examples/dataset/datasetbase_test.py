@@ -2,7 +2,7 @@ import time
 from machine_learning.utils import load_cfg_from_yaml
 from machine_learning.dataset import DatasetBase
 from machine_learning.dataset.parsers import CocoTestParser
-from machine_learning.utils.image import visualize_img_with_bboxes
+from machine_learning.utils.img import visualize_img_with_bboxes
 from machine_learning.utils.detection import yolo2voc
 
 data_cfg = load_cfg_from_yaml(

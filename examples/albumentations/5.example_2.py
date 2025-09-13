@@ -4,7 +4,7 @@ from PIL import Image
 from machine_learning.utils.detection import yolo2voc
 from machine_learning.utils.aug import DEFAULT_YOLOMM_AUG
 from machine_learning.utils.transforms import ImgTransform
-from machine_learning.utils.image import visualize_img_with_bboxes
+from machine_learning.utils.img import visualize_img_with_bboxes
 
 np.set_printoptions(threshold=np.inf)
 
