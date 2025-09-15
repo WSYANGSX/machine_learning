@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import Generator, Discriminator
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.img import show_image
+from machine_learning.utils.img import plot_imgs
 
 
 class GAN(AlgorithmBase):
@@ -183,7 +183,7 @@ class GAN(AlgorithmBase):
         with torch.no_grad():  # Disable gradient calculation, which has the same effect as.detach()
             recons = self.nets["generator"](z)
 
-        show_image(recons, color_mode="gray", backend="pyplot")
+        plot_imgs(list(recons), color_mode="gray", backend="pyplot")
 
 
 """

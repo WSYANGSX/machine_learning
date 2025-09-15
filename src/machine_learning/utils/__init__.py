@@ -6,7 +6,7 @@ import torch
 import numpy as np
 
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.cfg import BaseCfg
+from machine_learning.cfg.base import BaseCfg
 
 
 def set_seed(seed: int = 23) -> None:

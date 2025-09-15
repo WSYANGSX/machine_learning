@@ -6,10 +6,12 @@ import time
 import torch
 import numpy as np
 from copy import deepcopy
+import torch.nn.functional as F
 from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
+from machine_learning.utils.img import imgs_np2tensor
 
 
 def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
@@ -83,14 +85,14 @@ def pad_to_square(
                 if len(pad_values) == 1:
                     pad_values = pad_values * img.shape[2]
                 elif len(pad_values) != img.shape[2]:
-                    raise ValueError(f"pad_values must have length 1 or {img.shape[2]} for RGB images.")
+                    raise ValueError(f"Padded values must have length 1 or {img.shape[2]} for RGB images.")
                 constant_values = [(v, v) for v in pad_values]  # (left, right) for each channel
             elif img.ndim == 2:  # gray
                 if len(pad_values) != 1:
-                    raise ValueError("pad_values must be a single int or a 1-tuple for grayscale images.")
+                    raise ValueError("Padded values must be a single int or a 1-tuple for grayscale images.")
                 constant_values = pad_values[0]
         else:
-            raise ValueError("pad_values must be an int or a tuple.")
+            raise ValueError("Padded values must be an int or a tuple.")
 
     output = np.pad(img, pad_width, "constant", constant_values=constant_values)
 
@@ -100,6 +102,49 @@ def pad_to_square(
             output = output.permute(2, 0, 1)
 
     return output
+
+
+def resize(img: Union[torch.Tensor, np.ndarray], size: int) -> Union[torch.Tensor, np.ndarray]:
+    if isinstance(img, torch.Tensor):
+        output_type = "torch"
+        original_dtype = img.dtype
+        if original_dtype != torch.float32 and original_dtype != torch.float64:
+            img = img.float()
+    else:
+        output_type = "np"
+        original_dtype = img.dtype
+        original_shape = img.shape
+
+        if img.ndim == 3:
+            img = torch.from_numpy(img.transpose(2, 0, 1)).float()
+        elif img.ndim == 2:
+            img = torch.from_numpy(img).float().unsqueeze(0)
+        else:
+            raise ValueError(f"Unsupported array shape: {img.shape}. Expected 2D (H, W) or 3D (H, W, C).")
+
+    if img.dim() == 3:  # CHW
+        img = F.interpolate(img.unsqueeze(0), size=size, mode="nearest").squeeze(0)
+    elif img.dim() == 2:  # HW
+        img = F.interpolate(img.unsqueeze(0).unsqueeze(0), size=size, mode="nearest").squeeze(0).squeeze(0)
+    else:
+        raise ValueError(f"Unsupported tensor dimension: {img.dim()}")
+
+    if output_type == "np":
+        img = img.numpy()
+
+        if original_dtype != np.float32 and original_dtype != np.float64:
+            if original_dtype == np.uint8:
+                img = np.clip(img, 0, 255)
+            img = img.astype(original_dtype)
+
+        if len(original_shape) == 3 and original_shape[2] < original_shape[0]:
+            img = img.transpose(1, 2, 0)
+
+    elif output_type == "torch":
+        if original_dtype != torch.float32 and original_dtype != torch.float64:
+            img = img.to(original_dtype)
+
+    return img
 
 
 def rescale_bboxes(

@@ -1,4 +1,4 @@
-from typing import Any, Union
+from typing import Any, Union, Literal
 
 import os
 import cv2
@@ -43,6 +43,7 @@ class DatasetBase(Dataset):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
+        mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
@@ -52,6 +53,7 @@ class DatasetBase(Dataset):
         self.batch_size = batch_size
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
         self.length = math.ceil(len(labels) * self.fraction)
+        self.mode = mode
 
         # init buffers
         # labels
@@ -97,25 +99,25 @@ class DatasetBase(Dataset):
     def get_labels(self) -> None:
         """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching labels...")
+        LOGGER.info(f"Caching {self.mode} labels...")
         with ThreadPool(NUM_THREADS) as pool:
             results = pool.imap(self.cache_labels, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
             for _, size in pbar:
                 b += size
-                pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
+                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
             pbar.close()
 
     def get_labels_np(self, labels: np.ndarray) -> None:
         """Get labels from matrix input to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching labels from matrix input...")
+        LOGGER.info(f"Caching {self.mode} labels from matrix input...")
         pbar = tqdm(enumerate(labels), total=self.length)
         for i, label in pbar:
             label = self.label_format(label)
             self.labels[i] = label
             b += asizeof.asizeof(self.labels[i])
-            pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
+            pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
         pbar.close()
 
     def cache_labels(self, i: int) -> float:
@@ -130,25 +132,25 @@ class DatasetBase(Dataset):
     def cache_data_np(self, data: np.ndarray) -> None:
         """Cache np.ndarray format data to buffers"""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info("Caching data from matrix input...")
+        LOGGER.info(f"Caching {self.mode} data from matrix input...")
         pbar = tqdm(enumerate(data), total=self.length)
         for i, data in pbar:
             self.data[i] = data
             b += self.data[i].nbytes
-            pbar.desc = f"Caching labels ({b / gb:.5f}GB)"
+            pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB)"
         pbar.close()
 
     def cache_data(self) -> None:
         """Cache data to memory or disk."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         fcn, storage = (self.cache_data_to_ram, "RAM") if self.cache == "ram" else (self.cache_data_to_disk, "Disk")
-        LOGGER.info(f"Caching data to {storage}...")
+        LOGGER.info(f"Caching {self.mode} data to {storage}...")
         with ThreadPool(NUM_THREADS) as pool:
             results = pool.imap(fcn, range(self.length))
             pbar = tqdm(enumerate(results), total=self.length)
             for _, size in pbar:
                 b += size
-                pbar.desc = f"Caching data ({b / gb:.5f}GB {storage})"
+                pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
 
     def cache_data_to_ram(self, i: int) -> float:

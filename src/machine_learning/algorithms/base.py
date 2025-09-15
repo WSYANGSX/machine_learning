@@ -196,15 +196,15 @@ class AlgorithmBase(ABC):
         """
         LOGGER.info(f"Initializing the dataloaders of {self.name}...")
 
-        _necessary_key_type_couples_ = {"train_dataset": Dataset, "val_dataset": Dataset}
-        for key, type in _necessary_key_type_couples_.items():
-            if key not in datasets or not isinstance(datasets[key], type):
-                raise ValueError(f"Input data mapping has no {key} or {key} is not Dataset type.")
+        _necessary_key_type_couples_ = {"train": Dataset, "val": Dataset}
+        for k, t in _necessary_key_type_couples_.items():
+            if k not in datasets or not isinstance(datasets[k], t):
+                raise ValueError(f"Input data mapping has no {k} or {k} is not Dataset type.")
 
         train_dataset, val_dataset, test_dataset = (
-            datasets["train_dataset"],
-            datasets["val_dataset"],
-            datasets["test_dataset"],
+            datasets["train"],
+            datasets["val"],
+            datasets["test"],
         )
 
         self.train_loader = DataLoader(

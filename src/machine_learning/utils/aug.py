@@ -1,6 +1,6 @@
 import albumentations as A
 
-from machine_learning.utils.cfg import BaseCfg
+from machine_learning.cfg.base import BaseCfg
 from dataclasses import dataclass, MISSING
 
 

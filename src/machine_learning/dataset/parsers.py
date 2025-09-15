@@ -74,8 +74,8 @@ class MinistParser(ParserBase):
         val_labels = self.load_idx1_ubyte(os.path.join(val_dir, "labels.idx1-ubyte"))[0]
 
         return {
-            "train": {"imgs": train_imgs, "labels": train_labels},
-            "val": {"imgs": val_imgs, "labels": val_labels},
+            "train": [train_imgs, train_labels],
+            "val": [val_imgs, val_labels],
         }
 
 
@@ -106,8 +106,8 @@ class CocoTestParser(ParserBase):
         val_labels = [os.path.join(self.dataset_path + "/labels/val", label) for label in val_labels]
 
         return {
-            "train": {"imgs": train_imgs, "labels": train_labels},
-            "val": {"imgs": val_imgs, "labels": val_labels},
+            "train": [train_imgs, train_labels],
+            "val": [val_imgs, val_labels],
         }
 
 
@@ -138,8 +138,8 @@ class CocoParser(ParserBase):
         val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
         return {
-            "train": {"imgs": train_imgs, "labels": train_labels},
-            "val": {"imgs": val_imgs, "labels": val_labels},
+            "train": [train_imgs, train_labels],
+            "val": [val_imgs, val_labels],
         }
 
 

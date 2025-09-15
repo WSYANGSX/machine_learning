@@ -16,8 +16,8 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.img import resize, visualize_img_with_bboxes
 from machine_learning.utils.detection import (
+    resize,
     non_max_suppression,
     box_iou,
     xywh2xyxy,

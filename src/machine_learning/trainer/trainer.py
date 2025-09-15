@@ -6,35 +6,15 @@ import torch
 from datetime import datetime
 from prettytable import PrettyTable
 from numbers import Integral, Real
-from dataclasses import dataclass, field, MISSING
-from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset
+from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.utils.cfg import BaseCfg
+from .trian_cfg import TrainCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils.constants import DATACFG_PATH
-from machine_learning.dataset import PARSER_MAPS, ParserBase, ImgDataset, MultimodalDataset
-
+from machine_learning.dataset import ParserBase, PARSER_MAPS, DATASET_MAPS
 from machine_learning.utils import set_seed, cfg2dict, print_cfg
-
-
-@dataclass
-class TrainCfg(BaseCfg):
-    log_dir: str = MISSING
-    ckpt_dir: str = MISSING
-    seed: int = field(default=23)
-    epochs: int = field(default=100)
-    log_interval: int = field(default=10)
-    save_interval: int = field(default=10)
-    save_best: bool = field(default=True)
-    argument: bool = field(default=False)
-    fraction: float = field(default=1.0)  # dataset fraction to train on (default is 1.0, all images in train set)
-    mosaic: float = field(default=1.0)
-    mixup: float = field(default=0.0)
-    copy_paste: float = field(default=0.1)
-    multi_scale: bool = field(default=False)
-    rect: bool = field(default=False)
 
 
 class Trainer:
@@ -107,21 +87,15 @@ class Trainer:
         trian_data, val_data, test_data = data["train"], data["val"], data.get("test", {})
 
         # build dataset
-        if len(trian_data) == 2:
-            if "imgs" in trian_data:  # imgs dataset
-                train_dataset = ImgDataset(imgs=trian_data["imgs"], labels=trian_data["labels"])
-                val_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
-                if test_data:
-                    test_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
-                else:
-                    test_dataset = None
-            ...
+        data_type = data_cfg.get("type", None)
 
+        if data_type is None:
+            raise ValueError("The data type must be provided for Dataset mapping.")
         else:
-            train_dataset = MultimodalDataset()
-            val_dataset = MultimodalDataset()
+            train_dataset = DATASET_MAPS[data_type](*trian_data, mode="train")
+            val_dataset = DATASET_MAPS[data_type](*val_data, mode="val")
             if test_data:
-                test_dataset = ImgDataset(imgs=val_data["imgs"], labels=val_data["labels"])
+                test_dataset = DATASET_MAPS[data_type](*test_data, mode="test")
             else:
                 test_dataset = None
 

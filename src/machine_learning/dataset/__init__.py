@@ -13,9 +13,17 @@ __all__ = [
     "VedaiParser",
 ]
 
+# parsers
 PARSER_MAPS = {
     "minist": MinistParser,
     "coco-2017": CocoParser,
     "flir": FlirParser,
     "vedai": VedaiParser,
+}
+
+# datasets
+DATASET_MAPS = {
+    "basic": DatasetBase,
+    "yolo": YoloDataset,
+    "multi_modal": MultimodalDataset,
 }

@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.img import show_raw_and_recon_images
+from machine_learning.utils.img import plot_raw_and_recon_imgs
 
 
 class PixelCNN(AlgorithmBase):
@@ -138,4 +138,4 @@ class PixelCNN(AlgorithmBase):
             # z = mu + std * torch.randn_like(mu)
             recons = self._models["decoder"](mu)
 
-        show_raw_and_recon_images(data, recons)
+        plot_raw_and_recon_imgs(list(data), list(recons))

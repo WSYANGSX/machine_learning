@@ -1,4 +1,5 @@
 name: minist
+type: basic
 path: /home/yangxf/WorkSpace/machine_learning/data/minist
 
 train: train

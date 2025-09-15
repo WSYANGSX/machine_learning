@@ -1,5 +1,6 @@
 name: coco-2017
 path: /home/yangxf/WorkSpace/machine_learning/data/coco-2017
+type: yolo
 
 train: images_train.txt # train images (relative to 'path') 56599 images
 val: images_val.txt # val images (relative to 'path') 2346 images

@@ -1,11 +1,11 @@
-from typing import Sequence, Literal
+"""All the image drawing areas are in the format of np.ndarray."""
+
+from typing import Literal
 
 import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
-from machine_learning.types.aliases import FilePath
 
 
 def imgs_tensor2np(imgs: torch.Tensor, bs: bool | None = None) -> np.ndarray:
@@ -125,7 +125,8 @@ def plot_imgs(
         cmap: (str | None = None):cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
         backend (Literal[&quot;pyplot&quot;, &quot;opencv&quot;, &quot;pillow&quot;], optional): The plot backend. Defaults to "pyplot".
     """
-    processed_images = [img_preprocess(img, cmap) for img in imgs]
+
+    processed_images = [color_maps(img, cmap) for img in imgs]
 
     if backend == "opencv":
         _plot_with_opencv(processed_images)
@@ -135,7 +136,7 @@ def plot_imgs(
         _plot_with_pyplot(processed_images)
 
 
-def img_preprocess(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
+def color_maps(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
     """Preprocess the image, including value range normalization, channel order adjustment and color mode conversion.
 
     Args:
@@ -270,88 +271,74 @@ def _plot_with_pyplot(imgs: list[np.ndarray]) -> None:
 
 
 def plot_raw_and_recon_imgs(
-    raw_imgs: np.ndarray,
-    recon_imgs: np.ndarray,
-    max_per_row: int = 5,
-    figsize: tuple = (12, 8),
-    titles: Sequence[str] = ("Raw Images", "Reconstructed Images"),
+    raw_imgs: list[np.ndarray],
+    recon_imgs: list[np.ndarray],
+    max_cols: int = 5,
+    fig_size: tuple[int, int] = (12, 8),
+    titles: list[str] = ["Raw images", "Recon images"],
 ) -> None:
-    """Plot a comparison image between the original image and the reconstructed image.
+    """Plot a comparison image between the raw images and the reconstructed images.
 
     Args:
-        raw_imgs (np.ndarray): The input image.
-        recon_imgs: (str | None = None):cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: max_per_row
-        figsize
-        titles
+        raw_imgs (list[np.ndarray]): The list of raw images.
+        recon_imgs (list[np.ndarray]): The list of reconstructed images by generation algorithms.
+        max_cols (int): The maximum number of images per line. Default to 5.
+        figsize (tuple[int]): The size of the curtain.
+        titles: (list[str]): The names of subplots.
     """
-    # 转换输入为 numpy 数组
-    raw_np = _to_numpy(raw_imgs)
-    recon_np = _to_numpy(recon_imgs)
+    _subplot_imgs(raw_imgs, max_cols=max_cols, title=titles[0], figure_size=fig_size)
+    _subplot_imgs(recon_imgs, max_cols=max_cols, title=titles[1], figure_size=fig_size)
 
-    # 确保图像数量一致
-    n_images = raw_np.shape[0]
-    if n_images != recon_np.shape[0]:
-        raise ValueError(f"原始图像数量({n_images})与重构图像数量({recon_np.shape[0]})不一致")
-
-    # 计算需要多少行 (每行最多 max_per_row 个图像)
-    n_rows = (n_images + max_per_row - 1) // max_per_row
-
-    # 创建图像布局 (2行：原始图像 + 重构图像)
-    fig, axes = plt.subplots(
-        2, max_per_row if n_images <= max_per_row else min(n_images, max_per_row * n_rows), figsize=figsize
-    )
-
-    # 如果只有一张图像，axes 不是二维数组，需要调整
-    if n_images == 1:
-        axes = np.array([[axes[0]], [axes[1]]])
-
-    # 绘制原始图像 (上排)
-    _plot_image_row(axes[0], raw_np, n_images, max_per_row, n_rows, titles[0])
-
-    # 绘制重构图像 (下排)
-    _plot_image_row(axes[1], recon_np, n_images, max_per_row, n_rows, titles[1])
-
-    plt.tight_layout()
     plt.show()
 
 
-def _plot_image_row(ax_row, images, n_images, max_per_row, n_rows, title):
-    """在单行轴对象上绘制图像"""
-    # 设置行标题
-    ax_row[0].set_ylabel(title, fontsize=12, rotation=0, labelpad=40, va="center")
+def _subplot_imgs(imgs: list[np.ndarray], max_cols: int = 5, title: str | None = None, figure_size: tuple = (12, 8)):
+    """
+    Plot multiple images in a single figure.
 
-    # 遍历该行所有轴
-    for j, ax in enumerate(ax_row):
-        idx = j  # 计算当前图像索引
+    Args:
+        imgs (list[np.ndarray]): The list of images.
+        max_cols (int): The maximum number of images per line. Default to 5.
+        title (str | None): The title of the figure. Default to None.
+        figure_size (tuple[int, int]): The size of the figure.
+    """
+    n_imgs = len(imgs)
+    n_rows = (n_imgs + max_cols - 1) // max_cols  # compute rows
 
-        # 如果图像数量不足，隐藏多余的轴
-        if idx >= n_images:
-            ax.axis("off")
-            continue
+    # Create figure and subfigures
+    fig, axes = plt.subplots(n_rows, max_cols if n_rows > 1 else min(max_cols, n_imgs), figsize=figure_size)
 
-        # 显示图像
-        if images[idx].ndim == 2:  # 灰度图
-            ax.imshow(images[idx], cmap="gray")
-        else:  # 彩色图
-            ax.imshow(images[idx])
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
 
-        # 设置子标题 (只显示第一列)
-        if j == 0:
-            ax.set_title(f"Image {idx + 1}", fontsize=9)
+    # Set the general title
+    fig.suptitle(title, fontsize=16)
 
-        ax.axis("off")
+    # Traverse all images and draw
+    for i, img in enumerate(imgs):
+        row = i // max_cols
+        col = i % max_cols
 
+        if len(img.shape) == 2:
+            axes[row, col].imshow(img, cmap="gray")
+        else:
+            axes[row, col].imshow(img)
 
-def read_img_to_normalize_tensor(img_path: FilePath, mean: list[float], std: list[float]) -> torch.Tensor:
-    import cv2
-    from torchvision.transforms import Compose, ToTensor, Normalize
+        # Set subfigure labels
+        axes[row, col].set_xlabel(f"Image {i + 1}", fontsize=12)
 
-    image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
-    tfs = Compose([ToTensor(), Normalize(mean=mean, std=std)])
+        # Remove the coordinate axes
+        axes[row, col].set_xticks([])
+        axes[row, col].set_yticks([])
 
-    return tfs(image)
+    # Hide redundant subfigures
+    for i in range(n_imgs, n_rows * max_cols):
+        row = i // max_cols
+        col = i % max_cols
+        axes[row, col].axis("off")
 
+    # Adjust the Layout
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)  # Make room for the main title
 
-def resize(image: torch.Tensor, size: int) -> torch.Tensor:
-    image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
-    return image
+    return fig, axes

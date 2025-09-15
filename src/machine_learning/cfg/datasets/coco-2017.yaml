@@ -1,5 +1,6 @@
 name: coco-2017
 path: /home/yangxf/WorkSpace/datasets/..datasets/coco
+type: yolo
 
 train: train2017.txt # train images (relative to 'path') 56599 images
 val: val2017.txt # val images (relative to 'path') 2346 images

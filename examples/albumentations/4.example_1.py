@@ -1,12 +1,13 @@
 import cv2
+import torch
 import albumentations as A
-from machine_learning.utils.detection import yolo2voc
-from machine_learning.utils.img import visualize_img_with_bboxes
+from machine_learning.utils.detection import yolo2voc, resize, visualize_img_bboxes
 import torchvision.transforms as T
+
 # from machine_learning.utils.augmentations import PadShortEdge
 # from machine_learning.utils.detection import yolo2voc
 # from machine_learning.utils.draw import visualize_img_with_bboxes
-
+from machine_learning.utils.img import plot_imgs, imgs_np2tensor
 
 if __name__ == "__main__":
     import numpy as np
@@ -16,15 +17,15 @@ if __name__ == "__main__":
     img_path = "./data/coco-2017/images/train/000000000072.jpg"
     image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
 
-    labels = np.loadtxt("./data/coco-2017/labels/train/000000000072.txt").reshape(-1, 5)
-    bboxes = labels[:, 1:5]
-    bboxes_voc = yolo2voc(bboxes, image.shape[1], image.shape[0])
-    category_ids = labels[:, 0]
+    # labels = np.loadtxt("./data/coco-2017/labels/train/000000000072.txt").reshape(-1, 5)
+    # bboxes = labels[:, 1:5]
+    # bboxes_voc = yolo2voc(bboxes, image.shape[1], image.shape[0])
+    # category_ids = labels[:, 0]
 
-    # We will use the mapping from category_id to the class name
-    # to visualize the class label for the bounding box on the image
-    category_id_to_name = {x: str(x) for x in category_ids}
-    visualize_img_with_bboxes(image, bboxes_voc, category_ids, category_id_to_name)
+    # # We will use the mapping from category_id to the class name
+    # # to visualize the class label for the bounding box on the image
+    # category_id_to_name = {x: str(x) for x in category_ids}
+    # visualize_img_with_bboxes(image, bboxes_voc, category_ids, category_id_to_name)
 
     # # aug = DEFAULT_YOLO_AUG
     # # transformed = aug(image=image, bboxes=bboxes, category_ids=category_ids)

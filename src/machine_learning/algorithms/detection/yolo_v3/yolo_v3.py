@@ -14,9 +14,9 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.img import resize, visualize_img_with_bboxes
 from machine_learning.utils.detection import (
-    box_iou,
+    resize,
+    visualize_img_bboxes,
     bbox_iou,
     xywh2xyxy,
     pad_to_square,
