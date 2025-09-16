@@ -1,26 +1,23 @@
 from typing import Any, Mapping
 
 import os
-import yaml
 import torch
 from datetime import datetime
 from prettytable import PrettyTable
 from numbers import Integral, Real
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from .trian_cfg import TrainCfg
+from .trianer_cfg import TrainerCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils.constants import DATACFG_PATH
-from machine_learning.dataset import ParserBase, PARSER_MAPS, DATASET_MAPS
 from machine_learning.utils import set_seed, cfg2dict, print_cfg
 
 
 class Trainer:
     def __init__(
         self,
-        cfg: TrainCfg,
+        cfg: TrainerCfg,
         dataset: str | Mapping[str, Any],
         algo: AlgorithmBase,
     ) -> None:
@@ -45,16 +42,9 @@ class Trainer:
         set_seed(self.cfg.seed)
         LOGGER.info(f"Current seed: {self.cfg.seed}")
 
-        # --------------------- dataset cfg  --------------------------
-        LOGGER.info("Parsing dataset cfg by trainer...")
-        dataset_cfg = self.load_data_cfg(dataset)
-
-        # -------------------- parse dataset --------------------------
-        datasets = self.get_datasets(dataset_cfg)
-
         # ------------------- add cfg to algo -------------------------
         LOGGER.info("Algorithm initializing by trainer...")
-        self.algorithm._init_on_trainer(cfg2dict(self.cfg), dataset_cfg, datasets)
+        self.algorithm._init_on_trainer(cfg2dict(self.cfg), dataset)
         print_cfg("Total configuration", self.algorithm.cfg)
 
         # --------------------- init writer ---------------------------
@@ -65,41 +55,25 @@ class Trainer:
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
 
-    def load_data_cfg(self, cfg: str | Mapping[str, Any]) -> dict:
-        if isinstance(cfg, Mapping):
-            cfg = dict(cfg)
-        else:
-            if not (os.path.splitext(cfg)[1] == ".yaml" or os.path.splitext(cfg)[1] == ".yml"):
-                raise ValueError("Input path is not a yaml file path.")
-            cfg_path = os.path.join(DATACFG_PATH, cfg)
-            with open(cfg_path, "r") as f:
-                cfg = yaml.safe_load(f)
+    def get_dataloader(self, dataset: Dataset, batch_size: int, mode: str = "train") -> DataLoader:
+        """Get the train and val data loaders.
 
-        return cfg
+        Args:
+            dataset (Dataset): The dataset.
+            batch_size (int): The batch size.
+            mode (str): The usage of the dataloder.
+        """
+        assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
 
-    def get_datasets(self, data_cfg: dict[str, Any]) -> dict[str, Dataset]:
-        # get dataset parser
-        dataset_name = data_cfg["name"]
-        parser: ParserBase = PARSER_MAPS[dataset_name](data_cfg)
+        LOGGER.info(f"Getting the {mode} dataloader...")
 
-        # parser data
-        data = parser.parse()
-        trian_data, val_data, test_data = data["train"], data["val"], data.get("test", {})
+        shuffle = mode == "train"
+        if getattr(dataset, "rect", False) and shuffle:
+            LOGGER.warning("'Rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
+            shuffle = False
+        workers = self.cfg.workers if mode == "train" else self.cfg.workers * 2
 
-        # build dataset
-        data_type = data_cfg.get("type", None)
-
-        if data_type is None:
-            raise ValueError("The data type must be provided for Dataset mapping.")
-        else:
-            train_dataset = DATASET_MAPS[data_type](*trian_data, mode="train")
-            val_dataset = DATASET_MAPS[data_type](*val_data, mode="val")
-            if test_data:
-                test_dataset = DATASET_MAPS[data_type](*test_data, mode="test")
-            else:
-                test_dataset = None
-
-        return {"train": train_dataset, "val": val_dataset, "test": test_dataset}
+        return self.build_dataloader(dataset, batch_size, workers, shuffle)
 
     def _init_writer(self):
         log_path = self.cfg.log_dir + self.dt_suffix

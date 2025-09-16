@@ -1,6 +1,6 @@
 algorithm: 
   name: "auto_encoder"
-  nbs: -1
+  imgsz: 28
 
 optimizer:
   type: "Adam"
@@ -18,12 +18,19 @@ scheduler:
 
 net:
   args:
-    img_size: 28
+    imgsz: 28
     z_dim: 128
   initialize_weights: True
 
-data_loader:
+data:
+  cache: False
+  augment: True
+  fraction: 1.0
+  nbs: -1
+  batch_size: 1024
   num_workers: 4
   shuffle: True
-  batch_size: 1024
+  
+
+  
   

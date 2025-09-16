@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from torch.utils.data import Dataset
-from machine_learning.utils import load_cfg_from_yaml, list_from_txt, print_cfg
+from machine_learning.utils import load_cfg, list_from_txt, print_cfg
 
 
 class ParserBase(ABC):
@@ -150,7 +150,7 @@ class FlirParser(ParserBase):
         super().__init__(data_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         print_cfg("Information of dataset", metadata)
 
@@ -200,7 +200,7 @@ class VedaiParser(ParserBase):
         super().__init__(parser_cfg)
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_cfg_from_yaml(os.path.join(self.dataset_dir, "metadata.yaml"))
+        metadata = load_cfg(os.path.join(self.dataset_dir, "metadata.yaml"))
 
         print_cfg("Information of dataset", metadata)
 

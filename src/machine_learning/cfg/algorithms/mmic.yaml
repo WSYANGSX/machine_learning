@@ -51,9 +51,4 @@ scheduler:
 
 net:
   initialize_weights: True
-
-data_loader:
-  num_workers: 6
-  shuffle: True
-  batch_size: 256
   

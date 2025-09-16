@@ -1,10 +1,9 @@
 import albumentations as A
 
 from machine_learning.cfg.base import BaseCfg
-from dataclasses import dataclass, MISSING
+from dataclasses import MISSING
 
 
-@dataclass
 class AugCfg(BaseCfg):
     """Basic augmentation configuration"""
 

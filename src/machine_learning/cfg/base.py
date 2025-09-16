@@ -1,3 +1,5 @@
+"""Basic class of all cfg class."""
+
 from dataclasses import dataclass
 
 

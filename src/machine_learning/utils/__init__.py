@@ -1,3 +1,5 @@
+from typing import Any, Mapping
+
 import os
 import yaml
 import random
@@ -5,8 +7,8 @@ import random
 import torch
 import numpy as np
 
-from machine_learning.types.aliases import FilePath
 from machine_learning.cfg.base import BaseCfg
+from machine_learning.types.aliases import FilePath
 
 
 def set_seed(seed: int = 23) -> None:
@@ -22,15 +24,16 @@ def set_seed(seed: int = 23) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def load_cfg_from_yaml(file_path: FilePath) -> dict:
-    """Load the yaml file into a dictionary."""
-    assert os.path.splitext(file_path)[1] == ".yaml" or os.path.splitext(file_path)[1] == ".yml", (
-        "Please ultilize a yaml configuration file."
-    )
-    with open(file_path, "r") as f:
-        config = yaml.safe_load(f)
+def load_cfg(cfg: FilePath | Mapping[str, Any]) -> dict:
+    if isinstance(cfg, Mapping):
+        cfg = dict(cfg)
+    else:
+        if not (os.path.splitext(cfg)[1] == ".yaml" or os.path.splitext(cfg)[1] == ".yml"):
+            raise ValueError("Input path is not a yaml file path.")
+        with open(cfg, "r") as f:
+            cfg = yaml.safe_load(f)
 
-    return config
+    return cfg
 
 
 def list_from_txt(file_path: FilePath) -> list[str]:
@@ -91,3 +94,22 @@ def cfg2dict(cfg: BaseCfg) -> dict:
 
 def get_gpu_mem() -> float:
     return torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0
+
+
+def flatten_dict(input_dict: dict[str, Any]) -> dict[str, Any]:
+    """Flatten the nested dictionaries into a single-layer dictionary.
+
+    Args:
+        dict (dict[str, Any]): The input dictionary.
+
+    Returns:
+        dict[str, Any]: The new single-layer dictionary.
+    """
+    items = []
+    for key, value in input_dict.items():
+        if isinstance(value, dict):
+            items.extend(flatten_dict(value).items())
+        else:
+            items.append((key, value))
+
+    return dict(items)

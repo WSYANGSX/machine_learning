@@ -1,5 +1,5 @@
-import numpy as np
+from machine_learning.utils import load_cfg, flatten_dict, print_dict
 
-a = 10
-b = 2
-print(a // b, a % b)
+a = {"a": {1: 1, 2: 2}}
+a["a"].update({4:4})
+print(a)

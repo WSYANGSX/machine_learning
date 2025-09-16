@@ -1,6 +1,11 @@
 name: minist
-type: basic
+dataset_type: DatasetBase
 path: /home/yangxf/WorkSpace/machine_learning/data/minist
 
 train: train
 val: val
+
+# data properties
+mean: 0.1307
+std: 0.3081
+

@@ -4,7 +4,7 @@ from machine_learning.cfg.base import BaseCfg
 
 
 @dataclass
-class TrainCfg(BaseCfg):
+class TrainerCfg(BaseCfg):
     log_dir: str = MISSING
     ckpt_dir: str = MISSING
     seed: int = field(default=23)
@@ -12,4 +12,3 @@ class TrainCfg(BaseCfg):
     log_interval: int = field(default=10)
     save_interval: int = field(default=10)
     save_best: bool = field(default=True)
-    tfs_

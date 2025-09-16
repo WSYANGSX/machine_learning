@@ -21,7 +21,7 @@ class AutoEncoder(AlgorithmBase):
         device: Literal["cuda", "cpu", "auto"] = "auto",
     ) -> None:
         """
-        Implementation of AutoEncoder algorithm
+        Implementation of AutoEncoder algorithm.
 
         Args:
             cfg (YamlFilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg map.

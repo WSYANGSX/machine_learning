@@ -49,6 +49,7 @@ class YoloDataset(DatasetBase):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
+        mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize BaseDataset with given configuration and options."""
         self.imgsz = imgsz
@@ -71,6 +72,7 @@ class YoloDataset(DatasetBase):
             hyp=hyp,
             batch_size=batch_size,
             fraction=fraction,
+            mode=mode
         )  # cache imgs and labels
 
         if self.rect:

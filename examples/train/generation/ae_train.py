@@ -1,5 +1,5 @@
 from machine_learning.algorithms import AutoEncoder
-from machine_learning.trainer import Trainer, TrainCfg
+from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
@@ -7,7 +7,7 @@ def main():
     auto_encoder = AutoEncoder("ae.yaml")
 
     # Step 2: Configure the trainer
-    trainer_cfg = TrainCfg(
+    trainer_cfg = TrainerCfg(
         log_dir="./logs/auto_encoder/",
         ckpt_dir="./checkpoints/auto_encoder/",
     )

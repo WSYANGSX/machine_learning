@@ -1,7 +1,6 @@
 from typing import Literal, Mapping, Any
 
 import os
-import yaml
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 from numbers import Integral, Real
@@ -10,20 +9,20 @@ import torch
 from torch.amp import GradScaler
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from machine_learning.utils import get_gpu_mem
 from machine_learning.utils.logger import LOGGER
-from machine_learning.types.aliases import FilePath
 from machine_learning.networks import BaseNet, NET_MAPS
-from machine_learning.utils.constants import ALGOCFG_PATH
+from machine_learning.utils import get_gpu_mem, load_cfg, print_dict
+from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
+from machine_learning.dataset import ParserBase, PARSER_MAPS, build_dataset
 
 
 class AlgorithmBase(ABC):
     def __init__(
         self,
-        cfg: FilePath | Mapping[str, Any],
+        cfg: str | Mapping[str, Any],
         net: BaseNet | None = None,
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
@@ -61,8 +60,8 @@ class AlgorithmBase(ABC):
         # settings
         self.training = False  # training mode or not
         self.last_opt_step = -1
-        self.nbs = self.cfg["algorithm"].get("nbs", -1)
-        self.batch_size = self.cfg["data_loader"].get("batch_size", 256)
+        self.nbs = self.cfg["data"]["nbs"]
+        self.batch_size = self.cfg["data"]["batch_size"]
         self.accumulate = max(1, round(self.nbs / self.batch_size))
 
         # build nets
@@ -79,10 +78,6 @@ class AlgorithmBase(ABC):
     @property
     def val_batches(self) -> int:
         return self._val_batches
-
-    @property
-    def test_batches(self) -> int | None:
-        return self._test_batches
 
     @property
     def name(self) -> str:
@@ -108,6 +103,20 @@ class AlgorithmBase(ABC):
     def device(self) -> torch.device:
         return self._device
 
+    def _load_config(self, cfg: str | Mapping[str, Any]) -> dict:
+        if isinstance(cfg, str):
+            cfg = os.path.join(ALGOCFG_PATH, cfg)
+        cfg = load_cfg(cfg)
+
+        return cfg
+
+    def _load_datasetcfg(self, cfg: str | Mapping[str, Any]) -> dict:
+        if isinstance(cfg, str):
+            cfg = os.path.join(DATACFG_PATH, cfg)
+        cfg = load_cfg(cfg)
+
+        return cfg
+
     def _build_net(self, net: BaseNet) -> None:
         LOGGER.info(f"Building network of {self.name}...")
 
@@ -124,18 +133,25 @@ class AlgorithmBase(ABC):
                 self._add_net("net", self.net)
 
     def _init_on_trainer(
-        self, train_cfg: dict[str, Any], dataset_cfg: dict[str, Any], datasets: dict[str, Dataset]
+        self,
+        train_cfg: dict[str, Any],
+        dataset: str | Mapping[str, Any],
     ) -> None:
         """Initialize the optimizers, schedulers and datasets."""
-        self._add_cfg("train", train_cfg)
-        self._add_cfg("dataset", dataset_cfg)
+        self._add_cfg("trainer", train_cfg)
         self._init_optimizers()
         self._init_schedulers()
-        self._init_dataloader(datasets)
+        # initialize datasets
+        self._init_datasets(dataset)
+        # initialize dataloaders
+        self._init_dataloaders()
 
-    def _add_cfg(self, name, cfg: Any) -> None:
-        # add additional configuration parameters may used by algo, e.g. traincfg
-        self._cfg.update({name: cfg})
+    def _add_cfg(self, name, cfg: dict[str, Any]) -> None:
+        """add additional configuration parameters."""
+        if name not in self.cfg:
+            self.cfg[name] = cfg
+        else:
+            self.cfg[name].update(cfg)
 
     def _add_net(self, name: str, net: BaseNet) -> None:
         LOGGER.info(f"Adding network {net.__class__.__name__}...")
@@ -152,24 +168,79 @@ class AlgorithmBase(ABC):
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
-    def _load_config(self, cfg: FilePath | Mapping[str, Any]) -> dict:
-        if isinstance(cfg, Mapping):
-            cfg = dict(cfg)
-        else:
-            if not (os.path.splitext(cfg)[1] == ".yaml" or os.path.splitext(cfg)[1] == ".yml"):
-                raise ValueError("Input path is not a yaml file path.")
-            cfg_path = os.path.join(ALGOCFG_PATH, cfg)
-            with open(cfg_path, "r") as f:
-                cfg = yaml.safe_load(f)
-
-        return cfg
-
     def _validate_config(self):
         """Validate the config of the algorithm"""
-        required_sections = ["algorithm", "net", "optimizer", "scheduler", "data_loader"]
+        required_sections = ["algorithm", "net", "optimizer", "scheduler", "data"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
+
+    def _init_datasets(self, dataset: str | Mapping[str, Any]):
+        """Initialize datasets of the algorithm."""
+        LOGGER.info("Parsing dataset cfg...")
+        dataset_cfg = self._load_datasetcfg(dataset)
+        self._add_cfg("data", {"dataset": dataset_cfg})
+
+        dataset_name = dataset_cfg["name"]
+        parser: ParserBase = PARSER_MAPS[dataset_name](dataset_cfg)
+
+        # parser data
+        parse = parser.parse()
+        trian_data, val_data, test_data = parse["train"], parse["val"], parse.get("test", {})
+
+        # build dataset
+        type = dataset_cfg.get("dataset_type", None)
+        if type is None:
+            raise ValueError("The data type must be provided for Dataset mapping.")
+
+        LOGGER.info("Getting datasets...")
+        cfg = self.cfg_fusion(self.cfg)
+        self.train_dataset = build_dataset(type, cfg, trian_data[0], trian_data[1], self.batch_size, "train")
+        self.val_dataset = build_dataset(type, cfg, val_data[0], val_data[1], self.batch_size, "val")
+        if test_data:
+            self.test_dataset = build_dataset(type, cfg, test_data[0], test_data[1], self.batch_size, "test")
+        else:
+            self.test_dataset = None
+
+    def _init_dataloaders(self) -> None:
+        """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
+
+        Args:
+            data (dict[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
+            dataset.
+        """
+        LOGGER.info(f"Initializing the dataloaders of {self.name}...")
+
+        self.train_loader = DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=self.cfg["data"].get("shuffle", True),
+            num_workers=self.cfg["data"].get("workers", 8),
+            collate_fn=self.train_dataset.collate_fn if hasattr(self.train_dataset, "collate_fn") else None,
+        )
+        self._train_batches = len(self.train_loader)
+
+        self.val_loader = DataLoader(
+            dataset=self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.cfg["data"].get("workers", 8),
+            collate_fn=self.val_dataset.collate_fn if hasattr(self.val_dataset, "collate_fn") else None,
+        )
+        self._val_batches = len(self.val_loader)
+
+        if self.test_dataset:
+            self.test_loader = DataLoader(
+                dataset=self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.cfg["data"].get("workers", 8),
+                collate_fn=self.test_dataset.collate_fn if hasattr(self.test_dataset, "collate_fn") else None,
+            )
+            self._test_batches = len(self.test_loader)
+        else:
+            self.test_loader = None
+            self._test_batches = None
 
     def _init_nets(self):
         """Configure nets of the algo, initialize the weight parameters of nets and show their structures"""
@@ -186,57 +257,6 @@ class AlgorithmBase(ABC):
         self.amp = amp
         self.scaler = GradScaler() if self.amp else None
         LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
-
-    def _init_dataloader(self, datasets: Mapping[str, Dataset]) -> None:
-        """Initialize the training、validation(test) data loaders and other dataset-specific parameters.
-
-        Args:
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
-        """
-        LOGGER.info(f"Initializing the dataloaders of {self.name}...")
-
-        _necessary_key_type_couples_ = {"train": Dataset, "val": Dataset}
-        for k, t in _necessary_key_type_couples_.items():
-            if k not in datasets or not isinstance(datasets[k], t):
-                raise ValueError(f"Input data mapping has no {k} or {k} is not Dataset type.")
-
-        train_dataset, val_dataset, test_dataset = (
-            datasets["train"],
-            datasets["val"],
-            datasets["test"],
-        )
-
-        self.train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.batch_size,
-            shuffle=self.cfg["data_loader"].get("data_shuffle", True),
-            num_workers=self.cfg["data_loader"].get("num_workers", 4),
-            collate_fn=train_dataset.collate_fn if hasattr(train_dataset, "collate_fn") else None,
-        )
-        self._train_batches = len(self.train_loader)
-
-        self.val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.cfg["data_loader"].get("num_workers", 4),
-            collate_fn=val_dataset.collate_fn if hasattr(val_dataset, "collate_fn") else None,
-        )
-        self._val_batches = len(self.val_loader)
-
-        if test_dataset and isinstance(datasets["test_dataset"], Dataset):
-            self.test_loader = DataLoader(
-                dataset=test_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.cfg["data_loader"].get("num_workers", 4),
-                collate_fn=test_dataset.collate_fn if hasattr(test_dataset, "collate_fn") else None,
-            )
-            self._test_batches = len(self.test_loader)
-        else:
-            self.test_loader = None
-            self._test_batches = None
 
     def _init_optimizers(self):
         """Configure the training optimizer"""
@@ -269,7 +289,7 @@ class AlgorithmBase(ABC):
             ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
 
     def _init_schedulers(self):
-        """Configure the learning rate scheduler"""
+        """Initialize the learning rate scheduler"""
         LOGGER.info(f"Initializing the schedulers of {self.name}...")
 
         self.sch_config = self._cfg["scheduler"]
@@ -315,6 +335,18 @@ class AlgorithmBase(ABC):
         summary.append("Schedulers:\n" + "\n".join(sched_info) if sched_info else "Schedulers: None")
 
         return "\n".join(summary)
+
+    def cfg_fusion(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        protected_keys = ["optimizer", "scheduler", "net"]
+
+        items = []
+        for key, value in cfg.items():
+            if isinstance(value, dict) and key not in protected_keys:
+                items.extend(self.cfg_fusion(value).items())
+            else:
+                items.append((key, value))
+
+        return dict(items)
 
     def pbar_log(
         self,

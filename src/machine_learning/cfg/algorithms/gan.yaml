@@ -25,9 +25,3 @@ scheduler:
 
 net:
   initialize_weights: True
-
-data_loader:
-  num_workers: 4
-  shuffle: True
-  batch_size: 1024
-  subdevision: 1  

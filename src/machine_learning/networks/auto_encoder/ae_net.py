@@ -3,7 +3,7 @@ from machine_learning.networks import BaseNet
 
 
 class AENet(BaseNet):
-    def __init__(self, img_size: int, z_dim: int) -> None:
+    def __init__(self, imgsz: int, z_dim: int) -> None:
         """
         auto_encoder network
 
@@ -13,7 +13,7 @@ class AENet(BaseNet):
         """
         super().__init__()
 
-        self.img_size = img_size
+        self.img_size = imgsz
         self.z_dim = z_dim
 
         self.encoder = nn.Sequential(

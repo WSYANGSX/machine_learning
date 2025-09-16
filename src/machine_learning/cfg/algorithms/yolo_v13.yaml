@@ -1,8 +1,8 @@
 algorithm: 
   # common
   name: "yolov13"
-  nbs: 64 # (int) nominal batch size, -1 represent no
-  image_size: 640
+  imgsz: 640
+  task: "detect"
 
   # train
   use_dfl: True
@@ -12,7 +12,7 @@ algorithm:
   beta: 6.0
   close_mosaic_epoch: 10
   max_det: 300
-  single_cls: False
+  
   plots: True # (bool) save plots and images during train/val
 
   # loss weight
@@ -57,8 +57,13 @@ scheduler:
 net:
   initialize_weights: True
 
-data_loader:
-  num_workers: 6
-  shuffle: True
-  batch_size: 256
+data:
+  single_cls: False
+  rect: False
+  stride: 32
+  classes: 
   
+
+train:
+  nbs: 64 # (int) nominal batch size, -1 represent no
+  batch_size: 32
