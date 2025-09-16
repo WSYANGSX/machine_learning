@@ -359,7 +359,7 @@ class AlgorithmBase(ABC):
         format_str = "%-12s" * 2
 
         if mode == "train":
-            epoch_str = "%g/%g" % (epoch + 1, self.cfg["train"]["epochs"])
+            epoch_str = "%g/%g" % (epoch + 1, self.cfg["trainer"]["epochs"])
             mem = "%.3gG" % get_gpu_mem()
             args.extend([epoch_str, mem])
         else:

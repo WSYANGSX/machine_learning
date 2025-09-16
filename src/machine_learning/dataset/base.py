@@ -14,6 +14,7 @@ from copy import deepcopy
 from pympler import asizeof
 from torch.utils.data import Dataset
 from multiprocessing.pool import ThreadPool
+from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
@@ -218,10 +219,10 @@ class DatasetBase(Dataset):
 
     def __getitem__(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         """Returns transformed label information for given index."""
+        data, label = self.get_data_and_label(index)
         if self.transforms is not None:
-            return self.transforms(self.get_data_and_label(index))
-        else:
-            return self.get_data_and_label(index)
+            data = self.transforms(data)
+        return data, label
 
     def get_data_and_label(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         label = deepcopy(self.labels[index])
@@ -357,4 +358,4 @@ class DatasetBase(Dataset):
                 return Compose([])
             ```
         """
-        ...
+        return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])

@@ -23,7 +23,7 @@ net:
   initialize_weights: True
 
 data:
-  cache: False
+  cache: 
   augment: True
   fraction: 1.0
   nbs: -1
