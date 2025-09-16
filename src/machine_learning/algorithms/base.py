@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.networks import BaseNet, NET_MAPS
-from machine_learning.utils import get_gpu_mem, load_cfg, print_dict
+from machine_learning.utils import get_gpu_mem, load_cfg
 from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
 from machine_learning.dataset import ParserBase, PARSER_MAPS, build_dataset
 
