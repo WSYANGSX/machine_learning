@@ -33,6 +33,36 @@ class DatasetBase(Dataset):
         hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
         batch_size (int, optional): Size of batches. Defaults to None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+        mode (Literal["train", "val", "test"]): The mode of the dataset.
+
+    Properties:
+        data (list[np.ndarray]): List of data.
+        data_files (list[str]): List of data file paths.
+        data_npy_files (list[str]): List of data .npy file paths.
+        labels (list[dict[str, Any]]): List of label data dictionaries.
+        label_files (list[str]): List of label file paths.
+        length (int): Number of data in the dataset.
+        transforms (callable): Transformation function.
+
+    Methods:
+        get_labels(): Get the labels of the dataset.
+        get_labels_np(np.ndarray): Get the labels of the dataset from np.ndarray label source.
+        cache_labels(int): Cache labels from label file paths and format labels in a custom style using lread() and label_format().
+        cache_data_np(np.ndarray): Cache the data of the dataset from np.ndarray data source.
+        cache_data(int): Cache data from data file paths.
+        cache_data_to_ram(int): Cache data to RAM.
+        cache_data_to_disk(int): Cache data to Disk.
+        load_data(int): Load a data.
+        __len__(): Return the number of items in the dataset.
+        __getitem__(int): Returns transformed label information for given index.
+        get_data_and_label(int): Returns Data and label information for given index.
+        update_labels_info(dict[str, Any]): Update labels in get_data_and_label().
+        check_cache_ram(float): Check data caching requirements vs available memory.
+        check_cache_disk(float): Check data caching requirements vs disk free space.
+        lread(FilePath): Load labels from label file path by a certain logic.
+        label_format(np.ndarray | None): Return the label in the custom format dictionaries.
+        build_transforms(dict[str, Any]): Build data transform.
+
     """
 
     def __init__(
@@ -225,11 +255,16 @@ class DatasetBase(Dataset):
         return data, label
 
     def get_data_and_label(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
+        """Returns Data and label information for given index."""
         label = deepcopy(self.labels[index])
         data = self.load_data(index)
         label = self.update_labels_info(label)
 
         return data, label
+
+    def update_labels_info(self, label: dict[str, Any]) -> dict[str, Any]:
+        """Custom your label format here."""
+        return label
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
         """Check data caching requirements vs available memory."""
@@ -285,8 +320,8 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    def lread(self, path: FilePath) -> dict[str, Any]:
-        """Users implement their own label reading logic, and label format.
+    def lread(self, path: FilePath) -> np.ndarray | None:
+        """Users implement their own label reading logic.
 
         Args:
             path (FilePath): label file path.
@@ -296,10 +331,6 @@ class DatasetBase(Dataset):
         """
         label = self.file_read(path)
 
-        return label
-
-    def update_labels_info(self, label) -> dict[str, Any]:
-        """Custom your label format here."""
         return label
 
     @staticmethod

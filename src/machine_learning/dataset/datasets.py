@@ -15,19 +15,20 @@ class YoloDataset(DatasetBase):
     YoloDataset class for loading object detection and/or segmentation labels in YOLO format.
 
     Args:
-        imgs (list[str] | np.ndarray): Path list to imgs or imgs itself with np.ndarray format.
-        labels (list[str] | np.ndarray): Path list to the labels or labels itself with np.ndarray format.
-        imgsz (list[str] | np.ndarray): Image size. Defaults to 640.
-        rect (bool, optional): If True, rectangular training is used. Defaults to False.
-        stride (int, optional): Stride. Defaults to 32.
-        pad (float, optional): Padding. Defaults to 0.0.
-        single_cls (bool, optional): If True, single class training is used. Defaults to False.
+        imgs (list[str]): Path list to imgs or imgs itself with np.ndarray format.
+        labels (list[str]): Path list to the labels or labels itself with np.ndarray format.
+        imgsz (int): Image size. Defaults to 640.
+        rect (bool): If True, rectangular training is used. Defaults to False.
+        stride (int): Stride. Defaults to 32.
+        pad (float): Padding. Defaults to 0.0.
+        single_cls (bool): If True, single class training is used. Defaults to False.
         classes (list): List of included classes. Default is None.
-        cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
-        augment (bool, optional): If True, data augmentation is applied. Defaults to True.
+        cache (bool): Cache data to RAM or disk during training. Defaults to False.
+        augment (bool): If True, data augmentation is applied. Defaults to True.
         hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
-        batch_size (int, optional): Size of batches. Defaults to None.
+        batch_size (int): Size of batches. Defaults to None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+        mode (Literal["train", "val", "test"]): The mode of the dataset.
 
     Returns:
         (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
