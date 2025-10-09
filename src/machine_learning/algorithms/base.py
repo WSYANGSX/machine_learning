@@ -16,7 +16,7 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.networks import BaseNet, NET_MAPS
 from machine_learning.utils import get_gpu_mem, load_cfg
 from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
-from machine_learning.dataset import ParserBase, PARSER_MAPS, build_dataset
+from machine_learning.dataset import ParserBase, PARSER_MAPS, build_dataset, build_dataloader
 
 
 class AlgorithmBase(ABC):
@@ -211,31 +211,31 @@ class AlgorithmBase(ABC):
         """
         LOGGER.info(f"Initializing the dataloaders of {self.name}...")
 
-        self.train_loader = DataLoader(
+        self.train_loader = build_dataloader(
             dataset=self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=self.cfg["data"].get("shuffle", True),
-            num_workers=self.cfg["data"].get("workers", 8),
-            collate_fn=self.train_dataset.collate_fn if hasattr(self.train_dataset, "collate_fn") else None,
+            workers=self.cfg["data"].get("workers", 8),
+            shuffle=self.cfg["data"].get("shuffle"),
+            mode="train",
         )
         self._train_batches = len(self.train_loader)
 
-        self.val_loader = DataLoader(
+        self.val_loader = build_dataloader(
             dataset=self.val_dataset,
             batch_size=self.batch_size,
+            workers=self.cfg["data"].get("workers", 8),
             shuffle=False,
-            num_workers=self.cfg["data"].get("workers", 8),
-            collate_fn=self.val_dataset.collate_fn if hasattr(self.val_dataset, "collate_fn") else None,
+            mode="train",
         )
         self._val_batches = len(self.val_loader)
 
         if self.test_dataset:
-            self.test_loader = DataLoader(
-                dataset=self.test_dataset,
+            self.test_loader = build_dataloader(
+                dataset=self.val_dataset,
                 batch_size=self.batch_size,
+                workers=self.cfg["data"].get("workers", 8),
                 shuffle=False,
-                num_workers=self.cfg["data"].get("workers", 8),
-                collate_fn=self.test_dataset.collate_fn if hasattr(self.test_dataset, "collate_fn") else None,
+                mode="test",
             )
             self._test_batches = len(self.test_loader)
         else:

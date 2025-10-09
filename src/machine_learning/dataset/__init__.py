@@ -7,6 +7,8 @@ from .base import DatasetBase
 from .datasets import YoloDataset, MultimodalDataset
 from .parsers import ParserBase, MinistParser, CocoParser, FlirParser, VedaiParser
 
+from machine_learning.utils.logger import LOGGER
+
 __all__ = [
     "DatasetBase",
     "YoloDataset",
@@ -75,6 +77,7 @@ def build_dataset(
             imgs=data,
             labels=labels,
             imgsz=cfg.get("imgsz", 640),
+            num_cls=cfg.get("num_cls"),
             task=cfg["task"],
             rect=cfg["rect"],
             stride=cfg.get("stride", 32),
@@ -92,22 +95,43 @@ def build_dataset(
         ...
 
 
-def build_dataloader(dataset: Dataset, batch: int, workers: int, shuffle: bool) -> DataLoader:
-    """Return an InfiniteDataLoader or DataLoader for train or val set."""
-    batch = min(batch, len(dataset))
-    nd = torch.cuda.device_count()  # number of CUDA devices
-    nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
-    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
-    generator = torch.Generator()
-    generator.manual_seed(6148914691236517205 + RANK)
-    return InfiniteDataLoader(
+def build_dataloader(
+    dataset: Dataset,
+    batch_size: int,
+    workers: int,
+    shuffle: bool | None,
+    mode: str | None = "train",
+) -> DataLoader:
+    """Return an InfiniteDataLoader or DataLoader for train or val(test) set."""
+    shuffle = shuffle if shuffle is not None else mode == "train"
+    if getattr(dataset, "rect", False) and shuffle:
+        LOGGER.warning("'Rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
+        shuffle = False
+
+    batch_size = min(batch_size, len(dataset))
+    workers = workers if mode == "train" else workers * 2
+
+    return DataLoader(
         dataset=dataset,
-        batch_size=batch,
-        shuffle=shuffle and sampler is None,
-        num_workers=nw,
-        sampler=sampler,
-        pin_memory=PIN_MEMORY,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=workers,
         collate_fn=getattr(dataset, "collate_fn", None),
-        worker_init_fn=seed_worker,
-        generator=generator,
     )
+
+    # nd = torch.cuda.device_count()  # number of CUDA devices
+    # nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
+    # sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    # generator = torch.Generator()
+    # generator.manual_seed(6148914691236517205 + RANK)
+    # return InfiniteDataLoader(
+    #     dataset=dataset,
+    #     batch_size=batch,
+    #     shuffle=shuffle and sampler is None,
+    #     num_workers=nw,
+    #     sampler=sampler,
+    #     pin_memory=PIN_MEMORY,
+    #     collate_fn=getattr(dataset, "collate_fn", None),
+    #     worker_init_fn=seed_worker,
+    #     generator=generator,
+    # )

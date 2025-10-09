@@ -8,7 +8,7 @@ ALGOCFG_PATH = "/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg
 
 
 # Img file types
-IMG_TYPES = [
+IMG_FORMATS = [
     ".bmp",
     ".dib",
     ".jpeg",

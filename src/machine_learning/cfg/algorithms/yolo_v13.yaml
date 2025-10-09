@@ -62,7 +62,9 @@ data:
   rect: False
   stride: 32
   classes: 
-  
+  bgr: 0.0
+  overlap_mask: True # (bool) merge object masks into a single image mask during training (segment train only)
+  mask_ratio: 4 # (int) mask downsample ratio (segment train only)
 
 train:
   nbs: 64 # (int) nominal batch size, -1 represent no

@@ -6,6 +6,7 @@ train: images_train.txt # train images (relative to 'path') 56599 images
 val: images_val.txt # val images (relative to 'path') 2346 images
 
 # Classes
+num_cls: 80
 names:
   0: person
   1: bicycle
