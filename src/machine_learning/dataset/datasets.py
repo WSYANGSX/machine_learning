@@ -398,7 +398,6 @@ class YoloDataset(DatasetBase):
 
         self.im_hw0 = [None] * length
         self.register_buffer("im_hw0", self.im_hw0)
-
         self.im_hw = [None] * length
         self.register_buffer("im_hw", self.im_hw)
 
