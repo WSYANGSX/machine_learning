@@ -74,40 +74,8 @@ class MinistParser(ParserBase):
         val_labels = self.load_idx1_ubyte(os.path.join(val_dir, "labels.idx1-ubyte"))[0]
 
         return {
-            "train": [train_imgs, train_labels],
-            "val": [val_imgs, val_labels],
-        }
-
-
-class CocoTestParser(ParserBase):
-    """
-    Coco test dataset parser.
-    """
-
-    def __init__(self, data_cfg: dict[str, dict[str, Any]]):
-        super().__init__(data_cfg)
-
-        self.train = self.data_cfg["train"]
-        self.val = self.data_cfg["val"]
-
-    def parse(self) -> dict[str, Any]:
-        # train、 val list
-        train_imgs = list_from_txt(os.path.join(self.dataset_path, self.train))
-        val_imgs = list_from_txt(os.path.join(self.dataset_path, self.val))
-
-        train_labels = [img.replace("jpg", "txt", 1) for img in train_imgs]
-        val_labels = [img.replace("jpg", "txt", 1) for img in val_imgs]
-
-        # abs path
-        train_imgs = [os.path.join(self.dataset_path + "/images/train", img) for img in train_imgs]
-        val_imgs = [os.path.join(self.dataset_path + "/images/val", img) for img in val_imgs]
-
-        train_labels = [os.path.join(self.dataset_path + "/labels/train", label) for label in train_labels]
-        val_labels = [os.path.join(self.dataset_path + "/labels/val", label) for label in val_labels]
-
-        return {
-            "train": [train_imgs, train_labels],
-            "val": [val_imgs, val_labels],
+            "train": {"data": train_imgs, "labels": train_labels},
+            "val": {"data": val_imgs, "labels": val_labels},
         }
 
 
@@ -138,8 +106,40 @@ class CocoParser(ParserBase):
         val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
         return {
-            "train": [train_imgs, train_labels],
-            "val": [val_imgs, val_labels],
+            "train": {"data": train_imgs, "labels": train_labels},
+            "val": {"data": val_imgs, "labels": val_labels},
+        }
+
+
+class CocoV2Parser(ParserBase):
+    """
+    Coco dataset parser (v2).
+    """
+
+    def __init__(self, data_cfg: dict[str, dict[str, Any]]):
+        super().__init__(data_cfg)
+
+        self.train = self.data_cfg["train"]
+        self.val = self.data_cfg["val"]
+
+    def parse(self) -> dict[str, Any]:
+        # train、 val list
+        train_imgs = list_from_txt(os.path.join(self.dataset_path, self.train))
+        val_imgs = list_from_txt(os.path.join(self.dataset_path, self.val))
+
+        train_labels = [img.replace("jpg", "txt", 1) for img in train_imgs]
+        val_labels = [img.replace("jpg", "txt", 1) for img in val_imgs]
+
+        # abs path
+        train_imgs = [os.path.join(self.dataset_path + "/images/train", img) for img in train_imgs]
+        val_imgs = [os.path.join(self.dataset_path + "/images/val", img) for img in val_imgs]
+
+        train_labels = [os.path.join(self.dataset_path + "/labels/train", label) for label in train_labels]
+        val_labels = [os.path.join(self.dataset_path + "/labels/val", label) for label in val_labels]
+
+        return {
+            "train": {"data": train_imgs, "labels": train_labels},
+            "val": {"data": val_imgs, "labels": val_labels},
         }
 
 

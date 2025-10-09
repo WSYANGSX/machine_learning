@@ -51,7 +51,6 @@ class YoloDataset(DatasetBase):
         self,
         imgs: np.ndarray | list[FilePath],
         labels: np.ndarray | list[FilePath],
-        cfg: dict[str, Any] | None = None,
         imgsz: int = 640,
         num_cls: int = 80,
         task: Literal["detect", "pose", "segment"] = "detect",
@@ -68,7 +67,6 @@ class YoloDataset(DatasetBase):
         mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize BaseDataset with given configuration and options."""
-        self.cfg = cfg
         self.imgsz = imgsz
         self.rect = rect
         self.stride = stride
@@ -119,13 +117,17 @@ class YoloDataset(DatasetBase):
         self.nc = 0
 
         # key points setting
-        self.nkpt, self.ndim = self.cfg.get("kpt_shape", (0, 0))
+        self.nkpt, self.ndim = self.hyp.get("kpt_shape", (0, 0))
         if self.use_keypoints and (self.nkpt <= 0 or self.ndim not in {2, 3}):
             raise ValueError(
                 "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                 "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
             )
-        super().get_labels(f"{self.nf} images, {self.nm + self.ne} backgrounds, {self.nc} corrupt")
+
+        def get_stats_desc():
+            return f"{self.nf} images, {self.nm + self.ne} backgrounds, {self.nc} corrupt"
+
+        super().get_labels(get_stats_desc)
 
     def lread(self, index: int) -> tuple[np.ndarray | None]:
         """Read label"""
@@ -137,7 +139,7 @@ class YoloDataset(DatasetBase):
             im = Image.open(im_file)
             im.verify()  # PIL verify
             shape = (im.size[1], im.size[0])  # hw
-            assert im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}."
+            assert "." + im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}."
 
             # Verify labels
             if os.path.isfile(lb_file):
@@ -179,7 +181,7 @@ class YoloDataset(DatasetBase):
                     self.ne += 1  # label empty
                     lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
             else:
-                self.nm = 1  # label missing
+                self.nm += 1  # label missing
                 lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
             if self.use_keypoints:
                 keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.ndim)
@@ -188,6 +190,7 @@ class YoloDataset(DatasetBase):
                     keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
             lb = lb[:, :5]
             return im_file, lb, shape, segments, keypoints
+
         except Exception as e:
             self.nc += 1
             LOGGER.info(f"{im_file}: ignoring corrupt image/label: {e}")
@@ -285,9 +288,9 @@ class YoloDataset(DatasetBase):
                 except Exception as e:
                     LOGGER.warning(f"Removing corrupt *.npy image file {imfn} due to: {e}")
                     Path(imfn).unlink(missing_ok=True)
-                    im = self.fread(imf)
+                    im = self.file_read(imf)
             else:
-                im = self.fread(imf)
+                im = self.file_read(imf)
 
             if im is not None:
                 h0, w0 = im.shape[:2]  # orig hw
@@ -306,11 +309,11 @@ class YoloDataset(DatasetBase):
                         (h0, w0),
                         im.shape[:2],
                     )  # im, hw_original, hw_resized
-                    self.buffer.append(i)
-                    if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
-                        j = self.buffer.pop(0)
+                    self.mosaic_buffer.append(i)
+                    if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
+                        j = self.mosaic_buffer.pop(0)
                         if self.cache != "ram":
-                            self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+                            self.imgs[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
                 return im, (h0, w0), im.shape[:2]
 
@@ -321,11 +324,14 @@ class YoloDataset(DatasetBase):
 
         return im, self.im_hw0[i], self.im_hw[i]
 
-    def get_image_and_label(self, index):
+    def get_data_and_label(self, index: int):
+        return self.get_image_and_label(index)
+
+    def get_image_and_label(self, index: int):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
-        label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["img"], label["ori_shape"], label["resized_shape"] = self.load_data(index)
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
             label["resized_shape"][1] / label["ori_shape"][1],
@@ -368,7 +374,7 @@ class YoloDataset(DatasetBase):
         skips = 0
         for _ in range(n):
             i = random.randint(0, self.length - 1)
-            img = self.file_read(self.im_files[i])
+            img = self.file_read(self.img_files[i])
             if img is None:
                 skips += 1
                 continue
@@ -386,11 +392,21 @@ class YoloDataset(DatasetBase):
             return False
         return True
 
+    def create_buffers(self, length):
+        """Build buffers for data and labels storage."""
+        super().create_buffers(length)
+
+        self.im_hw0 = [None] * length
+        self.register_buffer("im_hw0", self.im_hw0)
+
+        self.im_hw = [None] * length
+        self.register_buffer("im_hw", self.im_hw)
+
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
         if self.augment:
-            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
-            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            hyp["mosaic"] = hyp["mosaic"] if self.augment and not self.rect else 0.0
+            hyp["mixup"] = hyp["mixup"] if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
@@ -402,18 +418,18 @@ class YoloDataset(DatasetBase):
                 return_keypoint=self.use_keypoints,
                 return_obb=self.use_obb,
                 batch_idx=True,
-                mask_ratio=hyp.mask_ratio,
-                mask_overlap=hyp.overlap_mask,
-                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+                mask_ratio=hyp["mask_ratio"],
+                mask_overlap=hyp["mask_overlap"],
+                bgr=hyp["bgr"] if self.augment else 0.0,  # only affect training.
             )
         )
         return transforms
 
     def close_mosaic(self, hyp):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
-        hyp.mosaic = 0.0  # set mosaic ratio=0.0
-        hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
-        hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp["mosaic"] = 0.0  # set mosaic ratio=0.0
+        hyp["copy_paste"] = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp["mixup"] = 0.0  # keep the same behavior as previous v8 close-mosaic
         self.transforms = self.build_transforms(hyp)
 
     @staticmethod
@@ -434,20 +450,6 @@ class YoloDataset(DatasetBase):
             new_batch["batch_idx"][i] += i  # add target image index for build_targets()
         new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
         return new_batch
-
-    def create_buffers(self, length):
-        """Build buffers for data and labels storage."""
-        super().create_buffers(length)
-
-        self.im_hw0 = [None] * length
-        self.im_hw = [None] * length
-
-    def remove_item(self, i):
-        """Remove a item of buffers according to the index."""
-        super().remove_item(i)
-
-        self.im_hw.pop(i)
-        self.im_hw0.pop(i)
 
 
 class MultimodalDataset(DatasetBase):

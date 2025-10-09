@@ -16,7 +16,7 @@ IMG_FORMATS = [
     ".jpe",
     ".jp2",
     ".png",
-    "pbm",
+    ".pbm",
     ".pgm",
     ".ppm",
     ".sr",

@@ -9,7 +9,6 @@ import torch
 from torch.amp import GradScaler
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.logger import LOGGER
@@ -181,12 +180,11 @@ class AlgorithmBase(ABC):
         dataset_cfg = self._load_datasetcfg(dataset)
         self._add_cfg("data", {"dataset": dataset_cfg})
 
+        # parser data
         dataset_name = dataset_cfg["name"]
         parser: ParserBase = PARSER_MAPS[dataset_name](dataset_cfg)
-
-        # parser data
-        parse = parser.parse()
-        trian_data, val_data, test_data = parse["train"], parse["val"], parse.get("test", {})
+        parsing = parser.parse()
+        trian_parsing, val_parsing, test_parsing = parsing["train"], parsing["val"], parsing.get("test", {})
 
         # build dataset
         type = dataset_cfg.get("dataset_type", None)
@@ -195,10 +193,10 @@ class AlgorithmBase(ABC):
 
         LOGGER.info("Getting datasets...")
         cfg = self.cfg_fusion(self.cfg)
-        self.train_dataset = build_dataset(type, cfg, trian_data[0], trian_data[1], self.batch_size, "train")
-        self.val_dataset = build_dataset(type, cfg, val_data[0], val_data[1], self.batch_size, "val")
-        if test_data:
-            self.test_dataset = build_dataset(type, cfg, test_data[0], test_data[1], self.batch_size, "test")
+        self.train_dataset = build_dataset(type, cfg, trian_parsing, self.batch_size, "train")
+        self.val_dataset = build_dataset(type, cfg, val_parsing, self.batch_size, "val")
+        if test_parsing:
+            self.test_dataset = build_dataset(type, cfg, test_parsing, self.batch_size, "test")
         else:
             self.test_dataset = None
 

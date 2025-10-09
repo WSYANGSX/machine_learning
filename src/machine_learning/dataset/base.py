@@ -1,4 +1,4 @@
-from typing import Any, Union, Literal
+from typing import Any, Union, Literal, Callable
 
 import os
 import cv2
@@ -78,6 +78,7 @@ class DatasetBase(Dataset):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
+        self.hyp = hyp
         self.augment = augment
         self.fraction = fraction
         self.batch_size = batch_size
@@ -91,41 +92,45 @@ class DatasetBase(Dataset):
         self.length = round(len(labels) * self.fraction)
         self.create_buffers(self.length)
 
-        # cache labels
-        if isinstance(labels, np.ndarray):
-            self.get_labels_np(labels)
-        elif isinstance(labels, list):
-            self.label_files = labels[: self.length]
-            self.get_labels()
-        else:
-            raise TypeError(f"The input labels must be of np.ndarray or list type, but got {type(data)}.")
-        self.length = len(self.labels)
+        # init cache
+        self.init_cache(data, labels)
 
-        # cache data
-        if isinstance(data, np.ndarray):
+        # update buffers length
+        self.update_buffers()
+
+        # Buffer thread for data fusion
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
+        # Transforms
+        self.transforms = self.build_transforms(hyp=hyp)
+
+    def init_cache(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
+        # np.ndarray
+        if isinstance(data, np.ndarray) and isinstance(labels, np.ndarray):
+            self.get_labels_np(labels)
             self.cache_data_np(data)
-        elif isinstance(data, list):
+
+        # list[str]
+        elif isinstance(data, list) and isinstance(labels, list):
+            self.label_files = labels[: self.length]
             self.data_files = data[: self.length]
+
+            # labels
+            self.get_labels()
+
+            # data
             self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
 
             if self.cache == "ram" and self.check_cache_ram():
                 self.cache_data()
             elif self.cache == "disk" and self.check_cache_disk():
                 self.cache_data()
+
         else:
-            raise TypeError(f"The input data must be of np.ndarray or list type, but got {type(data)}.")
+            raise TypeError("The input data and labels must be the same of type (np.ndarray or list).")
 
-        # update buffers length
-        self.update_buffers()
-
-        # Buffer thread for data fusion
-        self.buffer = []
-        self.max_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
-
-        # Transforms
-        self.transforms = self.build_transforms(hyp=hyp)
-
-    def get_labels(self, desc: str = "") -> None:
+    def get_labels(self, desc_func: Callable) -> None:
         """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} labels...")
@@ -135,7 +140,7 @@ class DatasetBase(Dataset):
             for _, lb in pbar:
                 if lb:
                     b += asizeof.asizeof(lb)
-                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)" + desc
+                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func()
             pbar.close()
 
     def get_labels_np(self, labels: np.ndarray) -> None:
@@ -219,7 +224,7 @@ class DatasetBase(Dataset):
             else:
                 data = self.file_read(dtf)
 
-            if data is not None:  # data corrupt
+            if data is not None:
                 # Add to buffer if training with augmentations
                 if self.augment:
                     self.data[i] = data
@@ -228,7 +233,7 @@ class DatasetBase(Dataset):
                         j = self.buffer.pop(0)
                         if self.cache != "ram":
                             self.data[j] = None
-            else:
+            else:  # data corrupt
                 self.corrupt_idx.add(i)
 
             return data
@@ -382,26 +387,41 @@ class DatasetBase(Dataset):
 
     def create_buffers(self, length: int) -> None:
         """Build buffers for data and labels storage."""
+        self.buffers = {}
+
         self.labels = [None] * length
         self.label_files = [None] * length
         self.data = [None] * length
         self.data_files = [None] * length
         self.data_npy_files = [None] * length
 
+        self.buffers["labels"] = self.labels
+        self.buffers["label_files"] = self.label_files
+        self.buffers["data"] = self.data
+        self.buffers["data_files"] = self.data_files
+        self.buffers["data_npy_files"] = self.data_npy_files
+
+    def register_buffer(self, name: str, buffer: list) -> None:
+        if len(buffer) != len(self.data):
+            raise ValueError(f"The length of {name} buffer must be equal to data buffer.")
+
+        if name not in self.buffers.keys():
+            self.buffers[name] = buffer
+        else:
+            raise KeyError(f"Buffer {name} already exists.")
+
     def update_buffers(self) -> None:
         """Update the buffer and delete invalid data (None)."""
         if self.corrupt_idx:
             LOGGER.info(f"Removing invalid items from buffers...: {[id for id in self.corrupt_idx]}")
-            for i in self.corrupt_idx:
+
+            for i in sorted(self.corrupt_idx, reverse=True):
                 self.remove_item(i)
+            self.corrupt_idx.clear()
+
         self.length = len(self.labels)
 
     def remove_item(self, i: int) -> None:
         """Remove a item of buffers according to the index."""
-        # remove label
-        self.labels.pop(i)
-        self.label_files.pop(i)
-        # remove data
-        self.data.pop(i)
-        self.data_files.pop(i)
-        self.data_npy_files.pop(i)
+        for buffer in self.buffers.values():
+            buffer.pop(i)

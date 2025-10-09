@@ -39,8 +39,7 @@ DATASET_MAPS = {
 def build_dataset(
     type: str,
     cfg: dict[str, Any],
-    data: np.ndarray | list[str],
-    labels: np.ndarray | list[str],
+    parsing: np.ndarray | list[str],
     batch_size: int,
     mode: Literal["train", "val", "test"],
 ) -> Dataset:
@@ -49,8 +48,7 @@ def build_dataset(
     Args:
         type (str): The dataset type.
         cfg (dict[str, Any]): The dataset configure.
-        data (np.ndarray | list[str]): The data of the dataset.
-        data (np.ndarray | list[str]): The labels of the dataset.
+        parsing: The parsed data and label lists of the dataset.
         batch_size (int): The batch size of the dataset.
         mode (Literal[&quot;train&quot;, &quot;val&quot;, &quot;test&quot;]): The mode of the dataset.
 
@@ -63,8 +61,8 @@ def build_dataset(
 
     if type == "DatasetBase":
         return DatasetBase(
-            data=data,
-            labels=labels,
+            data=parsing["data"],
+            labels=parsing["labels"],
             cache=cache,
             augment=augment,
             hyp=cfg,
@@ -74,8 +72,8 @@ def build_dataset(
         )
     elif type == "YoloDataset":
         return YoloDataset(
-            imgs=data,
-            labels=labels,
+            imgs=parsing["data"],
+            labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),
             num_cls=cfg.get("num_cls"),
             task=cfg["task"],
@@ -91,8 +89,26 @@ def build_dataset(
             fraction=fraction,
             mode=mode,
         )
-    elif type == "multimodal":
+    elif type == "MultiModal":
         ...
+        # return MultimodalDataset(
+        #     data=parsing["data"],
+        #     labels=parsing["labels"],
+        #     imgsz=cfg.get("imgsz", 640),
+        #     num_cls=cfg.get("num_cls"),
+        #     task=cfg["task"],
+        #     rect=cfg["rect"],
+        #     stride=cfg.get("stride", 32),
+        #     pad=0.0 if mode == "train" else 0.5,
+        #     single_cls=cfg.get("single_cls", False),
+        #     classes=cfg.get("class", None),
+        #     cache=cache,
+        #     augment=augment,
+        #     hyp=cfg,
+        #     batch_size=batch_size,
+        #     fraction=fraction,
+        #     mode=mode,
+        # )
 
 
 def build_dataloader(
