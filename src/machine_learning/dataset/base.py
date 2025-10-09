@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 
 from tqdm import tqdm
+from addict import Dict
 from pathlib import Path
 from copy import deepcopy
 from pympler import asizeof
@@ -78,7 +79,7 @@ class DatasetBase(Dataset):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
-        self.hyp = hyp
+        self.hyp = Dict(hyp)
         self.augment = augment
         self.fraction = fraction
         self.batch_size = batch_size
@@ -103,7 +104,7 @@ class DatasetBase(Dataset):
         self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
         # Transforms
-        self.transforms = self.build_transforms(hyp=hyp)
+        self.transforms = self.build_transforms(hyp=self.hyp)
 
     def init_cache(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
         # np.ndarray
@@ -244,14 +245,14 @@ class DatasetBase(Dataset):
         """Returns the length of the labels list for the dataset."""
         return self.length
 
-    def __getitem__(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
+    def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Returns transformed label information for given index."""
-        data, label = self.get_data_and_label(index)
-        if self.transforms is not None:
-            data = self.transforms(data)
-        return data, label
+        if self.transforms:
+            return self.transforms(self.get_data_and_label(index))  # The transform must take label as input.
+        else:
+            self.get_data_and_label(index)
 
-    def get_data_and_label(self, index: int) -> tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
+    def get_data_and_label(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Returns Data and label information for given index."""
         label = deepcopy(self.labels[index])
         data = self.load_data(index)

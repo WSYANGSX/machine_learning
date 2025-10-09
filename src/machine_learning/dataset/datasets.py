@@ -324,10 +324,10 @@ class YoloDataset(DatasetBase):
 
         return im, self.im_hw0[i], self.im_hw[i]
 
-    def get_data_and_label(self, index: int):
+    def get_data_and_label(self, index: int) -> dict[str, Any]:
         return self.get_image_and_label(index)
 
-    def get_image_and_label(self, index: int):
+    def get_image_and_label(self, index: int) -> dict[str, Any]:
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
@@ -340,7 +340,7 @@ class YoloDataset(DatasetBase):
             label["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_labels_info(label)
 
-    def update_labels_info(self, label):
+    def update_labels_info(self, label: dict[str, Any]) -> dict[str, Any]:
         """
         Custom your label format here.
 
@@ -404,8 +404,8 @@ class YoloDataset(DatasetBase):
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
         if self.augment:
-            hyp["mosaic"] = hyp["mosaic"] if self.augment and not self.rect else 0.0
-            hyp["mixup"] = hyp["mixup"] if self.augment and not self.rect else 0.0
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
@@ -417,18 +417,18 @@ class YoloDataset(DatasetBase):
                 return_keypoint=self.use_keypoints,
                 return_obb=self.use_obb,
                 batch_idx=True,
-                mask_ratio=hyp["mask_ratio"],
-                mask_overlap=hyp["mask_overlap"],
-                bgr=hyp["bgr"] if self.augment else 0.0,  # only affect training.
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.mask_overlap,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
             )
         )
         return transforms
 
     def close_mosaic(self, hyp):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
-        hyp["mosaic"] = 0.0  # set mosaic ratio=0.0
-        hyp["copy_paste"] = 0.0  # keep the same behavior as previous v8 close-mosaic
-        hyp["mixup"] = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp.mosaic = 0.0  # set mosaic ratio=0.0
+        hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
         self.transforms = self.build_transforms(hyp)
 
     @staticmethod

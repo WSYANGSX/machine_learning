@@ -192,7 +192,7 @@ class AlgorithmBase(ABC):
             raise ValueError("The data type must be provided for Dataset mapping.")
 
         LOGGER.info("Getting datasets...")
-        cfg = self.cfg_fusion(self.cfg)
+        cfg = self.cfg_flatten(self.cfg)
         self.train_dataset = build_dataset(type, cfg, trian_parsing, self.batch_size, "train")
         self.val_dataset = build_dataset(type, cfg, val_parsing, self.batch_size, "val")
         if test_parsing:
@@ -334,13 +334,13 @@ class AlgorithmBase(ABC):
 
         return "\n".join(summary)
 
-    def cfg_fusion(self, cfg: dict[str, Any]) -> dict[str, Any]:
+    def cfg_flatten(self, cfg: dict[str, Any]) -> dict[str, Any]:
         protected_keys = ["optimizer", "scheduler", "net"]
 
         items = []
         for key, value in cfg.items():
             if isinstance(value, dict) and key not in protected_keys:
-                items.extend(self.cfg_fusion(value).items())
+                items.extend(self.cfg_flatten(value).items())
             else:
                 items.append((key, value))
 
