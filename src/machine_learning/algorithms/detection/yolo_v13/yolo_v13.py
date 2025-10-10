@@ -33,9 +33,8 @@ class YoloV13(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        data: Mapping[str, Union[Dataset, Any]],
-        net: BaseNet,
-        name: str | None = "yolov13",
+        net: BaseNet | None = None,
+        name: str | None = "yolo_v13",
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
     ) -> None:
@@ -47,15 +46,15 @@ class YoloV13(AlgorithmBase):
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
             net (BaseNet): Models required by the YoloV13 algorithm.
-            name (str): Name of the algorithm. Defaults to "yolov13".
+            name (str): Name of the algorithm. Defaults to "yolo_v13".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, data=data, amp=amp)
+        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp)
 
         # main parameters of the algorithm
-        self.image_size = self.cfg["algorithm"]["image_size"]
+        self.image_size = self.cfg["algorithm"]["imgsz"]
         self.iou_thres = self.cfg["algorithm"]["iou_thres"]
         self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
         self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
@@ -65,7 +64,7 @@ class YoloV13(AlgorithmBase):
         self.no = self.nc + self.reg_max * 4
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
         self.max_det = self.cfg["algorithm"]["max_det"]
-        self.single_cls = self.cfg["algorithm"]["single_cls"]
+        self.single_cls = self.cfg["data"]["single_cls"]
         self.plots = self.cfg["algorithm"]["plots"]
 
         # weight
@@ -162,7 +161,7 @@ class YoloV13(AlgorithmBase):
 
         elif self.sch_config.get("type") == "CustomLRDecay":
             self.lf = (
-                lambda x: max(1 - x / self.cfg["train"]["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
+                lambda x: max(1 - x / self.trainer_cfg["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
                 + self.opt_cfg["final_factor"]
             )  # linear
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
@@ -175,7 +174,8 @@ class YoloV13(AlgorithmBase):
         super().train_epoch(epoch, writer, log_interval)
 
         # close mosaic
-        self.close_mosaic(epoch)
+        if epoch == int(self.close_mosaic_epoch * self.trainer_cfg["epochs"]):
+            self.close_dataloader_mosaic()
 
         # metrics
         metrics = {
@@ -191,14 +191,16 @@ class YoloV13(AlgorithmBase):
         tloss = None
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
-        for batch_idx, (imgs, targets) in pbar:
+        for batch_idx, batch in pbar:
             # Warmup
             batch_inters = epoch * self.train_batches + batch_idx
             self.warmup(batch_inters, epoch)
 
             # Load data
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
+            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
+                self.device
+            )  # (img_ids, class_ids, bboxes)
 
             # Loss calculation
             with autocast(
@@ -236,11 +238,11 @@ class YoloV13(AlgorithmBase):
 
         return metrics
 
-    def close_mosaic(self, epoch: int) -> None:
-        if epoch == self.close_mosaic_epoch:
-            if hasattr(self.train_loader.dataset, "mosaic"):
-                LOGGER.info("Closing dataloader mosaic...")
-                self.train_loader.dataset.mosaic = False
+    def close_dataloader_mosaic(self) -> None:
+        if hasattr(self.train_loader.dataset, "close_mosaic"):
+            LOGGER.info("Closing dataloader mosaic")
+            self.train_loader.dataset.close_mosaic()
+            self.train_loader.reset()
 
     @torch.no_grad()
     def validate(self):
@@ -265,9 +267,11 @@ class YoloV13(AlgorithmBase):
         self.seen = 0
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
-        for batch_idx, (imgs, targets) in pbar:
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device)  # (img_ids, class_ids, bboxes)
+        for batch_idx, batch in pbar:
+            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            targets = targets = torch.cat(
+                (batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1
+            ).to(self.device)  # (img_ids, class_ids, bboxes)
 
             preds = self.net(imgs)
 
@@ -339,7 +343,7 @@ class YoloV13(AlgorithmBase):
                     conf = np.concatenate(conf, 0)
                     pred_cls = np.concatenate(pred_cls, 0)
                     target_cls = np.concatenate(target_cls, 0)
-                    result = compute_ap(self.cfg["data"]["class_names"], tp, conf, pred_cls, target_cls, self.iouv)
+                    result = compute_ap(self.dataset_cfg["class_names"], tp, conf, pred_cls, target_cls, self.iouv)
 
                     metrics["mAP50"] = result["mAP_50"]
                     metrics["mAP50-95"] = result["mAP"]

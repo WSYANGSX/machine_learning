@@ -336,7 +336,7 @@ class DatasetBase(Dataset):
 
         try:
             if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path), cv2.IMREAD_COLOR_RGB)  # rgb
+                data = cv2.imread(str(path))  # bgr
                 if data is None:
                     LOGGER.error("Image Not Found.")
                     return None

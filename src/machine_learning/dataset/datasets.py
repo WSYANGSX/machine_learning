@@ -17,10 +17,10 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
 from machine_learning.dataset.base import DatasetBase
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
+from machine_learning.utils.augment import Compose, Format, Instances, LetterBox, v8_transforms
 
 from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.ops import resample_segments
-from ultralytics.data.augment import Compose, Format, Instances, LetterBox, v8_transforms
 
 
 class YoloDataset(DatasetBase):
@@ -424,8 +424,9 @@ class YoloDataset(DatasetBase):
         )
         return transforms
 
-    def close_mosaic(self, hyp):
+    def close_mosaic(self):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
+        hyp = deepcopy(self.hyp)
         hyp.mosaic = 0.0  # set mosaic ratio=0.0
         hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic

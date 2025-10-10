@@ -138,6 +138,8 @@ class AlgorithmBase(ABC):
     ) -> None:
         """Initialize the optimizers, schedulers and datasets."""
         self._add_cfg("trainer", train_cfg)
+        self.trainer_cfg = train_cfg
+
         self._init_optimizers()
         self._init_schedulers()
         # initialize datasets
@@ -179,6 +181,7 @@ class AlgorithmBase(ABC):
         LOGGER.info("Parsing dataset cfg...")
         dataset_cfg = self._load_datasetcfg(dataset)
         self._add_cfg("data", {"dataset": dataset_cfg})
+        self.dataset_cfg = dataset_cfg
 
         # parser data
         dataset_name = dataset_cfg["name"]
@@ -214,6 +217,7 @@ class AlgorithmBase(ABC):
             batch_size=self.batch_size,
             workers=self.cfg["data"].get("workers", 8),
             shuffle=self.cfg["data"].get("shuffle"),
+            pin_memory=self.cfg["data"].get("pin_memory", False),
             mode="train",
         )
         self._train_batches = len(self.train_loader)
@@ -223,6 +227,7 @@ class AlgorithmBase(ABC):
             batch_size=self.batch_size,
             workers=self.cfg["data"].get("workers", 8),
             shuffle=False,
+            pin_memory=self.cfg["data"].get("pin_memory", False),
             mode="train",
         )
         self._val_batches = len(self.val_loader)
@@ -233,6 +238,7 @@ class AlgorithmBase(ABC):
                 batch_size=self.batch_size,
                 workers=self.cfg["data"].get("workers", 8),
                 shuffle=False,
+                pin_memory=self.cfg["data"].get("pin_memory", False),
                 mode="test",
             )
             self._test_batches = len(self.test_loader)

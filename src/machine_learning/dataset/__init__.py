@@ -116,6 +116,7 @@ def build_dataloader(
     batch_size: int,
     workers: int,
     shuffle: bool | None,
+    pin_memory: bool = False,
     mode: str | None = "train",
 ) -> DataLoader:
     """Return an InfiniteDataLoader or DataLoader for train or val(test) set."""
@@ -132,6 +133,7 @@ def build_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=workers,
+        pin_memory=pin_memory,
         collate_fn=getattr(dataset, "collate_fn", None),
     )
 

@@ -1,7 +1,7 @@
 from machine_learning.networks.yolo import NblityNet
 from machine_learning.algorithms.detection import YoloMM
 from machine_learning.trainer import Trainer, TrainCfg
-from machine_learning.utils.aug import DEFAULT_YOLOMM_AUG
+from machine_learning.utils.augment import DEFAULT_YOLOMM_AUG
 from machine_learning.utils.transforms import ImgTransform
 from machine_learning.dataset.parsers import YoloMMParser, YoloParserCfg
 from machine_learning.utils import load_config_from_yaml

@@ -1,6 +1,6 @@
 algorithm: 
   # common
-  name: "yolov13"
+  name: "yolo_v13"
   imgsz: 640
   task: "detect"
 
@@ -10,7 +10,7 @@ algorithm:
   topk: 10
   alpha: 0.5
   beta: 6.0
-  close_mosaic_epoch: 10
+  close_mosaic_epoch: 0.9
   max_det: 300
   
   plots: True # (bool) save plots and images during train/val
@@ -56,16 +56,35 @@ scheduler:
 
 net:
   initialize_weights: True
+  args:
+    imgsz: 640
+    channel: 3
+    nc: 80
+    scale: "n"
 
 data:
   single_cls: False
   rect: False
   stride: 32
-  classes: 
   bgr: 0.0
-  overlap_mask: True # (bool) merge object masks into a single image mask during training (segment train only)
+  mask_overlap: True # (bool) merge object masks into a single image mask during training (segment train only)
   mask_ratio: 4 # (int) mask downsample ratio (segment train only)
-
-train:
   nbs: 64 # (int) nominal batch size, -1 represent no
-  batch_size: 32
+  batch_size: 256
+  mosaic: 1.0
+  mixup: 0.2
+  copy_paste: 0.6
+  erasing: 0.4
+  crop_fraction: 1.0
+  copy_paste_mode: "flip" # (str) the method to do copy_paste augmentation (flip, mixup)
+  auto_augment: randaugment # (str) auto augmentation policy for classification (randaugment, autoaugment, augmix)
+  flipud: 0.0 # (float) image flip up-down (probability)
+  fliplr: 0.5 # (float) image flip left-right (probability)
+  hsv_h: 0.015 # (float) image HSV-Hue augmentation (fraction)
+  hsv_s: 0.7 # (float) image HSV-Saturation augmentation (fraction)
+  hsv_v: 0.4 # (float) image HSV-Value augmentation (fraction)
+  perspective: 0.0
+  degrees: 0.0 # (float) image rotation (+/- deg)
+  translate: 0.1 # (float) image translation (+/- fraction)
+  scale: 0.5 # (float) image scale (+/- gain)
+  shear: 0.0 # (float) image shear (+/- deg)

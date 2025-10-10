@@ -12,22 +12,23 @@ from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, Downsa
 class V13Net(BaseNet):
     def __init__(
         self,
-        img_shape: Sequence[int],
+        imgsz: Sequence[int],
+        channel: int = 3,
         nc: int = 1,
         scale: Literal["n", "s", "l", "x"] = "n",
     ):
         """multimodal object detection network.
 
         Args:
-            img_shape (Sequence[int]): the shape of input rgb image.
-            thermal_shape (Sequence[int]): the shape of input thermal image.
+            img_size (Sequence[int]): the shape of input rgb image.
             num_classes (int): number of classes.
+            scale (str): the scale of the net.
         """
         super().__init__()
-        self.img_shape = img_shape  # (3, height, width)
+        self.img_size = imgsz  # (3, height, width)
         self.nc = nc
         self.scale = scale
-        self.in_channels = self.img_shape[0]
+        self.in_channels = channel
 
         if self.scale == "n":
             # backbone
@@ -260,7 +261,7 @@ class V13Net(BaseNet):
 
         from torchinfo import summary
 
-        img_input = torch.randn(1, *self.img_shape, device=self.device)
+        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
         summary(self, input_data=img_input)
 
     def _initialize_weights(self):
@@ -268,11 +269,6 @@ class V13Net(BaseNet):
         self.head.bias_init()
 
     def _initialize_strides(self):
-        img_input = torch.randn(1, *self.img_shape, device=self.device)
-        self.stride = torch.tensor([self.img_shape[1] / x.shape[-2] for x in self.forward(img_input)])
+        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
+        self.stride = torch.tensor([self.img_size / x.shape[-2] for x in self.forward(img_input)])
         self.head.stride = self.stride
-
-
-if __name__ == "__main__":
-    v13 = V13Net((3, 640, 640), nc=80, scale="x")
-    v13.view_structure()
