@@ -457,7 +457,7 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class MultimodalDataset(DatasetBase):
+class MultimodalYoloDataset(YoloDataset):
     def __init__(self):
         super().__init__()
         pass
