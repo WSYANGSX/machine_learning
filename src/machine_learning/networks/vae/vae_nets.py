@@ -4,7 +4,7 @@ from machine_learning.modules import BaseNet
 
 # 模型定义
 class Encoder(BaseNet):
-    def __init__(self, input_size: tuple[int], z_dim: int) -> None:
+    def __init__(self, input_size: tuple[int], z_dim: int, *args, **kwargs) -> None:
         """
         VAE encoder network
 
@@ -12,7 +12,7 @@ class Encoder(BaseNet):
             input_size (tuple[int]): the size of input data (channels, height, width).
             z_dim (int): Output the dimension of the multi-dimensional Gaussian vector.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_size = input_size
         self.z_dim = z_dim

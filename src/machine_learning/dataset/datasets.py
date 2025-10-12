@@ -92,6 +92,10 @@ class YoloDataset(DatasetBase):
         )  # cache imgs and labels
         self.update_labels(include_class=classes)
 
+        # Buffer thread for data fusion
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
         if self.rect:
             assert self.batch_size is not None
             self.set_rectangle()
@@ -275,7 +279,8 @@ class YoloDataset(DatasetBase):
                         b += self.data[i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
-
+    
+    # TODO fix
     def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
         """Loads 1 img and label from dataset index 'i', returns (img, label)."""
         im, imf, imfn = self.imgs[i], self.img_files[i], self.img_npy_files[i]

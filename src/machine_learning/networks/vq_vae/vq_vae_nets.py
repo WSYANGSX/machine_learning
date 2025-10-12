@@ -6,8 +6,8 @@ from machine_learning.utils.layers import cal_conv_output_size, cal_convtrans_ou
 
 
 class Encoder(BaseNet):
-    def __init__(self, input_size: tuple[int], output_size: tuple[int]):
-        super().__init__()
+    def __init__(self, input_size: tuple[int], output_size: tuple[int], *args, **kwargs):
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_size = input_size
         self.in_channels = self.input_size[0]
@@ -43,8 +43,8 @@ class Encoder(BaseNet):
 
 
 class Decoder(BaseNet):
-    def __init__(self, input_size: tuple[int], output_size: tuple[int]):
-        super().__init__()
+    def __init__(self, input_size: tuple[int], output_size: tuple[int], *args, **kwargs):
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_size = input_size
         self.in_channels = self.input_size[0]

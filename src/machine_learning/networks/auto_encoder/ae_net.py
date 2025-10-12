@@ -3,7 +3,7 @@ from machine_learning.networks import BaseNet
 
 
 class AENet(BaseNet):
-    def __init__(self, imgsz: int, z_dim: int) -> None:
+    def __init__(self, imgsz: int, z_dim: int, *args, **kwargs) -> None:
         """
         auto_encoder network
 
@@ -11,7 +11,7 @@ class AENet(BaseNet):
             img_size (int): the size of the input image.
             z_dim (int): the dimension of the feature space.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
 
         self.img_size = imgsz
         self.z_dim = z_dim

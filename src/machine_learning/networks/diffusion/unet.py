@@ -72,8 +72,10 @@ class UNet(BaseNet):
         out_channels: int,
         down_channels: Sequence[int],
         up_channels: Sequence[int],
+        *args,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_size = input_size
         self.output_size = None
@@ -85,7 +87,7 @@ class UNet(BaseNet):
         self.up_channels = up_channels
 
         # 时间嵌入
-        self.time_embed = TimestepEmbedding(time_dim)
+        self.time_embed = TimestepEmbeddingBlock(time_dim)
         self.act = nn.SiLU()
 
         # 下采样部分

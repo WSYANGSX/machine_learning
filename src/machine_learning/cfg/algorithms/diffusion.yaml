@@ -7,7 +7,7 @@ algorithm:
     end: 0.02
 
 optimizer:
-  type: "Adam"
+  opt: "Adam"
   # 生成器参数
   learning_rate: 0.001
   beta1: 0.9
@@ -17,7 +17,7 @@ optimizer:
   grad_clip: 5.0
 
 scheduler:
-  type: ReduceLROnPlateau
+  sched: ReduceLROnPlateau
   factor: 0.5
   patience: 5
 

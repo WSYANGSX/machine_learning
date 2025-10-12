@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field, MISSING
-
 from machine_learning.cfg.base import BaseCfg
 
 

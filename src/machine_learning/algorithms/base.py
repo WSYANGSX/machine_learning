@@ -63,12 +63,34 @@ class AlgorithmBase(ABC):
         self.batch_size = self.cfg["data"]["batch_size"]
         self.accumulate = max(1, round(self.nbs / self.batch_size))
 
-        # build nets
-        self._build_net(net)
+        # net
+        self.provided_net = net
 
-        # initialize
-        self._init_nets()
+        # amp
         self._init_amp(amp)
+
+    def _init_on_trainer(
+        self,
+        train_cfg: dict[str, Any],
+        dataset: str | Mapping[str, Any],
+    ) -> None:
+        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
+        The attributes that require the dataset parameter are created here
+        """
+        self._add_cfg("trainer", train_cfg)
+        self.trainer_cfg = train_cfg
+
+        # init datasets and dataloaders
+        self._init_datasets(dataset)
+        self._init_dataloaders()
+
+        # build net
+        self._build_net(self.provided_net)
+        self._init_nets()
+
+        # init opts and schedulers
+        self._init_optimizers()
+        self._init_schedulers()
 
     @property
     def train_batches(self) -> int:
@@ -99,6 +121,10 @@ class AlgorithmBase(ABC):
         return self._cfg
 
     @property
+    def flatten_cfg(self) -> dict:
+        return self._flatten_cfg
+
+    @property
     def device(self) -> torch.device:
         return self._device
 
@@ -119,33 +145,14 @@ class AlgorithmBase(ABC):
     def _build_net(self, net: BaseNet) -> None:
         LOGGER.info(f"Building network of {self.name}...")
 
-        self.net = net
-
-        if self.net is not None:
+        if net is not None:
+            self.net = net
             self._add_net("net", self.net)
         else:
+            LOGGER.info("No outside net provided, building net from default configuration...")
             if issubclass(NET_MAPS[self.name], BaseNet):
-                args = self.cfg["net"].get("args", {})
-                if args is None:
-                    raise ValueError("When a net is not created from the outside, the net parameters must be provided.")
-                self.net = NET_MAPS[self.name](**args)
+                self.net = NET_MAPS[self.name](**self.flatten_cfg)
                 self._add_net("net", self.net)
-
-    def _init_on_trainer(
-        self,
-        train_cfg: dict[str, Any],
-        dataset: str | Mapping[str, Any],
-    ) -> None:
-        """Initialize the optimizers, schedulers and datasets."""
-        self._add_cfg("trainer", train_cfg)
-        self.trainer_cfg = train_cfg
-
-        self._init_optimizers()
-        self._init_schedulers()
-        # initialize datasets
-        self._init_datasets(dataset)
-        # initialize dataloaders
-        self._init_dataloaders()
 
     def _add_cfg(self, name, cfg: dict[str, Any]) -> None:
         """add additional configuration parameters."""
@@ -195,11 +202,11 @@ class AlgorithmBase(ABC):
             raise ValueError("The data type must be provided for Dataset mapping.")
 
         LOGGER.info("Getting datasets...")
-        cfg = self.cfg_flatten(self.cfg)
-        self.train_dataset = build_dataset(type, cfg, trian_parsing, self.batch_size, "train")
-        self.val_dataset = build_dataset(type, cfg, val_parsing, self.batch_size, "val")
+        self._flatten_cfg = self.cfg_flat(self.cfg)
+        self.train_dataset = build_dataset(type, self.flatten_cfg, trian_parsing, self.batch_size, "train")
+        self.val_dataset = build_dataset(type, self.flatten_cfg, val_parsing, self.batch_size, "val")
         if test_parsing:
-            self.test_dataset = build_dataset(type, cfg, test_parsing, self.batch_size, "test")
+            self.test_dataset = build_dataset(type, self.flatten_cfg, test_parsing, self.batch_size, "test")
         else:
             self.test_dataset = None
 
@@ -257,7 +264,6 @@ class AlgorithmBase(ABC):
             net.view_structure()
 
     def _init_amp(self, amp: bool) -> None:
-        LOGGER.info(f"Initializing the amp of {self.name}...")
         self.amp = amp
         self.scaler = GradScaler() if self.amp else None
         LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
@@ -270,7 +276,7 @@ class AlgorithmBase(ABC):
 
         self.optimizer = None
 
-        if self.opt_cfg["type"] == "SGD":
+        if self.opt_cfg["opt"] == "SGD":
             self.optimizer = torch.optim.SGD(
                 params=self.net.parameters(),
                 lr=self.opt_cfg["lr"],
@@ -279,7 +285,7 @@ class AlgorithmBase(ABC):
             )
             self._add_optimizer("optimizer", self.optimizer)
 
-        elif self.opt_cfg["type"] == "Adam":
+        elif self.opt_cfg["opt"] == "Adam":
             self.optimizer = torch.optim.Adam(
                 params=self.net.parameters(),
                 lr=self.opt_cfg["lr"],
@@ -290,7 +296,7 @@ class AlgorithmBase(ABC):
             self._add_optimizer("optimizer", self.optimizer)
 
         else:
-            ValueError(f"Does not support optimizer:{self.opt_cfg['type']} currently.")
+            ValueError(f"Does not support optimizer:{self.opt_cfg['opt']} currently.")
 
     def _init_schedulers(self):
         """Initialize the learning rate scheduler"""
@@ -300,7 +306,7 @@ class AlgorithmBase(ABC):
 
         self.scheduler = None
 
-        if self.sch_config.get("type") == "ReduceLROnPlateau":
+        if self.sch_config.get("sched") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode="min",
@@ -340,13 +346,11 @@ class AlgorithmBase(ABC):
 
         return "\n".join(summary)
 
-    def cfg_flatten(self, cfg: dict[str, Any]) -> dict[str, Any]:
-        protected_keys = ["optimizer", "scheduler", "net"]
-
+    def cfg_flat(self, cfg: dict[str, Any]) -> dict[str, Any]:
         items = []
         for key, value in cfg.items():
-            if isinstance(value, dict) and key not in protected_keys:
-                items.extend(self.cfg_flatten(value).items())
+            if isinstance(value, dict):
+                items.extend(self.cfg_flat(value).items())
             else:
                 items.append((key, value))
 

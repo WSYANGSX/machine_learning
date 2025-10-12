@@ -1,4 +1,4 @@
-from typing import Any, Union, Literal, Callable
+from typing import Any, Literal, Callable
 
 import os
 import cv2
@@ -98,10 +98,6 @@ class DatasetBase(Dataset):
 
         # update buffers length
         self.update_buffers()
-
-        # Buffer thread for data fusion
-        self.mosaic_buffer = []
-        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
         # Transforms
         self.transforms = self.build_transforms(hyp=self.hyp)
@@ -217,27 +213,18 @@ class DatasetBase(Dataset):
         if dt is None:  # not cached in RAM
             if dtfn.exists():  # cached in Disk
                 try:
-                    data = np.load(dtfn)
+                    dt = np.load(dtfn)
                 except Exception as e:
                     LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
                     Path(dtfn).unlink(missing_ok=True)
-                    data = self.file_read(dtf)
+                    dt = self.file_read(dtf)
             else:
-                data = self.file_read(dtf)
+                dt = self.file_read(dtf)
 
-            if data is not None:
-                # Add to buffer if training with augmentations
-                if self.augment:
-                    self.data[i] = data
-                    self.buffer.append(i)
-                    if len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
-                        j = self.buffer.pop(0)
-                        if self.cache != "ram":
-                            self.data[j] = None
-            else:  # data corrupt
+            if dt is None:  # data corrupt
                 self.corrupt_idx.add(i)
 
-            return data
+            return dt
 
         return dt
 
@@ -247,10 +234,10 @@ class DatasetBase(Dataset):
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Returns transformed label information for given index."""
+        data, label = self.get_data_and_label(index)
         if self.transforms:
-            return self.transforms(self.get_data_and_label(index))  # The transform must take label as input.
-        else:
-            self.get_data_and_label(index)
+            data = self.transforms(data)  # The transform must take label as input.
+        return data, label
 
     def get_data_and_label(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Returns Data and label information for given index."""

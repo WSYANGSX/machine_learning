@@ -26,16 +26,16 @@ algorithm:
   conf_thres_det: 0.25
 
 optimizer:
-  type: "Adam"
-  learning_rate: 1.0e-3
+  opt: "Adam"
+  lr: 1.0e-3
   final_factor: 0.01
   beta1: 0.937
   beta2: 0.999
   eps: 1.0e-8
   weight_decay: 0.0005
 
-  # type: "SGD"
-  # learning_rate: 0.01
+  # opt: "SGD"
+  # lr: 0.01
   # final_factor: 0.01
   # momentum: 0.937
   # weight_decay: 0.0005
@@ -47,20 +47,17 @@ optimizer:
   warmup_bias_lr: 0.0 # 0.1 # (float) warmup initial bias lr
   
 scheduler:
-  # type: "ReduceLROnPlateau"
+  # sched: "ReduceLROnPlateau"
   # factor: 0.5
   # patience: 5 
   
-  type: CustomLRDecay
+  sched: CustomLRDecay
 
 
 net:
   initialize_weights: True
-  args:
-    imgsz: 640
-    channel: 3
-    nc: 80
-    scale: "n"
+  channel: 3
+  net_scale: "n"
 
 data:
   single_cls: False

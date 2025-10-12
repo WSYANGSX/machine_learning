@@ -1,4 +1,4 @@
-from typing import Literal, Mapping, Any, Sequence, Union
+from typing import Literal, Mapping, Any, Sequence
 from tqdm import tqdm
 
 import cv2
@@ -6,7 +6,6 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torch.amp import autocast
-from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
@@ -60,8 +59,6 @@ class YoloV13(AlgorithmBase):
         self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
         self.reg_max = self.cfg["algorithm"]["reg_max"]
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
-        self.nc = self.net.nc
-        self.no = self.nc + self.reg_max * 4
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
         self.max_det = self.cfg["algorithm"]["max_det"]
         self.single_cls = self.cfg["data"]["single_cls"]
@@ -76,13 +73,22 @@ class YoloV13(AlgorithmBase):
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
         self.beta = self.cfg["algorithm"]["beta"]
-        self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
         self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
         # IoU vector for mAP@0.5:0.95
         self.iouv = torch.linspace(0.5, 0.95, 10)
         self.niou = self.iouv.numel()
+
+    def _init_on_trainer(self, train_cfg, dataset):
+        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
+        The attributes that require the dataset parameter are created here
+        """
+        super()._init_on_trainer(train_cfg, dataset)
+
+        self.assigner = TaskAlignedAssigner(
+            topk=self.topk, num_classes=self.dataset_cfg["nc"], alpha=self.alpha, beta=self.beta
+        )
 
     def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
@@ -120,7 +126,7 @@ class YoloV13(AlgorithmBase):
         ]
 
         optimizer_type = self.opt_cfg["type"]
-        lr = self.opt_cfg["learning_rate"]
+        lr = self.opt_cfg["lr"]
 
         if optimizer_type == "Adam":
             self.optimizer = torch.optim.Adam(
@@ -364,7 +370,7 @@ class YoloV13(AlgorithmBase):
             x.append(pred)
         x = torch.cat(x, 1)
         # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.nc), 2)
+        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["nc"]), 2)
 
         strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
@@ -407,8 +413,10 @@ class YoloV13(AlgorithmBase):
         dloss = torch.zeros(1, device=self.device)
 
         strides = torch.tensor([imgs_shape[2] // pred.size(2) for pred in preds], device=self.device)
-        pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
-            (self.reg_max * 4, self.nc), 1
+        pred_distri, pred_scores = torch.cat(
+            [xi.view(preds[0].shape[0], self.dataset_cfg["nc"] + self.reg_max * 4, -1) for xi in preds], 2
+        ).split(
+            (self.reg_max * 4, self.dataset_cfg["nc"]), 1
         )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
 
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]

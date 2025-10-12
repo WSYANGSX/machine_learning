@@ -3,7 +3,7 @@ algorithm:
   n_discriminator: 4
 
 optimizer:
-  type: "Adam"
+  opt: "Adam"
   # 生成器参数
   g_learning_rate: 2.0e-4
   g_beta1: 0.5

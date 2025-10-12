@@ -5,14 +5,14 @@ from machine_learning.networks import BaseNet
 
 
 class Generator(BaseNet):
-    def __init__(self, input_dim: int, output_size: tuple[int]) -> None:
+    def __init__(self, input_dim: int, output_size: tuple[int], *args, **kwargs) -> None:
         """
         GAN generator network.
 
         Args:
             input_dim (int): the dimension of the input feature vector.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_dim = input_dim
         self.output_size = output_size

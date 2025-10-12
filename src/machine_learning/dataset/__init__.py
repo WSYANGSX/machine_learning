@@ -28,13 +28,6 @@ PARSER_MAPS = {
     "vedai": VedaiParser,
 }
 
-# datasets
-DATASET_MAPS = {
-    "basic": DatasetBase,
-    "yolo": YoloDataset,
-    "multi_modal": MultimodalDataset,
-}
-
 
 def build_dataset(
     type: str,

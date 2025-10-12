@@ -7,7 +7,7 @@ from machine_learning.utils.logger import LOGGER
 
 
 class BaseNet(nn.Module, ABC):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
 
     @property

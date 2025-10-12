@@ -15,7 +15,9 @@ class V13Net(BaseNet):
         imgsz: Sequence[int],
         channel: int = 3,
         nc: int = 1,
-        scale: Literal["n", "s", "l", "x"] = "n",
+        net_scale: Literal["n", "s", "l", "x"] = "n",
+        *args,
+        **kwargs,
     ):
         """multimodal object detection network.
 
@@ -24,7 +26,7 @@ class V13Net(BaseNet):
             num_classes (int): number of classes.
             scale (str): the scale of the net.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
         self.img_size = imgsz  # (3, height, width)
         self.nc = nc
         self.scale = scale

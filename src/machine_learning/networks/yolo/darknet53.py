@@ -13,13 +13,15 @@ class DarkNet53(BaseNet):
         default_img_shape: Sequence[int],
         num_anchors: int,
         num_classes: int,
+        *args,
+        **kwargs,
     ):
         """yolo_v3 backbone network
 
         Args:
             default_img_shape (Sequence[int]): the shape of input image.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
         self.default_img_shape = default_img_shape  # (3, 416, 416) use to show the structre of the net
         self.num_anchors = num_anchors
         self.num_classes = num_classes

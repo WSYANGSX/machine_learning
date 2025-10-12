@@ -191,6 +191,8 @@ class MMICNet(BaseNet):
         img_shape: Sequence[int],
         thermal_shape: Sequence[int],
         nc: int = 1,
+        *args,
+        **kwargs,
     ):
         """multimodal object detection network.
 
@@ -199,7 +201,8 @@ class MMICNet(BaseNet):
             thermal_shape (Sequence[int]): the shape of input thermal image.
             num_classes (int): number of classes.
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
+
         self.img_shape = img_shape  # (3, height, width)
         self.thermal_shape = thermal_shape  # (1, height, width)
         self.nc = nc

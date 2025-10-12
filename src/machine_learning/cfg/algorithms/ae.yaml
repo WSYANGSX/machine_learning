@@ -1,9 +1,8 @@
 algorithm: 
   name: "auto_encoder"
-  imgsz: 28
 
 optimizer:
-  type: "Adam"
+  opt: "Adam"
   lr: 1.0e-3
   beta1: 0.9
   beta2: 0.999
@@ -12,14 +11,12 @@ optimizer:
   grad_clip: 5.0
   
 scheduler:
-  type: ReduceLROnPlateau
+  sched: ReduceLROnPlateau
   factor: 0.5
   patience: 5  
 
 net:
-  args:
-    imgsz: 28
-    z_dim: 128
+  z_dim: 128
   initialize_weights: True
 
 data:

@@ -5,14 +5,14 @@ from machine_learning.networks import BaseNet
 
 
 class Discriminator(BaseNet):
-    def __init__(self, input_size: tuple[int]) -> None:
+    def __init__(self, input_size: tuple[int], *args, **kwargs) -> None:
         """
         GAN discrimator network.
 
         Args:
             input_size (tuple[int]): the size of input data (channels, height, width).
         """
-        super().__init__()
+        super().__init__(args=args, kwargs=kwargs)
 
         self.input_size = input_size
 

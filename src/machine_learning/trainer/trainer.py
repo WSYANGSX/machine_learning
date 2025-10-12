@@ -5,7 +5,6 @@ import torch
 from datetime import datetime
 from prettytable import PrettyTable
 from numbers import Integral, Real
-from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from .trianer_cfg import TrainerCfg
@@ -54,26 +53,6 @@ class Trainer:
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
-
-    def get_dataloader(self, dataset: Dataset, batch_size: int, mode: str = "train") -> DataLoader:
-        """Get the train and val data loaders.
-
-        Args:
-            dataset (Dataset): The dataset.
-            batch_size (int): The batch size.
-            mode (str): The usage of the dataloder.
-        """
-        assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
-
-        LOGGER.info(f"Getting the {mode} dataloader...")
-
-        shuffle = mode == "train"
-        if getattr(dataset, "rect", False) and shuffle:
-            LOGGER.warning("'Rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
-            shuffle = False
-        workers = self.cfg.workers if mode == "train" else self.cfg.workers * 2
-
-        return self.build_dataloader(dataset, batch_size, workers, shuffle)
 
     def _init_writer(self):
         log_path = self.cfg.log_dir + self.dt_suffix
