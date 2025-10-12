@@ -65,7 +65,6 @@ class YoloV13(AlgorithmBase):
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
         self.max_det = self.cfg["algorithm"]["max_det"]
         self.single_cls = self.cfg["data"]["single_cls"]
-        self.plots = self.cfg["algorithm"]["plots"]
 
         # weight
         self.box_weight = self.cfg["algorithm"].get("box")
@@ -269,16 +268,14 @@ class YoloV13(AlgorithmBase):
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for batch_idx, batch in pbar:
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
-            targets = targets = torch.cat(
-                (batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1
-            ).to(self.device)  # (img_ids, class_ids, bboxes)
+            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
+                self.device
+            )  # (img_ids, class_ids, bboxes)
 
             preds = self.net(imgs)
-
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
             vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
-            metrics["vloss"] = vloss
-            metrics["sloss"] = vloss
+            metrics["vloss"] = metrics["sloss"] = vloss
 
             # prepare preds
             predictions = self.postprocess_pred(preds, imgs.size(2))
@@ -413,6 +410,8 @@ class YoloV13(AlgorithmBase):
 
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
+        if torch.isnan(pred_scores).any() or torch.isnan(pred_distri).any():
+            raise ValueError("The output of model contain Nan value!")
 
         bs = pred_scores.shape[0]
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)

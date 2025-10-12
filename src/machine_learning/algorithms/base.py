@@ -65,9 +65,9 @@ class AlgorithmBase(ABC):
 
         # build nets
         self._build_net(net)
-
-        # initialize
         self._init_nets()
+
+        # amp
         self._init_amp(amp)
 
     @property

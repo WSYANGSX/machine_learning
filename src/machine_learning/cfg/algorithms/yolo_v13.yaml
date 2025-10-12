@@ -1,9 +1,9 @@
 algorithm: 
   # common
   name: "yolo_v13"
-  imgsz: 640
   task: "detect"
-
+  imgsz: 640
+  
   # train
   use_dfl: True
   reg_max: 16
@@ -12,8 +12,6 @@ algorithm:
   beta: 6.0
   close_mosaic_epoch: 0.9
   max_det: 300
-  
-  plots: True # (bool) save plots and images during train/val
 
   # loss weight
   box: 7.5 # (float) box loss gain
@@ -27,7 +25,7 @@ algorithm:
 
 optimizer:
   type: "Adam"
-  learning_rate: 1.0e-3
+  learning_rate: 1.0e-4
   final_factor: 0.01
   beta1: 0.937
   beta2: 0.999
@@ -37,11 +35,10 @@ optimizer:
   # type: "SGD"
   # learning_rate: 0.01
   # final_factor: 0.01
-  # momentum: 0.937
+  # momentum: 0.9
   # weight_decay: 0.0005
 
   grad_clip: 1.0
-  warmup_epochs: 3.0
   warmup_epochs: 3.0 # (float) warmup epochs (fractions ok)
   warmup_momentum: 0.8 # (float) warmup initial momentum
   warmup_bias_lr: 0.0 # 0.1 # (float) warmup initial bias lr

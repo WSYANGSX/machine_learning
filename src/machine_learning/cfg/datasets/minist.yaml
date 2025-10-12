@@ -6,6 +6,7 @@ train: train
 val: val
 
 # data properties
+imgsz: 28
 mean: 0.1307
 std: 0.3081
 
