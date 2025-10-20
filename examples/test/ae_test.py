@@ -1,34 +1,20 @@
-from torchvision import transforms
 from machine_learning.algorithms import AutoEncoder
-from machine_learning.networks.ae_nets import Encoder, Decoder
-from machine_learning.utils.data_parser import ParserFactory, ParserCfg
+from machine_learning.evaluator import Evaluator
 
 
 def main():
-    # Step 1: Configure the augmentator/converter and parse the data
-    tfs = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[0.1307], std=[0.3081])])
+    # Step 1: Build the algorithm
+    auto_encoder = AutoEncoder("ae.yaml")
 
-    dataset_dir = "./data/minist"
-    parser_cfg = ParserCfg(dataset_dir=dataset_dir, labels=True, tfs=tfs)
-    parser = ParserFactory().create_parser(parser_cfg)
-    data = parser.create()
-
-    # Step 2: Build the network
-    input_size = (1, 28, 28)
-    output_size = 128
-    encoder = Encoder(input_size, output_size)
-    decoder = Decoder(output_size)
-
-    # Step 3: Build the algorithm
-    auto_encoder = AutoEncoder(
-        "./src/machine_learning/algorithms/generation/auto_encoder/config/config.yaml",
-        {"encoder": encoder, "decoder": decoder},
-        data=data,
+    # Step 2: Build the evaluate
+    evaluator = Evaluator(
+        "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-10-14_21-58/best_model.pth",
+        "minist.yaml",
+        auto_encoder,
     )
 
-    # Step 6: Evaluate the model
-    auto_encoder.load("/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/best_model.pth")
-    auto_encoder.eval(5)
+    # Step 3: Evaluate the model
+    evaluator.eval(5)
 
 
 if __name__ == "__main__":

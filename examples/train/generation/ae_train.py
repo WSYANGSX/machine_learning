@@ -15,12 +15,9 @@ def main():
 
     # Step 3: Train the model
     trainer.train()
-
-    # Step 4: Evaluate the model
-    # auto_encoder.load(
-    #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-09-06_11-34/best_model.pth"
+    # trainer.train_from_checkpoint(
+    #     "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-10-14_21-58/checkpoint_epoch_20.pth"
     # )
-    auto_encoder.eval(5)
 
 
 if __name__ == "__main__":

@@ -279,8 +279,7 @@ class YoloDataset(DatasetBase):
                         b += self.data[i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
-    
-    # TODO fix
+
     def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
         """Loads 1 img and label from dataset index 'i', returns (img, label)."""
         im, imf, imfn = self.imgs[i], self.img_files[i], self.img_npy_files[i]
@@ -334,8 +333,8 @@ class YoloDataset(DatasetBase):
 
     def get_image_and_label(self, index: int) -> dict[str, Any]:
         """Get and return label information from the dataset."""
-        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
-        label.pop("shape", None)  # shape is for rect, remove it
+        label = deepcopy(self.labels[index])
+        label.pop("shape", None)
         label["img"], label["ori_shape"], label["resized_shape"] = self.load_data(index)
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
@@ -457,7 +456,378 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class MultimodalYoloDataset(YoloDataset):
-    def __init__(self):
-        super().__init__()
-        pass
+class MultimodalDataset(DatasetBase):
+    def __init__(
+        self,
+        data: dict[str, Union[np.ndarray, list[str]]],
+        labels: Union[np.ndarray, list[str], dict[str, Union[np.ndarray, list[str]]]],
+        cache: bool = False,
+        augment: bool = True,
+        hyp: dict[str, Any] = {},
+        batch_size: int = 16,
+        fraction: float = 1.0,
+        mode: Literal["train", "val", "test"] = "train",
+    ):
+        """Initialize MultimodalDataset with given configuration and options."""
+        self._modal_names = data.keys()
+        self._label_names = labels.keys() if isinstance(labels, dict) else None
+
+        super().__init__(
+            data=data,
+            labels=labels,
+            cache=cache,
+            augment=augment,
+            hyp=hyp,
+            batch_size=batch_size,
+            fraction=fraction,
+            mode=mode,
+        )
+
+    @property
+    def modal_names(self) -> list[str]:
+        return self._modal_names
+
+    @property
+    def label_names(self) -> list[str] | None:
+        return self._label_names
+
+    def create_buffers(self, length: int) -> None:
+        """Build buffers for data and labels storage."""
+        self.buffers = {}
+
+        # data
+        for modal in self.modal_names:
+            setattr(self, f"{modal}", [None] * length)
+            setattr(self, f"{modal}_files", [None] * length)
+            setattr(self, f"{modal}_npy_files", [None] * length)
+            self.buffers[f"{modal}"] = getattr(self, f"{modal}")
+            self.buffers[f"{modal}_files"] = getattr(self, f"{modal}_files")
+            self.buffers[f"{modal}_npy_files"] = getattr(self, f"{modal}_npy_files")
+
+        # labels
+        if self.label_names:
+            for label in self.label_names:
+                setattr(self, f"{label}_label", [None] * length)
+                setattr(self, f"{label}_label_files", [None] * length)
+                self.buffers[f"{label}_label"] = getattr(self, f"{label}_label")
+                self.buffers[f"{label}_label_files"] = getattr(self, f"{label}_label_files")
+        else:
+            self.labels = [None] * length
+            self.label_files = [None] * length
+
+            self.buffers["labels"] = self.labels
+            self.buffers["label_files"] = self.label_files
+
+    def init_cache(
+        self,
+        data: dict[str, Union[list[str], np.ndarray]],
+        labels: Union[np.ndarray, list[str], dict[str, Union[np.ndarray, list[str]]]],
+    ) -> None:
+        # np.ndarray
+        if isinstance(data.values()[0], np.ndarray) and (
+            isinstance(labels.values()[0], np.ndarray) if isinstance(labels, dict) else isinstance(labels, np.ndarray)
+        ):
+            self.get_labels_np(labels)
+            self.cache_data_np(data)
+
+        # list[str]
+        elif isinstance(data.values()[0], list) and (
+            isinstance(labels.values()[0], list) if isinstance(labels, dict) else isinstance(labels, list)
+        ):
+            self.data_files = {modal: data[modal] for modal in self.modal_names}
+            self.label_files = {label: labels[label] for label in self.label_names}
+
+            # labels
+            self.get_labels()
+
+            # data
+            self.data_npy_files = {
+                modal: [Path(f).with_suffix(".npy") for f in data[modal]] for modal in self.modal_names
+            }
+
+            if self.cache == "ram" and self.check_cache_ram():
+                self.cache_data()
+            elif self.cache == "disk" and self.check_cache_disk():
+                self.cache_data()
+
+        else:
+            raise TypeError(
+                "The input data and labels must be the same of type (dict[str, np.ndarray] or dict[str, list])."
+            )
+
+    def get_labels_np(self, labels: dict[str, np.ndarray]) -> None:
+        """Get labels from matrix input to buffers."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info(f"Caching {self.mode} labels from matrix input...")
+        pbar = tqdm(range(self.length))
+        for i in pbar:
+            for label in self.label_names:
+                label = self.label_format(labels[label])
+                getattr(self, f"label_{label}")[i] = label
+                b += asizeof.asizeof(label)
+            pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
+        pbar.close()
+
+    def get_labels(self, desc_func: Callable) -> None:
+        """Get labels from path list to buffers."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info(f"Caching {self.mode} labels...")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(self.cache_labels, range(self.length))
+            pbar = tqdm(enumerate(results), total=self.length)
+            for _, lb in pbar:
+                if lb:
+                    b += asizeof.asizeof(lb)
+                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func()
+            pbar.close()
+
+    def cache_labels(self, i: int) -> dict[str, Any] | None:
+        """Cache label from paths to ram for faster loading."""
+        labels = self.lread(i)
+        labels = self.label_format(labels)
+        if label:
+            self.labels[i] = label
+            return label
+        else:  # label corrupt
+            self.corrupt_idx.add(i)
+            return None
+
+    def cache_data_np(self, data: np.ndarray) -> None:
+        """Cache np.ndarray format data to buffers"""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info(f"Caching {self.mode} data from matrix input...")
+        pbar = tqdm(enumerate(data), total=len(data))
+        for i, data in pbar:
+            self.data[i] = data
+            b += data.nbytes
+            pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB)"
+        pbar.close()
+
+    def cache_data(self) -> None:
+        """Cache data to memory or disk."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn, storage = (self.load_data, "RAM") if self.cache == "ram" else (self.cache_data_to_disk, "Disk")
+        LOGGER.info(f"Caching {self.mode} data to {storage}...")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(len(self.data_files)))
+            pbar = tqdm(enumerate(results), total=len(self.data_files))
+            for i, x in pbar:
+                if self.cache == "disk":
+                    try:
+                        b += self.data_files[i].stat().st_size
+                    except FileNotFoundError:
+                        b += 0.0
+                else:
+                    if x:
+                        self.data[i] = x
+                        b += self.data[i].nbytes
+                pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+            pbar.close()
+
+    def cache_data_to_disk(self, i: int) -> float:
+        """Cache data from paths to disk with as an .npy file for faster loading."""
+        f = self.data_npy_files[i]
+        if not f.exists():
+            data = self.file_read(self.data_files[i])
+            if data:
+                np.save(f, data, allow_pickle=False)
+            else:  # data corrupt
+                self.corrupt_idx.add(i)
+
+    def load_data(self, i: int) -> np.ndarray | None:
+        """Loads 1 data and label from dataset index 'i', returns (data, label)."""
+        dt, dtf, dtfn = self.data[i], self.data_files[i], self.data_npy_files[i]
+
+        # load data
+        if dt is None:  # not cached in RAM
+            if dtfn.exists():  # cached in Disk
+                try:
+                    dt = np.load(dtfn)
+                except Exception as e:
+                    LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
+                    Path(dtfn).unlink(missing_ok=True)
+                    dt = self.file_read(dtf)
+            else:
+                dt = self.file_read(dtf)
+
+            if dt is None:  # data corrupt
+                self.corrupt_idx.add(i)
+
+            return dt
+
+        return dt
+
+    def __len__(self):
+        """Returns the length of the labels list for the dataset."""
+        return self.length
+
+    def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        """Returns transformed label information for given index."""
+        data, label = self.get_data_and_label(index)
+        if self.transforms:
+            data = self.transforms(data)  # The transform must take label as input.
+        return data, label
+
+    def get_data_and_label(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        """Returns Data and label information for given index."""
+        label = deepcopy(self.labels[index])
+        data = self.load_data(index)
+        label = self.update_labels_info(label)
+
+        return data, label
+
+    def update_labels_info(self, label: dict[str, Any]) -> dict[str, Any]:
+        """Custom your label format here."""
+        return label
+
+    def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
+        """Check data caching requirements vs available memory."""
+        b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
+        n = min(self.length, 100)  # extrapolate from 100 random data
+        skips = 0
+        for _ in range(n):
+            i = random.randint(0, self.length - 1)
+            data = self.file_read(self.data_files[i])
+            if data is None:
+                skips += 1
+                continue
+            b += data.nbytes
+        mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache data into RAM
+        mem = psutil.virtual_memory()
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.info(
+                f"{mem_required / gb:.1f}GB RAM required to cache data "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching data."
+            )
+            return False
+        return True
+
+    def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
+        """Check data caching requirements vs available disk space."""
+        import shutil
+
+        b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
+        n = min(self.length, 100)  # extrapolate from 30 random data
+        skips = 0
+        for _ in range(n):
+            i = random.randint(0, self.length - 1)
+            data = self.file_read(self.data_files[i])
+            if data is None:
+                skips += 1
+                continue
+            b += data.nbytes
+            if not os.access(Path(self.data_files[i]).parent, os.W_OK):
+                self.cache = None
+                LOGGER.info("Skipping caching data to disk, directory not writeable.")
+                return False
+        disk_required = b * self.length / (n - skips) * (1 + safety_margin)  # bytes required to cache data to disk
+        total, _, free = shutil.disk_usage(Path(self.data_files[0]).parent.parent)
+        if disk_required > free:
+            self.cache = None
+            LOGGER.info(
+                f"{disk_required / gb:.1f}GB disk space required, "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{free / gb:.1f}/{total / gb:.1f}GB free, not caching data to disk."
+            )
+            return False
+        return True
+
+    def lread(self, index: int) -> dict[str, np.ndarray | None]:
+        """Users implement their own label reading logic."""
+        labels = {}
+        for lb in self.label_names:
+            label_path = getattr(self, f"{lb}_label_files")[index]
+            label = self.file_read(label_path)
+            labels[lb] = label
+
+        return labels
+
+    @staticmethod
+    def file_read(path: FilePath) -> np.ndarray | None:
+        path = Path(path)
+        extension = path.suffix.lower()
+
+        if not path.exists():
+            LOGGER.error(f"File does not exist: {path}")
+            return None
+
+        try:
+            if extension in IMG_FORMATS:  # imgs
+                data = cv2.imread(str(path))  # bgr
+                if data is None:
+                    LOGGER.error("Image Not Found.")
+                    return None
+                return data
+
+            elif extension == ".txt":  # text
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    data = np.loadtxt(path, dtype=np.float32)
+                return data
+
+            elif extension == ".npy":  # numpy
+                data = np.load(path)
+                return data
+
+            else:
+                LOGGER.error(
+                    f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']"
+                )
+                return None
+
+        except Exception as e:
+            LOGGER.error(f"Could not read file '{path}': {e}")
+            return None
+
+    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
+        """format the label from np.ndarray to a custom form."""
+        if label is not None:
+            label = {"label": label}  # Customize
+            return label
+        else:
+            return None
+
+    def build_transforms(self, hyp: dict[str, Any] | None = None):
+        """
+        Users can customize augmentations here.
+
+        Example:
+            ```python
+            if self.augment:
+                # Training transforms
+                return Compose([])
+            else:
+                # Val transforms
+                return Compose([])
+            ```
+        """
+        return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
+
+    def register_buffer(self, name: str, buffer: list) -> None:
+        length = len(getattr(self, f"{self.modal_names[0]}_data"))
+
+        if len(buffer) != length:
+            raise ValueError(f"The length of {name} buffer must be equal to data buffer.")
+
+        if name not in self.buffers.keys():
+            self.buffers[name] = buffer
+        else:
+            raise KeyError(f"Buffer {name} already exists.")
+
+    def update_buffers(self) -> None:
+        """Update the buffer and delete invalid data (None)."""
+        if self.corrupt_idx:
+            LOGGER.info(f"Removing invalid items from buffers...: {[id for id in self.corrupt_idx]}")
+
+            for i in sorted(self.corrupt_idx, reverse=True):
+                self.remove_item(i)
+            self.corrupt_idx.clear()
+
+        self.length = len(getattr(self, f"{self.label_names[0]}_label"))
+
+    def remove_item(self, i: int) -> None:
+        """Remove a item of buffers according to the index."""
+        for buffer in self.buffers.values():
+            buffer.pop(i)

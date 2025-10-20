@@ -1,4 +1,4 @@
-from typing import Any, Literal, Callable
+from typing import Any, Literal, Callable, Union
 
 import os
 import cv2
@@ -101,6 +101,22 @@ class DatasetBase(Dataset):
 
         # Transforms
         self.transforms = self.build_transforms(hyp=self.hyp)
+
+    def create_buffers(self, length: int) -> None:
+        """Build buffers for data and labels storage."""
+        self.buffers = {}
+
+        self.labels = [None] * length
+        self.label_files = [None] * length
+        self.data = [None] * length
+        self.data_files = [None] * length
+        self.data_npy_files = [None] * length
+
+        self.buffers["labels"] = self.labels
+        self.buffers["label_files"] = self.label_files
+        self.buffers["data"] = self.data
+        self.buffers["data_files"] = self.data_files
+        self.buffers["data_npy_files"] = self.data_npy_files
 
     def init_cache(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
         # np.ndarray
@@ -372,22 +388,6 @@ class DatasetBase(Dataset):
             ```
         """
         return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
-
-    def create_buffers(self, length: int) -> None:
-        """Build buffers for data and labels storage."""
-        self.buffers = {}
-
-        self.labels = [None] * length
-        self.label_files = [None] * length
-        self.data = [None] * length
-        self.data_files = [None] * length
-        self.data_npy_files = [None] * length
-
-        self.buffers["labels"] = self.labels
-        self.buffers["label_files"] = self.label_files
-        self.buffers["data"] = self.data
-        self.buffers["data_files"] = self.data_files
-        self.buffers["data_npy_files"] = self.data_npy_files
 
     def register_buffer(self, name: str, buffer: list) -> None:
         if len(buffer) != len(self.data):

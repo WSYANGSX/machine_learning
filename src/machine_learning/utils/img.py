@@ -319,7 +319,7 @@ def _subplot_imgs(imgs: list[np.ndarray], max_cols: int = 5, title: str | None =
         row = i // max_cols
         col = i % max_cols
 
-        if len(img.shape) == 2:
+        if len(img.shape) == 2 or (len(img.shape) == 3 and img.shape[2] == 1):
             axes[row, col].imshow(img, cmap="gray")
         else:
             axes[row, col].imshow(img)

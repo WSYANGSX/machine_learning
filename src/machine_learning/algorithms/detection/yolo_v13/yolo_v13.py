@@ -14,7 +14,6 @@ from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
-from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 from machine_learning.utils.detection import (
     resize,
     non_max_suppression,
@@ -25,7 +24,7 @@ from machine_learning.utils.detection import (
     pad_to_square,
 )
 
-torch.set_printoptions(threshold=torch.inf)
+from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
 class YoloV13(AlgorithmBase):

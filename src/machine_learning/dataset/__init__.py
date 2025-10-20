@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase
-from .datasets import YoloDataset, MultimodalDataset
+from .datasets import YoloDataset
 from .parsers import ParserBase, MinistParser, CocoParser, FlirParser, VedaiParser
 
 from machine_learning.utils.logger import LOGGER
