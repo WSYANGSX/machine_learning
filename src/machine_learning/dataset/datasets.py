@@ -1,4 +1,4 @@
-from typing import Any, Optional, Literal
+from typing import Any, Optional, Literal, Union, Callable
 
 import os
 import cv2

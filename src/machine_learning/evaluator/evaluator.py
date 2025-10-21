@@ -1,7 +1,7 @@
 from typing import Any, Mapping
+from machine_learning.utils import print_cfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils import print_cfg
 
 
 class Evaluator:

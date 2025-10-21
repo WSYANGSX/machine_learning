@@ -10,7 +10,7 @@ algorithm:
   topk: 10
   alpha: 0.5
   beta: 6.0
-  close_mosaic_epoch: 0.9
+  close_mosaic_epoch: 0.9 # the ratio of the total number of epochs
   max_det: 300
 
   # loss weight

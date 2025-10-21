@@ -1,17 +1,17 @@
 from typing import Literal, Mapping, Any, Sequence
-from tqdm import tqdm
 
 import cv2
 import torch
 import numpy as np
 import torch.nn as nn
+from tqdm import tqdm
 from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks import BaseNet
-from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER
+from machine_learning.types.aliases import FilePath
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import (
@@ -22,8 +22,9 @@ from machine_learning.utils.detection import (
     match_predictions,
     compute_ap,
     pad_to_square,
+    visualize_img_bboxes,
+    rescale_bboxes,
 )
-
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
@@ -52,25 +53,25 @@ class YoloV13(AlgorithmBase):
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp)
 
         # main parameters of the algorithm
+        self.task = self.cfg["algorithm"]["task"]
         self.image_size = self.cfg["algorithm"]["imgsz"]
-        self.iou_thres = self.cfg["algorithm"]["iou_thres"]
-        self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
-        self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
         self.reg_max = self.cfg["algorithm"]["reg_max"]
+        self.use_dfl = self.reg_max > 1
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
         self.max_det = self.cfg["algorithm"]["max_det"]
         self.single_cls = self.cfg["data"]["single_cls"]
+
+        # threshold
+        self.iou_thres = self.cfg["algorithm"]["iou_thres"]
+        self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
+        self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
 
         # weight
         self.box_weight = self.cfg["algorithm"].get("box")
         self.cls_weight = self.cfg["algorithm"].get("cls")
         self.dfl_weight = self.cfg["algorithm"].get("dfl")
 
-        self.use_dfl = self.reg_max > 1
-        self.topk = self.cfg["algorithm"]["topk"]
-        self.alpha = self.cfg["algorithm"]["alpha"]
-        self.beta = self.cfg["algorithm"]["beta"]
         self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
@@ -83,6 +84,10 @@ class YoloV13(AlgorithmBase):
         The attributes that require the dataset parameter are created here
         """
         super()._init_on_trainer(train_cfg, dataset)
+
+        self.topk = self.cfg["algorithm"]["topk"]
+        self.alpha = self.cfg["algorithm"]["alpha"]
+        self.beta = self.cfg["algorithm"]["beta"]
 
         self.assigner = TaskAlignedAssigner(
             topk=self.topk, num_classes=self.dataset_cfg["nc"], alpha=self.alpha, beta=self.beta
@@ -181,7 +186,7 @@ class YoloV13(AlgorithmBase):
         if epoch == int(self.close_mosaic_epoch * self.trainer_cfg["epochs"]):
             self.close_dataloader_mosaic()
 
-        # metrics
+        # log metrics
         metrics = {
             "tloss": None,
             "bloss": None,
@@ -252,7 +257,7 @@ class YoloV13(AlgorithmBase):
     def validate(self):
         super().validate()
 
-        # metrics
+        # log metrics
         metrics = {
             "class": "all",
             "images": None,
@@ -366,7 +371,7 @@ class YoloV13(AlgorithmBase):
             x.append(pred)
         x = torch.cat(x, 1)
         # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["nc"]), 2)
+        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["num_cls"]), 2)
 
         strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
@@ -396,12 +401,6 @@ class YoloV13(AlgorithmBase):
                     x["momentum"] = np.interp(
                         batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
                     )
-
-    def eval(self) -> None:
-        raise NotImplementedError(
-            "Eval method is not implemented in the yolo-series algorithms, "
-            + "please use detect method to detect objects in an image."
-        )
 
     def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, imgs_shape: tuple[int]):
         closs = torch.zeros(1, device=self.device)
@@ -491,19 +490,19 @@ class YoloV13(AlgorithmBase):
         return out
 
     @torch.no_grad()
-    def detect(self, img_path: str | FilePath) -> None:
+    def eval(self, img_path: str | FilePath, *args, **kwargs) -> None:
         self.set_eval()
 
         # read image
-        origin_img = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-        H, W, _ = origin_img.shape
+        img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        h0, w0, _ = img0.shape
 
         # scale to square
-        pad_img = pad_to_square(img=origin_img, pad_values=0)
+        padded_img = pad_to_square(img=img0, pad_values=0)
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
-        img = tfs(pad_img)
+        img = tfs(padded_img)
         img = resize(img, size=self.image_size).unsqueeze(0).to(self.device)
 
         # input image to model
@@ -525,11 +524,11 @@ class YoloV13(AlgorithmBase):
         pred = preds[0]
 
         bboxes, conf, cls = pred.split((4, 1, 1), dim=1)
-        bboxes = np.array(bboxes.cpu(), dtype=np.float32)
+        bboxes = rescale_bboxes(np.array(bboxes.cpu(), dtype=np.float32), self.image_size, w0, h0)
         cls = [int(cid) for cid in cls]
 
         # visiualization
-        visualize_img_with_bboxes(img[0].permute(1, 2, 0).cpu().numpy(), bboxes, cls, self.cfg["data"]["class_names"])
+        visualize_img_bboxes(img0, bboxes, cls, self.dataset_cfg["class_names"])
 
 
 """

@@ -11,7 +11,6 @@ from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
-from machine_learning.utils.img import imgs_np2tensor
 
 
 def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
@@ -733,7 +732,7 @@ def visualize_img_bboxes(
         cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
     """
     assert len(class_ids) == len(bboxes), "The length of bboxes and class_ids must be the same."
-    for bbox, class_id in zip(bboxes, class_maps):
+    for bbox, class_id in zip(bboxes, class_ids):
         class_name = class_maps[class_id]
         img = add_bbox(img, bbox, class_name)
     plt.figure(figsize=(12, 12))

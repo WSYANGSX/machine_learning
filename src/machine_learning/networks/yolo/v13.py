@@ -24,15 +24,15 @@ class V13Net(BaseNet):
         Args:
             img_size (Sequence[int]): the shape of input rgb image.
             num_classes (int): number of classes.
-            scale (str): the scale of the net.
+            net_scale (str): the scale of the net.
         """
         super().__init__(args=args, kwargs=kwargs)
         self.img_size = imgsz  # (3, height, width)
         self.nc = nc
-        self.scale = scale
+        self.net_scale = net_scale
         self.in_channels = channel
 
-        if self.scale == "n":
+        if self.net_scale == "n":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
@@ -78,7 +78,7 @@ class V13Net(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(64, 128, 256))
 
-        elif self.scale == "s":
+        elif self.net_scale == "s":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
@@ -124,7 +124,7 @@ class V13Net(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
-        elif self.scale == "l":
+        elif self.net_scale == "l":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
@@ -170,7 +170,7 @@ class V13Net(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-        elif self.scale == "x":
+        elif self.net_scale == "x":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
