@@ -91,10 +91,14 @@ class AlgorithmBase(ABC):
         self._init_optimizers()
         self._init_schedulers()
 
-    def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any]) -> None:
+    def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any], use_dataset: bool) -> None:
         # init test dataset and test dataloader
-        self._init_eval_dataset(dataset)
-        self._init_eval_dataloader()
+        if use_dataset:
+            self._init_eval_dataset(dataset)
+            self._init_eval_dataloader()
+        else:
+            self.parse_dataset(dataset)  # add dataset_cfg
+            self._flatten_cfg = self.cfg_flat(self.cfg)  # used for building net
 
         # build net
         self._build_net(self.provided_net)

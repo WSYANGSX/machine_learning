@@ -8,8 +8,9 @@ class Evaluator:
     def __init__(
         self,
         ckpt: str,
-        dataset: str | Mapping[str, Any],
         algo: AlgorithmBase,
+        dataset: str | Mapping[str, Any],
+        use_dataset: bool = True,
     ) -> None:
         """
         The trainer of all machine learning algorithm
@@ -20,10 +21,11 @@ class Evaluator:
         """
         self.ckpt = ckpt
         self._algorithm = algo
+        self.use_dataset = use_dataset
 
         # ------------------- add cfg to algo -------------------------
         LOGGER.info("Algorithm initializing by evaluator...")
-        self.algorithm._init_on_evaluator(self.ckpt, dataset)
+        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.use_dataset)
         print_cfg("Total configuration", self.algorithm.cfg)
 
     @property

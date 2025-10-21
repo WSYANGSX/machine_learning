@@ -490,7 +490,14 @@ class YoloV13(AlgorithmBase):
         return out
 
     @torch.no_grad()
-    def eval(self, img_path: str | FilePath, *args, **kwargs) -> None:
+    def eval(
+        self,
+        img_path: str | FilePath,
+        conf_thres: float | None = None,
+        iou_thres: float | None = None,
+        *args,
+        **kwargs,
+    ) -> None:
         self.set_eval()
 
         # read image
@@ -513,8 +520,8 @@ class YoloV13(AlgorithmBase):
         # NMS
         preds = non_max_suppression(
             predictions.permute(0, 2, 1),
-            conf_thres=self.conf_thres_det,
-            iou_thres=self.iou_thres,
+            conf_thres=conf_thres if conf_thres is not None else self.conf_thres_det,
+            iou_thres=iou_thres if iou_thres is not None else self.iou_thres,
             multi_label=True,
             max_det=self.max_det,
             agnostic=self.single_cls,
