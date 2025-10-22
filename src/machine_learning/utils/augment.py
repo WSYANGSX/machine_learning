@@ -1,13 +1,14 @@
-import math
-import random
-from copy import deepcopy
-from typing import Tuple, Union
+"""Data augmentation module, based on https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py."""
 
 import cv2
-import numpy as np
+import math
 import torch
-from PIL import Image
+import random
+import numpy as np
 
+from copy import deepcopy
+from typing import Tuple, Union
+from PIL import Image
 from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
 from ultralytics.utils import LOGGER, colorstr
 from ultralytics.utils.checks import check_version

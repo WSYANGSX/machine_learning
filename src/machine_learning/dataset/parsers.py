@@ -17,12 +17,12 @@ from machine_learning.utils import load_cfg, list_from_txt, print_cfg
 class ParserBase(ABC):
     """Dataset parser abstract base class."""
 
-    def __init__(self, data_cfg: dict[str, Any]) -> None:
+    def __init__(self, dataset_cfg: dict[str, Any]) -> None:
         super().__init__()
-        self.data_cfg = data_cfg
+        self.dataset_cfg = dataset_cfg
 
-        self.dataset_name = self.data_cfg["name"]
-        self.dataset_path = self.data_cfg["path"]
+        self.dataset_name = self.dataset_cfg["name"]
+        self.dataset_path = self.dataset_cfg["path"]
 
     @abstractmethod
     def parse(self) -> dict[str, Any]:
@@ -39,8 +39,8 @@ class MinistParser(ParserBase):
     The minist handwritten digit set data parser.
     """
 
-    def __init__(self, data_cfg: dict[str, Any]):
-        super().__init__(data_cfg)
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
 
     @staticmethod
     def load_idx3_ubyte(dataset_dir: str) -> tuple:
@@ -84,14 +84,14 @@ class CocoParser(ParserBase):
     Coco dataset parser.
     """
 
-    def __init__(self, data_cfg: dict[str, dict[str, Any]]):
-        super().__init__(data_cfg)
+    def __init__(self, dataset_cfg: dict[str, dict[str, Any]]):
+        super().__init__(dataset_cfg)
 
-        self.train = self.data_cfg["train"]
-        self.val = self.data_cfg["val"]
+        self.train = self.dataset_cfg["train"]
+        self.val = self.dataset_cfg["val"]
 
     def parse(self) -> dict[str, Any]:
-        # train、 val list
+        # relative path
         train_imgs = list_from_txt(os.path.join(self.dataset_path, self.train))
         val_imgs = list_from_txt(os.path.join(self.dataset_path, self.val))
 
@@ -111,174 +111,81 @@ class CocoParser(ParserBase):
         }
 
 
-class CocoV2Parser(ParserBase):
-    """
-    Coco dataset parser (v2).
-    """
+class FlirAlignedParser(ParserBase):
+    r"""Flir_aligned data set parser."""
 
-    def __init__(self, data_cfg: dict[str, dict[str, Any]]):
-        super().__init__(data_cfg)
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
 
-        self.train = self.data_cfg["train"]
-        self.val = self.data_cfg["val"]
+        self.train = self.dataset_cfg["train"]
+        self.val = self.dataset_cfg["val"]
 
     def parse(self) -> dict[str, Any]:
-        # train、 val list
-        train_imgs = list_from_txt(os.path.join(self.dataset_path, self.train))
-        val_imgs = list_from_txt(os.path.join(self.dataset_path, self.val))
+        # relative paths
+        train_irs = list_from_txt(os.path.join(self.dataset_path, self.train))
+        val_irs = list_from_txt(os.path.join(self.dataset_path, self.val))
 
-        train_labels = [img.replace("jpg", "txt", 1) for img in train_imgs]
-        val_labels = [img.replace("jpg", "txt", 1) for img in val_imgs]
+        train_irs = [ir + ".jpeg" for ir in train_irs]
+        val_irs = [ir + ".jpeg" for ir in train_irs]
 
-        # abs path
-        train_imgs = [os.path.join(self.dataset_path + "/images/train", img) for img in train_imgs]
-        val_imgs = [os.path.join(self.dataset_path + "/images/val", img) for img in val_imgs]
+        train_imgs = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in train_irs]
+        val_imgs = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in val_irs]
 
-        train_labels = [os.path.join(self.dataset_path + "/labels/train", label) for label in train_labels]
-        val_labels = [os.path.join(self.dataset_path + "/labels/val", label) for label in val_labels]
-
-        return {
-            "train": {"data": train_imgs, "labels": train_labels},
-            "val": {"data": val_imgs, "labels": val_labels},
-        }
-
-
-class FlirParser(ParserBase):
-    r"""Multimodal Yolo format data set parser."""
-
-    def __init__(self, data_cfg: dict[str, Any]):
-        super().__init__(data_cfg)
-
-    def parse(self) -> dict[str, Any]:
-        metadata = load_cfg(os.path.join(self.dataset_dir, "metadata.yaml"))
-
-        print_cfg("Information of dataset", metadata)
-
-        class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])
-        img_dir = os.path.join(self.dataset_dir, metadata["images_dir"])
-        labels_dir = os.path.join(self.dataset_dir, metadata["labels_dir"])
-
-        classes = list_from_txt(class_names_file)
-
-        # train、 val imgs list
-        train_theraml_ls = list_from_txt(os.path.join(self.dataset_dir, metadata["train_ids"]))
-        val_theraml_ls = list_from_txt(os.path.join(self.dataset_dir, metadata["val_ids"]))
-        train_theraml_ls = [f + ".jpeg" for f in train_theraml_ls]
-        val_theraml_ls = [f + ".jpeg" for f in val_theraml_ls]
-
-        train_img_ls = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in train_theraml_ls]
-        val_img_ls = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in val_theraml_ls]
-
-        train_labels_ls = [f.rsplit("_", maxsplit=1)[0] + ".txt" for f in train_theraml_ls]
-        val_labels_ls = [f.rsplit("_", maxsplit=1)[0] + ".txt" for f in val_theraml_ls]
+        train_labels = [
+            f.replace("JPEGImages", "Annotations", 1).rsplit("_", maxsplit=1)[0] + ".txt" for f in train_irs
+        ]
+        val_labels = [f.replace("JPEGImages", "Annotations", 1).rsplit("_", maxsplit=1)[0] + ".txt" for f in val_irs]
 
         # abs path
-        train_theraml_paths = [os.path.join(img_dir, theraml) for theraml in train_theraml_ls]
-        val_theraml_paths = [os.path.join(img_dir, theraml) for theraml in val_theraml_ls]
+        train_irs = [os.path.join(self.dataset_path, ir.split("/", 1)[1]) for ir in train_irs]
+        val_irs = [os.path.join(self.dataset_path, ir.split("/", 1)[1]) for ir in val_irs]
 
-        train_img_paths = [os.path.join(img_dir, img) for img in train_img_ls]
-        val_img_paths = [os.path.join(img_dir, img) for img in val_img_ls]
+        train_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in train_imgs]
+        val_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in val_imgs]
 
-        train_labels_paths = [os.path.join(labels_dir, label) for label in train_labels_ls]
-        val_labels_paths = [os.path.join(labels_dir, label) for label in val_labels_ls]
+        train_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in train_labels]
+        val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
         return {
-            "class_names": classes,
-            "train_img_paths": train_img_paths,
-            "val_img_paths": val_img_paths,
-            "train_theraml_paths": train_theraml_paths,
-            "val_theraml_paths": val_theraml_paths,
-            "train_labels_paths": train_labels_paths,
-            "val_labels_paths": val_labels_paths,
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
         }
 
 
 class VedaiParser(ParserBase):
-    r"""Multimodal VEDAI data set parser."""
+    r"""Multimodal vedai dataset parser."""
 
-    def __init__(self, parser_cfg: ParserCfg):
-        super().__init__(parser_cfg)
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
+
+        self.train = self.dataset_cfg["train"]
+        self.val = self.dataset_cfg["val"]
 
     def parse(self) -> dict[str, Any]:
-        metadata = load_cfg(os.path.join(self.dataset_dir, "metadata.yaml"))
+        # relative path
+        train_dir = os.path.join(self.dataset_path, self.train)
+        val_dir = os.path.join(self.dataset_path, self.val)
 
-        print_cfg("Information of dataset", metadata)
+        train_irs = [f + "_ir.png" for f in train_dir]
+        val_irs = [f + "_ir.png" for f in val_ids]
 
-        class_names_file = os.path.join(self.dataset_dir, metadata["names_file"])
-        img_dir = os.path.join(self.dataset_dir, metadata["images_dir"])
-        labels_dir = os.path.join(self.dataset_dir, metadata["labels_dir"])
+        train_imgs = [f + "_co.png" for f in train_ids]
+        val_imgs = [f + "_co.png" for f in val_ids]
 
-        classes = list_from_txt(class_names_file)
-
-        # train、 val imgs list
-        train_id_ls = list_from_txt(os.path.join(self.dataset_dir, metadata["train_ids"]))
-        val_id_ls = list_from_txt(os.path.join(self.dataset_dir, metadata["val_ids"]))
-
-        train_theraml_ls = [f + "_ir.png" for f in train_id_ls]
-        val_theraml_ls = [f + "_ir.png" for f in val_id_ls]
-
-        train_img_ls = [f + "_co.png" for f in train_id_ls]
-        val_img_ls = [f + "_co.png" for f in val_id_ls]
-
-        train_labels_ls = [f + ".txt" for f in train_id_ls]
-        val_labels_ls = [f + ".txt" for f in val_id_ls]
+        train_labels = [f + ".txt" for f in train_ids]
+        val_labels = [f + ".txt" for f in val_ids]
 
         # abs path
-        train_theraml_paths = [os.path.join(img_dir, theraml) for theraml in train_theraml_ls]
-        val_theraml_paths = [os.path.join(img_dir, theraml) for theraml in val_theraml_ls]
+        train_irs = [os.path.join(self.dataset_path, ir) for ir in train_irs]
+        val_irs = [os.path.join(self.dataset_path, ir) for ir in val_irs]
 
-        train_img_paths = [os.path.join(img_dir, img) for img in train_img_ls]
-        val_img_paths = [os.path.join(img_dir, img) for img in val_img_ls]
+        train_imgs = [os.path.join(self.dataset_path, img) for img in train_imgs]
+        val_imgs = [os.path.join(self.dataset_path, img) for img in val_imgs]
 
-        train_labels_paths = [os.path.join(labels_dir, label) for label in train_labels_ls]
-        val_labels_paths = [os.path.join(labels_dir, label) for label in val_labels_ls]
-
-        return {
-            "class_names": classes,
-            "train_img_paths": train_img_paths,
-            "val_img_paths": val_img_paths,
-            "train_theraml_paths": train_theraml_paths,
-            "val_theraml_paths": val_theraml_paths,
-            "train_labels_paths": train_labels_paths,
-            "val_labels_paths": val_labels_paths,
-        }
-
-    def create(self) -> dict[str, Dataset]:
-        """Create a dataset based on the configuration information of YoloParser.
-
-        Returns:
-            dict[str, Dataset]: Return the dictionary containing the training (train) and validation (val) datasets.
-        """
-        # 解析类别和路径信息
-        metadata = self.parse()
-        class_names = metadata["class_names"]
-
-        trian_dataset = YoloMMDataset(
-            img_paths=metadata["train_img_paths"],
-            thermal_paths=metadata["train_theraml_paths"],
-            label_paths=metadata["train_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=True,
-            mosaic=True,
-        )
-        val_dataset = YoloMMDataset(
-            metadata["val_img_paths"],
-            metadata["val_theraml_paths"],
-            metadata["val_labels_paths"],
-            transform=self.transforms,
-            img_size=self.cfg.img_size,
-            multiscale=self.cfg.multiscale,
-            img_size_stride=self.cfg.img_size_stride,
-            augment=False,
-            mosaic=False,
-        )
+        train_labels = [os.path.join(self.dataset_path, label) for label in train_labels]
+        val_labels = [os.path.join(self.dataset_path, label) for label in val_labels]
 
         return {
-            "class_names": class_names,
-            "class_nums": len(class_names),
-            "train_dataset": trian_dataset,
-            "val_dataset": val_dataset,
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
         }

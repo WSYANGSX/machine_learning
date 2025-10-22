@@ -1,0 +1,19 @@
+name: vedai_1024
+path: /home/yangxf/WorkSpace/machine_learning/data/vedai_1024
+dataset_type: MultimodalYoloDataset
+
+train: train
+val: val
+
+# Classes
+nc: 9
+class_names:
+  - Car
+  - Truck
+  - Boat
+  - Tractor
+  - Camping (Van)
+  - Pickup
+  - Plane
+  - Others
+  - Vans
