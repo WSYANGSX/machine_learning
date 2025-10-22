@@ -3,20 +3,20 @@ from typing import Literal, Any
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
-from .base import DatasetBase
+from .base import DatasetBase, MMDatasetBase
 from .datasets import YoloDataset
-from .parsers import ParserBase, MinistParser, CocoParser, FlirParser, VedaiParser
+from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser
 
 from machine_learning.utils.logger import LOGGER
 
 __all__ = [
     "DatasetBase",
     "YoloDataset",
-    "MultimodalDataset",
+    "MMDatasetBase",
     "ParserBase",
     "MinistParser",
     "CocoParser",
-    "FlirParser",
+    "FlirAlignedParser",
     "VedaiParser",
 ]
 
@@ -24,8 +24,9 @@ __all__ = [
 PARSER_MAPS = {
     "minist": MinistParser,
     "coco-2017": CocoParser,
-    "flir": FlirParser,
+    "flir": FlirAlignedParser,
     "vedai": VedaiParser,
+    "vedai_1024": VedaiParser,
 }
 
 

@@ -142,7 +142,7 @@ class DatasetBase(Dataset):
         else:
             raise TypeError("The input data and labels must be the same of type (np.ndarray or list).")
 
-    def get_labels(self, desc_func: Callable) -> None:
+    def get_labels(self, desc_func: Callable | None = None) -> None:
         """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} labels...")
@@ -152,7 +152,9 @@ class DatasetBase(Dataset):
             for _, lb in pbar:
                 if lb:
                     b += asizeof.asizeof(lb)
-                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func()
+                pbar.desc = (
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                )
             pbar.close()
 
     def get_labels_np(self, labels: np.ndarray) -> None:
@@ -414,7 +416,7 @@ class DatasetBase(Dataset):
             buffer.pop(i)
 
 
-class MultimodalDataset(Dataset):
+class MMDatasetBase(Dataset):
     """
     Base dataset class for loading and processing multimodal data and labels.
 
@@ -469,8 +471,8 @@ class MultimodalDataset(Dataset):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
-        self.modal_names = data.keys()
-        self.label_names = labels.keys() if isinstance(labels, dict) else None
+        self._modal_names = list(data.keys())
+        self._label_names = list(labels.keys()) if isinstance(labels, dict) else None
 
         self.hyp = Dict(hyp)
         self.augment = augment
@@ -500,6 +502,14 @@ class MultimodalDataset(Dataset):
         # Transforms
         self.transforms = self.build_transforms(hyp=self.hyp)
 
+    @property
+    def modal_names(self) -> list[str]:
+        return self._modal_names
+
+    @property
+    def label_names(self) -> list[str]:
+        return self._label_names
+
     def create_buffers(self, length: int, labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray]) -> None:
         """Build buffers for data and labels storage."""
         self.buffers = {}
@@ -528,15 +538,16 @@ class MultimodalDataset(Dataset):
         labels: np.ndarray | list[str] | dict[str, np.ndarray | list[str]],
     ) -> None:
         # np.ndarray
-        if isinstance(data.values()[0], np.ndarray) and (
-            isinstance(labels, np.ndarray) or (isinstance(labels, dict) and isinstance(labels.values()[0], np.ndarray))
+        if all(isinstance(v, np.ndarray) for v in data.values()) and (
+            isinstance(labels, np.ndarray)
+            or (isinstance(labels, dict) and all(isinstance(v, np.ndarray) for v in labels.values()))
         ):
             self.cache_data_np(data)
             self.get_labels_np(labels)
 
         # list[str]
-        elif isinstance(data.values()[0], list) and (
-            isinstance(labels, list) or (isinstance(labels, dict) and isinstance(labels.values()[0], list))
+        elif all(isinstance(v, list) for v in data.values()) and (
+            isinstance(labels, list) or (isinstance(labels, dict) and all(isinstance(v, list) for v in labels.values()))
         ):
             for modal in self.modal_names:
                 self.data_files[modal] = data[modal][: self.length]
@@ -561,7 +572,7 @@ class MultimodalDataset(Dataset):
         else:
             raise TypeError("Invalid input type of data or labels!")
 
-    def get_labels(self, desc_func: Callable) -> None:
+    def get_labels(self, desc_func: Callable | None = None) -> None:
         """Get labels from path list to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} labels...")
@@ -571,7 +582,9 @@ class MultimodalDataset(Dataset):
             for _, lb in pbar:
                 if lb:
                     b += asizeof.asizeof(lb)
-                pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func()
+                pbar.desc = (
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                )
             pbar.close()
 
     def get_labels_np(self, labels: np.ndarray | dict[str, np.ndarray]) -> None:
@@ -660,7 +673,6 @@ class MultimodalDataset(Dataset):
     def load_data(self, i: int) -> dict[str, np.ndarray] | None:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
         data = {}
-
         for modal in self.modal_names:
             dt, dtf, dtfn = self.data[modal][i], self.data_files[modal][i], self.data_npy_files[modal][i]
 
@@ -676,7 +688,7 @@ class MultimodalDataset(Dataset):
                 else:
                     dt = self.file_read(dtf)
 
-                data[modal] = dt
+            data[modal] = dt
 
         if all(dt is None for dt in data):
             self.corrupt_idx.add(i)

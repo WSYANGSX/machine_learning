@@ -146,9 +146,10 @@ class FlirAlignedParser(ParserBase):
         train_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in train_labels]
         val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
+        # Modal names should be uniformly in the singular form for convenience
         return {
-            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
-            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
+            "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
+            "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},
         }
 
 
@@ -158,34 +159,23 @@ class VedaiParser(ParserBase):
     def __init__(self, dataset_cfg: dict[str, Any]):
         super().__init__(dataset_cfg)
 
-        self.train = self.dataset_cfg["train"]
-        self.val = self.dataset_cfg["val"]
+        self.train_dir = os.path.join(self.dataset_path, self.dataset_cfg["train_dir"])
+        self.val_dir = os.path.join(self.dataset_path, self.dataset_cfg["val_dir"])
+        self.train_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["train_ids"]))
+        self.val_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["val_ids"]))
 
     def parse(self) -> dict[str, Any]:
-        # relative path
-        train_dir = os.path.join(self.dataset_path, self.train)
-        val_dir = os.path.join(self.dataset_path, self.val)
+        # trian paths
+        train_imgs = [os.path.join(self.train_dir, "images") + f"/{id}.png" for id in self.train_ids]
+        train_irs = [os.path.join(self.train_dir, "irs") + f"/{id}.png" for id in self.train_ids]
+        train_labels = [os.path.join(self.train_dir, "labels") + f"/{id}.txt" for id in self.train_ids]
+        # label paths
+        val_imgs = [os.path.join(self.val_dir, "images") + f"/{id}.png" for id in self.val_ids]
+        val_irs = [os.path.join(self.val_dir, "irs") + f"/{id}.png" for id in self.val_ids]
+        val_labels = [os.path.join(self.val_dir, "labels") + f"/{id}.txt" for id in self.val_ids]
 
-        train_irs = [f + "_ir.png" for f in train_dir]
-        val_irs = [f + "_ir.png" for f in val_ids]
-
-        train_imgs = [f + "_co.png" for f in train_ids]
-        val_imgs = [f + "_co.png" for f in val_ids]
-
-        train_labels = [f + ".txt" for f in train_ids]
-        val_labels = [f + ".txt" for f in val_ids]
-
-        # abs path
-        train_irs = [os.path.join(self.dataset_path, ir) for ir in train_irs]
-        val_irs = [os.path.join(self.dataset_path, ir) for ir in val_irs]
-
-        train_imgs = [os.path.join(self.dataset_path, img) for img in train_imgs]
-        val_imgs = [os.path.join(self.dataset_path, img) for img in val_imgs]
-
-        train_labels = [os.path.join(self.dataset_path, label) for label in train_labels]
-        val_labels = [os.path.join(self.dataset_path, label) for label in val_labels]
-
+        # Modal names should be uniformly in the singular form for convenience
         return {
-            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
-            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
+            "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
+            "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},
         }

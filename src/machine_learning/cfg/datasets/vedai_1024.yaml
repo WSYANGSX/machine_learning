@@ -1,9 +1,11 @@
 name: vedai_1024
-path: /home/yangxf/WorkSpace/machine_learning/data/vedai_1024
+path: /home/yangxf/WorkSpace/datasets/..datasets/vedai_1024
 dataset_type: MultimodalYoloDataset
 
-train: train
-val: val
+train_dir: train
+val_dir: val
+train_ids: train_ids.txt
+val_ids: val_ids.txt
 
 # Classes
 nc: 9
