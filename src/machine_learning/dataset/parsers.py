@@ -146,7 +146,7 @@ class FlirAlignedParser(ParserBase):
         train_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in train_labels]
         val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
-        # Modal names should be uniformly in the singular form for convenience
+        # Multi modal names should be uniformly in the singular form for convenience
         return {
             "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
             "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},
@@ -174,7 +174,7 @@ class VedaiParser(ParserBase):
         val_irs = [os.path.join(self.val_dir, "irs") + f"/{id}.png" for id in self.val_ids]
         val_labels = [os.path.join(self.val_dir, "labels") + f"/{id}.txt" for id in self.val_ids]
 
-        # Modal names should be uniformly in the singular form for convenience
+        # Multi modal names should be uniformly in the singular form for convenience
         return {
             "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
             "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},

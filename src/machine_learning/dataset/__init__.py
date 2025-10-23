@@ -4,15 +4,18 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MMDatasetBase
-from .datasets import YoloDataset
+from .datasets import YoloDataset, ImgIrYoloDataset
 from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser
 
 from machine_learning.utils.logger import LOGGER
 
 __all__ = [
+    # datasets
     "DatasetBase",
     "YoloDataset",
     "MMDatasetBase",
+    "ImgIrYoloDataset",
+    # parsers
     "ParserBase",
     "MinistParser",
     "CocoParser",
@@ -69,7 +72,7 @@ def build_dataset(
             imgs=parsing["data"],
             labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),
-            num_cls=cfg.get("num_cls"),
+            nc=cfg.get("nc"),
             task=cfg["task"],
             rect=cfg["rect"],
             stride=cfg.get("stride", 32),
@@ -83,26 +86,37 @@ def build_dataset(
             fraction=fraction,
             mode=mode,
         )
-    elif type == "MultiModal":
-        ...
-        # return MultimodalDataset(
-        #     data=parsing["data"],
-        #     labels=parsing["labels"],
-        #     imgsz=cfg.get("imgsz", 640),
-        #     num_cls=cfg.get("num_cls"),
-        #     task=cfg["task"],
-        #     rect=cfg["rect"],
-        #     stride=cfg.get("stride", 32),
-        #     pad=0.0 if mode == "train" else 0.5,
-        #     single_cls=cfg.get("single_cls", False),
-        #     classes=cfg.get("class", None),
-        #     cache=cache,
-        #     augment=augment,
-        #     hyp=cfg,
-        #     batch_size=batch_size,
-        #     fraction=fraction,
-        #     mode=mode,
-        # )
+    elif type == "MMDatasetBase":
+        return MMDatasetBase(
+            data=parsing["data"],
+            labels=parsing["labels"],
+            cache=cache,
+            augment=augment,
+            hyp=cfg,
+            batch_size=batch_size,
+            fraction=fraction,
+            mode=mode,
+        )
+
+    elif type == "ImgIrYoloDataset":
+        return ImgIrYoloDataset(
+            imgs=parsing["data"],
+            labels=parsing["labels"],
+            imgsz=cfg.get("imgsz", 640),
+            nc=cfg.get("nc"),
+            task=cfg["task"],
+            rect=cfg["rect"],
+            stride=cfg.get("stride", 32),
+            pad=0.0 if mode == "train" else 0.5,
+            single_cls=cfg.get("single_cls", False),
+            classes=cfg.get("class", None),
+            cache=cache,
+            augment=augment,
+            hyp=cfg,
+            batch_size=batch_size,
+            fraction=fraction,
+            mode=mode,
+        )
 
 
 def build_dataloader(

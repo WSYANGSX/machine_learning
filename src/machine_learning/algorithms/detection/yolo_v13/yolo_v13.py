@@ -128,7 +128,7 @@ class YoloV13(AlgorithmBase):
             {"params": no_decay_bias_params, "weight_decay": 0.0},
         ]
 
-        optimizer_type = self.opt_cfg["type"]
+        optimizer_type = self.opt_cfg["opt"]
         lr = self.opt_cfg["lr"]
 
         if optimizer_type == "Adam":
@@ -159,7 +159,7 @@ class YoloV13(AlgorithmBase):
 
         self.scheduler = None
 
-        if self.sch_config.get("type") == "ReduceLROnPlateau":
+        if self.sch_config.get("sched") == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode="min",
@@ -168,7 +168,7 @@ class YoloV13(AlgorithmBase):
             )
             self._add_scheduler("scheduler", self.scheduler)
 
-        elif self.sch_config.get("type") == "CustomLRDecay":
+        elif self.sch_config.get("sched") == "CustomLRDecay":
             self.lf = (
                 lambda x: max(1 - x / self.trainer_cfg["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
                 + self.opt_cfg["final_factor"]
@@ -371,7 +371,7 @@ class YoloV13(AlgorithmBase):
             x.append(pred)
         x = torch.cat(x, 1)
         # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["num_cls"]), 2)
+        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["nc"]), 2)
 
         strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)

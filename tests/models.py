@@ -1,2 +1,6 @@
-a = {"1": 1, "2": 2, "3": 3}
-print(list(a.values())[0])
+from numbers import Number, Real, Complex
+import numpy as np
+import torch
+
+a = torch.scalar_tensor(1, dtype=torch.float32)
+print(isinstance(a, Number))

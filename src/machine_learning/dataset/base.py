@@ -408,12 +408,12 @@ class DatasetBase(Dataset):
                 self.remove_item(i)
             self.corrupt_idx.clear()
 
-        self.length = len(self.labels)
-
     def remove_item(self, i: int) -> None:
         """Remove a item of buffers according to the index."""
         for buffer in self.buffers.values():
             buffer.pop(i)
+
+        self.length = len(self.labels)
 
 
 class MMDatasetBase(Dataset):
@@ -430,6 +430,8 @@ class MMDatasetBase(Dataset):
         mode (Literal["train", "val", "test"]): The mode of the dataset.
 
     Properties:
+        modal_names (list[str]): The names of different modal data.
+        label_names (list[str] | None): The names of different modal labels.
         data (dict[str, list[np.ndarray]]): Dict buffer of multimodal data.
         data_files (dict[str, list[str]]): Dict buffer of multimodal file paths.
         data_npy_files (dict[str, list[str]]): Dict buffer of data .npy file paths.
@@ -487,7 +489,7 @@ class MMDatasetBase(Dataset):
         if isinstance(labels, (np.ndarray, list)):
             length = len(labels)
         elif isinstance(labels, dict):
-            length = len(labels.values()[0])
+            length = len(next(iter(labels.values())))
         else:
             raise ValueError("Invalid data type!")
         self.length = round(length * self.fraction)
@@ -542,8 +544,8 @@ class MMDatasetBase(Dataset):
             isinstance(labels, np.ndarray)
             or (isinstance(labels, dict) and all(isinstance(v, np.ndarray) for v in labels.values()))
         ):
-            self.cache_data_np(data)
             self.get_labels_np(labels)
+            self.cache_data_np(data)
 
         # list[str]
         elif all(isinstance(v, list) for v in data.values()) and (
@@ -599,7 +601,7 @@ class MMDatasetBase(Dataset):
                 b += asizeof.asizeof(label)
                 pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
         else:
-            pbar = tqdm(range(len(labels.values()[0])))
+            pbar = tqdm(range(len(next(iter(labels.values())))))
             for i in pbar:
                 label = {}
                 for lb in self.label_names:
@@ -625,11 +627,11 @@ class MMDatasetBase(Dataset):
         """Cache np.ndarray format data to buffers"""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} data from matrix input...")
-        pbar = tqdm(range(len(data.values()[0])))
+        pbar = tqdm(range(len(next(iter(data.values())))))
         for i in pbar:
             for modal in self.modal_names:
-                self.data[modal] = data[modal][i]
-                b += data.nbytes
+                self.data[modal][i] = data[modal][i]
+                b += data[modal][i].nbytes
             pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB)"
         pbar.close()
 
@@ -828,9 +830,9 @@ class MMDatasetBase(Dataset):
             LOGGER.error(f"Could not read file '{path}': {e}")
             return None
 
-    def label_format(self, label: np.ndarray | dict[str, np.ndarray] | None) -> dict[str, Any] | None:
+    def label_format(self, label: Any) -> dict[str, Any] | None:
         """format the label from np.ndarray to a custom form."""
-        if isinstance(label, np.ndarray):
+        if label is not None and not isinstance(label, dict):
             label = {"label": label}  # Customize
             return label
         else:
@@ -878,8 +880,6 @@ class MMDatasetBase(Dataset):
                 self.remove_item(i)
             self.corrupt_idx.clear()
 
-        self.length = len(self.labels)
-
     def remove_item(self, i: int) -> None:
         """Remove a item of buffers according to the index."""
         for buffer in self.buffers.values():
@@ -888,3 +888,5 @@ class MMDatasetBase(Dataset):
             elif isinstance(buffer, dict):
                 for sub_buffer in buffer.values():
                     sub_buffer.pop(i)
+
+        self.length = len(self.labels)
