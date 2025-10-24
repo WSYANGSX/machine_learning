@@ -92,8 +92,8 @@ class DatasetBase(Dataset):
         self.length = round(len(labels) * self.fraction)
         self.create_buffers(self.length)
 
-        # init cache
-        self.init_cache(data, labels)
+        # cache data and labels
+        self.cache_data_labels(data, labels)
 
         # update buffers length
         self.update_buffers()
@@ -117,10 +117,10 @@ class DatasetBase(Dataset):
         self.buffers["data_files"] = self.data_files
         self.buffers["data_npy_files"] = self.data_npy_files
 
-    def init_cache(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
+    def cache_data_labels(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
         # np.ndarray
         if isinstance(data, np.ndarray) and isinstance(labels, np.ndarray):
-            self.get_labels_np(labels)
+            self.cache_labels_np(labels)
             self.cache_data_np(data)
 
         # list[str]
@@ -128,10 +128,10 @@ class DatasetBase(Dataset):
             self.label_files = labels[: self.length]
             self.data_files = data[: self.length]
 
-            # labels
-            self.get_labels()
+            # cache labels
+            self.cache_labels()
 
-            # data
+            # cache data
             self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
 
             if self.cache == "ram" and self.check_cache_ram():
@@ -142,23 +142,8 @@ class DatasetBase(Dataset):
         else:
             raise TypeError("The input data and labels must be the same of type (np.ndarray or list).")
 
-    def get_labels(self, desc_func: Callable | None = None) -> None:
-        """Get labels from path list to buffers."""
-        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info(f"Caching {self.mode} labels...")
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(self.cache_labels, range(len(self.label_files)))
-            pbar = tqdm(enumerate(results), total=len(self.label_files))
-            for _, lb in pbar:
-                if lb:
-                    b += asizeof.asizeof(lb)
-                pbar.desc = (
-                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
-                )
-            pbar.close()
-
-    def get_labels_np(self, labels: np.ndarray) -> None:
-        """Get labels from matrix input to buffers."""
+    def cache_labels_np(self, labels: np.ndarray) -> None:
+        """Cache labels from matrix input to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} labels from matrix input...")
         pbar = tqdm(enumerate(labels), total=len(labels))
@@ -168,17 +153,6 @@ class DatasetBase(Dataset):
             b += asizeof.asizeof(label)
             pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
         pbar.close()
-
-    def cache_labels(self, i: int) -> dict[str, Any] | None:
-        """Cache label from paths to ram for faster loading."""
-        label = self.lread(i)
-        label = self.label_format(label)
-        if label:
-            self.labels[i] = label
-            return label
-        else:  # label corrupt
-            self.corrupt_idx.add(i)
-            return None
 
     def cache_data_np(self, data: np.ndarray) -> None:
         """Cache np.ndarray format data to buffers"""
@@ -190,6 +164,46 @@ class DatasetBase(Dataset):
             b += data.nbytes
             pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB)"
         pbar.close()
+
+    def cache_labels(self, desc_func: Callable | None = None) -> None:
+        """Cache label from paths to ram for faster loading."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info(f"Caching {self.mode} labels...")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(self.get_labels, range(len(self.label_files)))
+            pbar = tqdm(enumerate(results), total=len(self.label_files))
+            for i, lb in pbar:
+                if lb:
+                    self.labels[i] = lb
+                    b += asizeof.asizeof(lb)
+                else:  # label corrupt
+                    self.corrupt_idx.add(i)
+                pbar.desc = (
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                )
+            pbar.close()
+
+    def get_labels(self, i: int) -> dict[str, Any] | None:
+        """Read labels from the specified path and organize them into a specific format."""
+        label = self.label_read(i)
+        label = self.label_format(label)
+
+        return label
+
+    def label_read(self, index: int) -> np.ndarray | None:
+        """Read label from a specific path and verify the validity of relative data."""
+        data_file, lb_file = self.data_files[index], self.label_files[index]
+        label = self.file_read(lb_file)
+
+        return label
+
+    def label_format(self, label: Any | None) -> dict[str, Any] | None:
+        """format the label from np.ndarray to a custom form."""
+        if label is not None and not isinstance(label, dict):
+            label = {"label": label}  # Customize
+            return label
+        else:
+            return label
 
     def cache_data(self) -> None:
         """Cache data to memory or disk."""
@@ -320,13 +334,6 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    def lread(self, index: int) -> np.ndarray | None:
-        """Users implement their own label reading logic."""
-        label_path = self.label_files[index]
-        label = self.file_read(label_path)
-
-        return label
-
     @staticmethod
     def file_read(path: FilePath) -> np.ndarray | None:
         path = Path(path)
@@ -363,14 +370,6 @@ class DatasetBase(Dataset):
         except Exception as e:
             LOGGER.error(f"Could not read file '{path}': {e}")
             return None
-
-    def label_format(self, label: Any | None) -> dict[str, Any] | None:
-        """format the label from np.ndarray to a custom form."""
-        if label is not None and not isinstance(label, dict):
-            label = {"label": label}  # Customize
-            return label
-        else:
-            return label
 
     def build_transforms(self, hyp: dict[str, Any] | None = None):
         """

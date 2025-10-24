@@ -153,8 +153,8 @@ class YoloDataset(DatasetBase):
             assert self.batch_size is not None
             self.set_rectangle()
 
-    def lread(self, index: int) -> tuple[np.ndarray | None]:
-        """Read label"""
+    def label_read(self, index: int) -> tuple[np.ndarray | None]:
+        """Read label from a specific path and verify the validity of relative data."""
         im_file, lb_file = self.img_files[index], self.label_files[index]
         # Number (missing, found, empty, corrupt), message, segments, keypoints
         segments, keypoints = [], None
