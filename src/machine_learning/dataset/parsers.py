@@ -106,8 +106,8 @@ class CocoParser(ParserBase):
         val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
 
         return {
-            "train": {"data": train_imgs, "labels": train_labels},
-            "val": {"data": val_imgs, "labels": val_labels},
+            "train": {"imgs": train_imgs, "labels": train_labels},
+            "val": {"imgs": val_imgs, "labels": val_labels},
         }
 
 

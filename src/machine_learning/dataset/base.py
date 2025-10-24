@@ -623,6 +623,21 @@ class MMDatasetBase(Dataset):
             self.corrupt_idx.add(i)
             return None
 
+    def lread(self, index: int) -> np.ndarray | dict[str, np.ndarray] | None:
+        """Users implement their own label reading logic."""
+        if isinstance(self.label_files, list):
+            label_path = self.label_files[index]
+            label = self.file_read(label_path)
+        elif isinstance(self.label_files, dict):
+            label = {}
+            for lb in self.label_names:
+                label_path = self.label_files[lb][index]
+                label[lb] = self.file_read(label_path)
+            if all(val is None for val in label.values()):
+                label = None
+
+        return label
+
     def cache_data_np(self, data: dict[str, np.ndarray]) -> None:
         """Cache np.ndarray format data to buffers"""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
@@ -653,8 +668,9 @@ class MMDatasetBase(Dataset):
                 else:
                     if x:
                         for modal in self.modal_names:
-                            d = self.data[modal][i] = x[modal]
-                            b += d.nbytes if d is not None else 0.0
+                            self.data[modal][i] = x[modal]
+                            if self.data[modal][i]:
+                                b += self.data[modal][i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
 
@@ -777,21 +793,6 @@ class MMDatasetBase(Dataset):
             )
             return False
         return True
-
-    def lread(self, index: int) -> np.ndarray | dict[str, np.ndarray] | None:
-        """Users implement their own label reading logic."""
-        if isinstance(self.label_files, list):
-            label_path = self.label_files[index]
-            label = self.file_read(label_path)
-        elif isinstance(self.label_files, dict):
-            label = {}
-            for lb in self.label_names:
-                label_path = self.label_files[lb][index]
-                label[lb] = self.file_read(label_path)
-            if all(val is None for val in label.values()):
-                label = None
-
-        return label
 
     @staticmethod
     def file_read(path: FilePath) -> np.ndarray | None:

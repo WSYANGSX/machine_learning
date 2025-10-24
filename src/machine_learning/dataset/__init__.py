@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MMDatasetBase
-from .datasets import YoloDataset, ImgIrYoloDataset
+from .datasets import YoloDataset, ImgIrDataset
 from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser
 
 from machine_learning.utils.logger import LOGGER
@@ -14,7 +14,7 @@ __all__ = [
     "DatasetBase",
     "YoloDataset",
     "MMDatasetBase",
-    "ImgIrYoloDataset",
+    "ImgIrDataset",
     # parsers
     "ParserBase",
     "MinistParser",
@@ -69,7 +69,7 @@ def build_dataset(
         )
     elif type == "YoloDataset":
         return YoloDataset(
-            imgs=parsing["data"],
+            imgs=parsing["imgs"],
             labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),
             nc=cfg.get("nc"),
@@ -98,8 +98,8 @@ def build_dataset(
             mode=mode,
         )
 
-    elif type == "ImgIrYoloDataset":
-        return ImgIrYoloDataset(
+    elif type == "ImgIrDataset":
+        return ImgIrDataset(
             imgs=parsing["data"],
             labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),
