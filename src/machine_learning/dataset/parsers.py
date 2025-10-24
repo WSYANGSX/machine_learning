@@ -148,8 +148,8 @@ class FlirAlignedParser(ParserBase):
 
         # Multi modal names should be uniformly in the singular form for convenience
         return {
-            "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
-            "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
         }
 
 
@@ -176,6 +176,6 @@ class VedaiParser(ParserBase):
 
         # Multi modal names should be uniformly in the singular form for convenience
         return {
-            "train": {"data": {"img": train_imgs, "ir": train_irs}, "labels": train_labels},
-            "val": {"data": {"img": val_imgs, "ir": val_irs}, "labels": val_labels},
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
         }

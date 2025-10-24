@@ -1,6 +1,9 @@
 name: vedai_1024
 path: /home/yangxf/WorkSpace/datasets/..datasets/vedai_1024
-dataset_type: MultimodalYoloDataset
+dataset_type: ImgIrDataset
+modals:
+  - img
+  - ir
 
 train_dir: train
 val_dir: val

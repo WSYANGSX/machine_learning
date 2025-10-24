@@ -87,6 +87,7 @@ def build_dataset(
             mode=mode,
         )
     elif type == "MMDatasetBase":
+        modal_names = cfg.get("modals")
         return MMDatasetBase(
             data=parsing["data"],
             labels=parsing["labels"],
@@ -95,10 +96,12 @@ def build_dataset(
             hyp=cfg,
             batch_size=batch_size,
             fraction=fraction,
+            modal_names=modal_names,
             mode=mode,
         )
 
     elif type == "ImgIrDataset":
+        modal_names = cfg.get("modals", ["img", "ir"])
         return ImgIrDataset(
             imgs=parsing["data"],
             labels=parsing["labels"],
@@ -114,6 +117,7 @@ def build_dataset(
             augment=augment,
             hyp=cfg,
             batch_size=batch_size,
+            modal_names=modal_names,
             fraction=fraction,
             mode=mode,
         )

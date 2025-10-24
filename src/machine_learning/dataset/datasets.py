@@ -98,16 +98,28 @@ class YoloDataset(DatasetBase):
         self.max_augment_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
     @property
-    def imgs(self) -> list:
+    def imgs(self) -> list[np.ndarray | str]:
         return self.data
 
     @property
-    def img_files(self) -> list:
+    def img_files(self) -> list[str]:
         return self.data_files
 
     @property
-    def img_npy_files(self) -> list:
+    def img_npy_files(self) -> list[str]:
         return self.data_npy_files
+
+    @imgs.setter
+    def imgs(self, value: list[np.ndarray | str]) -> None:
+        self.data = value
+
+    @img_files.setter
+    def img_files(self, value: list[str]) -> None:
+        self.data_files = value
+
+    @img_npy_files.setter
+    def img_npy_files(self, value: list[str]) -> None:
+        self.data_npy_files = value
 
     def get_labels(self):
         """Get labels from path list to buffers."""
@@ -143,7 +155,7 @@ class YoloDataset(DatasetBase):
 
     def lread(self, index: int) -> tuple[np.ndarray | None]:
         """Read label"""
-        im_file, lb_file = self.data_files[index], self.label_files[index]
+        im_file, lb_file = self.img_files[index], self.label_files[index]
         # Number (missing, found, empty, corrupt), message, segments, keypoints
         segments, keypoints = [], None
         try:
@@ -251,7 +263,7 @@ class YoloDataset(DatasetBase):
         s = np.array([x.pop("shape") for x in self.labels])  # hw
         ar = s[:, 0] / s[:, 1]  # aspect ratio
         irect = ar.argsort()
-        self.im_files = [self.im_files[i] for i in irect]
+        self.img_files = [self.img_files[i] for i in irect]
         self.labels = [self.labels[i] for i in irect]
         ar = ar[irect]
 
@@ -488,6 +500,7 @@ class ImgIrDataset(MMDatasetBase):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
+        modal_names: list[str] | None = None,
         task: Literal["detect", "pose", "segment"] = "detect",
         mode: Literal["train", "val", "test"] = "train",
     ):
@@ -514,6 +527,7 @@ class ImgIrDataset(MMDatasetBase):
             hyp=hyp,
             batch_size=batch_size,
             fraction=fraction,
+            modal_names=modal_names,
             mode=mode,
         )
 
