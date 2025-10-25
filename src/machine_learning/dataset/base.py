@@ -3,7 +3,6 @@ from typing import Any, Literal, Callable
 import os
 import re
 import cv2
-import torch
 import random
 import psutil
 import warnings
