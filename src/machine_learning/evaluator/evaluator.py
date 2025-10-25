@@ -7,8 +7,8 @@ from machine_learning.algorithms import AlgorithmBase
 class Evaluator:
     def __init__(
         self,
-        ckpt: str,
         algo: AlgorithmBase,
+        ckpt: str,
         dataset: str | Mapping[str, Any],
         use_dataset: bool = True,
     ) -> None:

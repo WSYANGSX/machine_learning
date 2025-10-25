@@ -3,6 +3,7 @@ from typing import Any, Literal, Callable
 import os
 import re
 import cv2
+import torch
 import random
 import psutil
 import warnings
@@ -19,12 +20,16 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.constants import NUM_THREADS, IMG_FORMATS
+from machine_learning.utils.constants import NUM_THREADS, IMG_FORMATS, NPY_FORMATS
+from machine_learning.utils.ops import is_empty_array
 
 
 class DatasetBase(Dataset):
     """
-    Base dataset class for loading and processing data. Based on https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/base.py.
+    Base dataset class for data loading and processing.
+
+    Adapted from Ultralytics YOLO base dataset implementation.
+    Source: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/base.py
 
     Args:
         data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
@@ -184,23 +189,42 @@ class DatasetBase(Dataset):
             pbar.close()
 
     def get_labels(self, i: int) -> dict[str, Any] | None:
-        """Read labels from the specified path and organize them into a specific format."""
+        """Read labels from the specified path and organize them into a specific format.
+
+        Args:
+            i (int): The index.
+
+        Returns:
+            dict: When label and data are valid, return label in a customized dict interface, otherwise return None.
+        """
         label = self.label_read(i)
         label = self.label_format(label)
 
         return label
 
-    def label_read(self, index: int) -> np.ndarray | None:
+    def label_read(self, i: int) -> np.ndarray | None:
         """Read label from a specific path and verify the validity of relative data."""
-        data_file, lb_file = self.data_files[index], self.label_files[index]
-        label = self.file_read(lb_file)
+        data_file, lb_file = self.data_files[i], self.label_files[i]
+
+        try:
+            # verify data
+            if not verify_data(data_file):
+                LOGGER.warning(f"Invalid data file: {data_file}")
+                return None
+
+            # verify label
+            label = file_read(lb_file)
+
+        except Exception as e:
+            LOGGER.error(f"Error reading label at index {i}: {e}")
+            return None
 
         return label
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
         """format the label from np.ndarray to a custom form."""
         if label is not None and not isinstance(label, dict):
-            label = {"label": label}  # Customize
+            label = {"label": label}  # customize dict interface
             return label
         else:
             return label
@@ -215,10 +239,7 @@ class DatasetBase(Dataset):
             pbar = tqdm(enumerate(results), total=len(self.data_files))
             for i, x in pbar:
                 if self.cache == "disk":
-                    try:
-                        b += self.data_files[i].stat().st_size
-                    except FileNotFoundError:
-                        b += 0.0
+                    b += x
                 else:
                     if x:
                         self.data[i] = x
@@ -233,6 +254,9 @@ class DatasetBase(Dataset):
             data = self.file_read(self.data_files[i])
             if data:
                 np.save(f, data, allow_pickle=False)
+                return self.data_npy_files[i].stat().st_size
+
+        return 0.0
 
     def load_data(self, i: int) -> np.ndarray | None:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
@@ -250,9 +274,6 @@ class DatasetBase(Dataset):
             else:
                 dt = self.file_read(dtf)
 
-            if dt is None:  # data corrupt
-                self.corrupt_idx.add(i)
-
             return dt
 
         return dt
@@ -262,23 +283,23 @@ class DatasetBase(Dataset):
         return self.length
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
-        """Returns transformed label information for given index."""
-        data, label = self.get_data_and_label(index)
+        """Returns transformed sample for given index."""
+        sample = self.get_sample(index)
         if self.transforms:
-            data, label = self.transforms(data, label)  # The transform must take label as input.
-        return data, label
+            sample["data"] = self.transforms(sample["data"])
+        return sample
 
-    def get_data_and_label(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
-        """Returns Data and label information for given index."""
-        label = deepcopy(self.labels[index])
-        data = self.load_data(index)
-        label = self.update_labels_info(label)
+    def get_sample(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
+        """Returns a sample (data and label) for given index."""
+        sample = deepcopy(self.labels[index])
+        sample["data"] = self.load_data(index)
+        sample = self.update_labels_info(sample)
 
-        return data, label
+        return sample
 
-    def update_labels_info(self, label: dict[str, Any]) -> dict[str, Any]:
+    def update_labels_info(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Custom your label format here."""
-        return label
+        return sample
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
         """Check data caching requirements vs available memory."""
@@ -334,43 +355,6 @@ class DatasetBase(Dataset):
             return False
         return True
 
-    @staticmethod
-    def file_read(path: FilePath) -> np.ndarray | None:
-        path = Path(path)
-        extension = path.suffix.lower()
-
-        if not path.exists():
-            LOGGER.error(f"File does not exist: {path}")
-            return None
-
-        try:
-            if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path))  # bgr
-                if data is None:
-                    LOGGER.error("Image Not Found.")
-                    return None
-                return data
-
-            elif extension == ".txt":  # text
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    data = np.loadtxt(path, dtype=np.float32)
-                return data
-
-            elif extension == ".npy":  # numpy
-                data = np.load(path)
-                return data
-
-            else:
-                LOGGER.error(
-                    f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']"
-                )
-                return None
-
-        except Exception as e:
-            LOGGER.error(f"Could not read file '{path}': {e}")
-            return None
-
     def build_transforms(self, hyp: dict[str, Any] | None = None):
         """
         Users can customize augmentations here.
@@ -388,7 +372,7 @@ class DatasetBase(Dataset):
         return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
 
     def register_buffer(self, name: str, buffer: list) -> None:
-        """Add a buffer item to the buffer management dictionary to facilitate unified management of buffers."""
+        """Add a buffer item to the buffer dictionary to facilitate unified management of buffers."""
         if len(buffer) != len(self.data):
             raise ValueError(f"The length of {name} buffer must be equal to data buffer.")
 
@@ -909,3 +893,186 @@ class MMDatasetBase(Dataset):
         for modal in self.modal_names:
             if re.match(modal, string):
                 return modal
+
+
+"""
+Hepler function
+"""
+
+
+def file_read(data_file: str) -> np.ndarray | None:
+    """
+    Read data file based on file extension.
+
+    Args:
+        data_file: Path to the data file.
+
+    Returns:
+        np.ndarray: Ndarray if file is accessible, None otherwise.
+    """
+
+    # get file extension
+    path = Path(data_file)
+    extension = path.suffix.lower()
+
+    if not path.exists():
+        LOGGER.error(f"File does not exist: {path}.")
+        return None
+    elif not path.is_file():
+        LOGGER.error(f"The path is not a file: {path}.")
+        return None
+
+    try:
+        # read img file with cv2
+        if extension in IMG_FORMATS:  # imgs
+            data = cv2.imread(str(path))  # bgr
+            if data is None:
+                LOGGER.error(f"Failed to read image: {path}")
+                return None
+            return data
+
+        elif extension == ".txt":  # text
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                data = np.loadtxt(path, dtype=np.float32)
+                if is_empty_array(data):
+                    LOGGER.warning(f"Empty text file: {path}")
+                    return None
+            return data
+
+        elif extension == ".npy":  # numpy
+            data = np.load(path)
+            if is_empty_array(data):
+                LOGGER.warning(f"Empty numpy file: {path}")
+                return None
+            return data
+
+        else:
+            LOGGER.error(f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']")
+            return None
+
+    except Exception as e:
+        LOGGER.error(f"Could not read file '{path}': {e}")
+        return None
+
+
+def verify_data(data_file: str) -> bool:
+    """
+    Quickly verify data file availability based on file extension.
+
+    Args:
+        data_file: Path to the data file.
+
+    Returns:
+        bool: True if file is likely valid and accessible, False otherwise.
+    """
+    try:
+        file_path = Path(data_file)
+
+        # Check if file exists and is accessible
+        if not file_path.exists() or not file_path.is_file():
+            return False
+
+        # Check file size (basic sanity check)
+        if file_path.stat().st_size == 0:
+            return False
+
+        # Extension-based validation
+        extension = file_path.suffix.lower()
+
+        if extension in IMG_FORMATS:
+            return _verify_image(file_path)
+        elif extension in NPY_FORMATS:
+            return _verify_numpy(file_path)
+        elif extension in {".txt", ".csv"}:
+            return _verify_text(file_path)
+        elif extension in {".json", ".xml"}:
+            return _verify_structured(file_path)
+        elif extension in {".pkl", ".pickle"}:
+            return _verify_pickle(file_path)
+        else:
+            # For unknown extensions, do basic file check
+            return _verify_generic(file_path)
+
+    except (OSError, IOError, PermissionError):
+        return False
+
+
+def _verify_image(file_path: Path) -> bool:
+    """Verify image file using pillow."""
+    try:
+        from PIL import Image
+
+        img = Image.open(file_path)
+        img.verify()  # PIL verify
+        if "." + img.format.lower() not in IMG_FORMATS:
+            raise TypeError(f"Invalid image format {img.format}.")
+
+    except Exception:
+        return False
+
+
+def _verify_numpy(file_path: Path) -> bool:
+    """Verify numpy file integrity."""
+    try:
+        import numpy as np
+
+        with open(file_path, "rb") as f:
+            # Quick header check without full load
+            version = np.lib.format.read_magic(f)
+            return version is not None
+
+    except Exception:
+        return False
+
+
+def _verify_text(file_path: Path) -> bool:
+    """Verify text file readability."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            # Try to read first few bytes
+            f.read(1024)
+        return True
+
+    except Exception:
+        return False
+
+
+def _verify_structured(file_path: Path) -> bool:
+    """Verify JSON/XML file structure."""
+    try:
+        import json
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            if file_path.suffix.lower() == ".json":
+                json.load(f)  # Basic syntax check
+            # For XML, we just check if it's readable
+            content = f.read()
+            return len(content) > 0
+
+    except Exception:
+        return False
+
+
+def _verify_pickle(file_path: Path) -> bool:
+    """Verify pickle file integrity."""
+    try:
+        import pickle
+
+        with open(file_path, "rb") as f:
+            pickle.load(f)  # Try to load
+        return True
+
+    except Exception:
+        return False
+
+
+def _verify_generic(file_path: Path) -> bool:
+    """Generic file verification."""
+    try:
+        with open(file_path, "rb") as f:
+            f.read(1)  # Try to read first byte
+        return True
+
+    except Exception:
+        return False

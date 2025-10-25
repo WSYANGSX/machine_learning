@@ -200,9 +200,9 @@ class YoloV13(AlgorithmBase):
         tloss = None
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
-        for batch_idx, batch in pbar:
+        for i, batch in pbar:
             # Warmup
-            batch_inters = epoch * self.train_batches + batch_idx
+            batch_inters = epoch * self.train_batches + i
             self.warmup(batch_inters, epoch)
 
             # Load data
@@ -224,7 +224,7 @@ class YoloV13(AlgorithmBase):
             self.optimizer_step(batch_inters)
 
             # Losses
-            tloss = (tloss * batch_idx + loss.item()) / (batch_idx + 1) if tloss is not None else loss.item()
+            tloss = (tloss * i + loss.item()) / (i + 1) if tloss is not None else loss.item()
             bloss = lc["bloss"]
             closs = lc["closs"]
             dloss = lc["dloss"]
@@ -237,7 +237,7 @@ class YoloV13(AlgorithmBase):
             metrics["img_size"] = imgs.size(2)
             metrics["instances"] = targets.size(0)
 
-            if batch_idx % log_interval == 0:
+            if i % log_interval == 0:
                 writer.add_scalar("bloss/train_batch", bloss, batch_inters)
                 writer.add_scalar("closs/train_batch", closs, batch_inters)
                 writer.add_scalar("dloss/train_batch", dloss, batch_inters)

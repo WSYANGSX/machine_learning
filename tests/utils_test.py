@@ -1,6 +1,4 @@
-import os
+import cv2
 
-a = "/home/yangxf/WorkSpace/machine_learning/"
-b = "./123.py"
-c = os.path.join(a, b)
-print(c)
+data = cv2.imread("1.jpg")
+print(data)

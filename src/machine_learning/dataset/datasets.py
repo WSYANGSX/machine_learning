@@ -121,7 +121,7 @@ class YoloDataset(DatasetBase):
     def img_npy_files(self, value: list[str]) -> None:
         self.data_npy_files = value
 
-    def get_labels(self):
+    def cache_labels(self):
         """Get labels from path list to buffers."""
         # statistical indicators
         self.num_missing = 0
@@ -143,7 +143,7 @@ class YoloDataset(DatasetBase):
                 f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt."
             )
 
-        super().get_labels(get_stats_desc)
+        super().cache_labels(get_stats_desc)
 
         # update labels
         self.update_labels(include_class=self.classes)
@@ -152,6 +152,25 @@ class YoloDataset(DatasetBase):
         if self.rect:
             assert self.batch_size is not None
             self.set_rectangle()
+
+    def update_labels(self, include_class: Optional[list]):
+        """Update labels to include only these classes (optional)."""
+        include_class_array = np.array(include_class).reshape(1, -1)
+        for i in range(len(self.labels)):
+            if include_class is not None:
+                cls = self.labels[i]["cls"]
+                bboxes = self.labels[i]["bboxes"]
+                segments = self.labels[i]["segments"]
+                keypoints = self.labels[i]["keypoints"]
+                j = (cls == include_class_array).any(1)
+                self.labels[i]["cls"] = cls[j]
+                self.labels[i]["bboxes"] = bboxes[j]
+                if segments:
+                    self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
+                if keypoints is not None:
+                    self.labels[i]["keypoints"] = keypoints[j]
+            if self.single_cls:
+                self.labels[i]["cls"][:, 0] = 0
 
     def label_read(self, index: int) -> tuple[np.ndarray | None]:
         """Read label from a specific path and verify the validity of relative data."""
@@ -163,7 +182,7 @@ class YoloDataset(DatasetBase):
             im = Image.open(im_file)
             im.verify()  # PIL verify
             shape = (im.size[1], im.size[0])  # hw
-            assert "." + im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}."
+            assert "." + im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}."
 
             # Verify labels
             if os.path.isfile(lb_file):
@@ -180,14 +199,14 @@ class YoloDataset(DatasetBase):
                 if nl := len(lb):
                     if self.use_keypoints:
                         assert lb.shape[1] == (5 + self.nkpt * self.ndim), (
-                            f"labels require {(5 + self.nkpt * self.ndim)} columns each"
+                            f"Labels require {(5 + self.nkpt * self.ndim)} columns each"
                         )
                         points = lb[:, 5:].reshape(-1, self.ndim)[:, :2]
                     else:
-                        assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
+                        assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected"
                         points = lb[:, 1:]
-                    assert points.max() <= 1, f"non-normalized or out of bounds coordinates {points[points > 1]}"
-                    assert lb.min() >= 0, f"negative label values {lb[lb < 0]}"
+                    assert points.max() <= 1, f"Non-normalized or out of bounds coordinates {points[points > 1]}"
+                    assert lb.min() >= 0, f"Negative label values {lb[lb < 0]}"
 
                     # All labels
                     max_cls = lb[:, 0].max()  # max label count
@@ -235,25 +254,6 @@ class YoloDataset(DatasetBase):
             }
         else:
             return None
-
-    def update_labels(self, include_class: Optional[list]):
-        """Update labels to include only these classes (optional)."""
-        include_class_array = np.array(include_class).reshape(1, -1)
-        for i in range(len(self.labels)):
-            if include_class is not None:
-                cls = self.labels[i]["cls"]
-                bboxes = self.labels[i]["bboxes"]
-                segments = self.labels[i]["segments"]
-                keypoints = self.labels[i]["keypoints"]
-                j = (cls == include_class_array).any(1)
-                self.labels[i]["cls"] = cls[j]
-                self.labels[i]["bboxes"] = bboxes[j]
-                if segments:
-                    self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
-                if keypoints is not None:
-                    self.labels[i]["keypoints"] = keypoints[j]
-            if self.single_cls:
-                self.labels[i]["cls"][:, 0] = 0
 
     def set_rectangle(self):
         """Sets the shape of bounding boxes for YOLO detections as rectangles."""
@@ -341,18 +341,7 @@ class YoloDataset(DatasetBase):
 
                 return im, (h0, w0), im.shape[:2]
 
-            else:
-                self.corrupt_idx.add(i)  # data corrupt
-
-                return None, None, None
-
         return im, self.im_hw0[i], self.im_hw[i]
-
-    def __getitem__(self, index) -> dict[str, Any]:
-        sample = self.get_data_and_label(index)
-        if self.transforms:
-            sample = self.transforms(sample)  # The transform must take label as input.
-        return sample
 
     def get_data_and_label(self, index: int) -> dict[str, Any]:
         """Get data and label information from the dataset."""
@@ -476,6 +465,7 @@ class YoloDataset(DatasetBase):
         for i in range(len(new_batch["batch_idx"])):
             new_batch["batch_idx"][i] += i  # add target image index for build_targets()
         new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+
         return new_batch
 
 

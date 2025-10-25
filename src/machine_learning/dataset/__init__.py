@@ -63,7 +63,6 @@ def build_dataset(
             cache=cache,
             augment=augment,
             hyp=cfg,
-            batch_size=batch_size,
             fraction=fraction,
             mode=mode,
         )
@@ -94,7 +93,6 @@ def build_dataset(
             cache=cache,
             augment=augment,
             hyp=cfg,
-            batch_size=batch_size,
             fraction=fraction,
             modal_names=modal_names,
             mode=mode,

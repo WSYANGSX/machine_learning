@@ -8,9 +8,9 @@ def main():
 
     # Step 2: Build the evaluate
     evaluator = Evaluator(
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-10-14_21-58/best_model.pth",
-        "minist.yaml",
         auto_encoder,
+        "/home/yangxf/WorkSpace/machine_learning/checkpoints/auto_encoder/2025-10-25_15-27/best_model.pth",
+        "minist.yaml",
     )
 
     # Step 3: Evaluate the model

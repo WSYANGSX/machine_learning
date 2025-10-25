@@ -43,10 +43,10 @@ class AutoEncoder(AlgorithmBase):
         tloss = None
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
-        for batch_idx, (data, _) in pbar:
-            batch_inters = epoch * self.train_batches + batch_idx
+        for i, sample in pbar:
+            batch_inters = epoch * self.train_batches + i
 
-            data = data.to(self.device, non_blocking=True)
+            data = sample["data"].to(self.device, non_blocking=True)
 
             with autocast(
                 device_type=str(self.device), enabled=self.amp
@@ -57,10 +57,10 @@ class AutoEncoder(AlgorithmBase):
             self.backward(loss)
             self.optimizer_step(batch_inters)
 
-            tloss = (tloss * batch_idx + loss.item()) / (batch_idx + 1) if tloss is not None else loss.item()
+            tloss = (tloss * i + loss.item()) / (i + 1) if tloss is not None else loss.item()
             metrics["tloss"] = tloss
 
-            if batch_idx % log_interval == 0:
+            if i % log_interval == 0:
                 writer.add_scalar("loss/train_batch", loss.item(), batch_inters)  # batch loss
 
             self.pbar_log("train", pbar, epoch, **metrics)
@@ -79,12 +79,12 @@ class AutoEncoder(AlgorithmBase):
         vloss = None
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
-        for batch_idx, (data, _) in pbar:
-            data = data.to(self.device, non_blocking=True)
+        for i, sample in pbar:
+            data = sample["data"].to(self.device, non_blocking=True)
             recon = self.net(data)
             loss = self.criterion(recon, data)
 
-            vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
+            vloss = (vloss * i + loss.item()) / (i + 1) if vloss is not None else loss.item()
 
             # add value to val_metrics
             metrics["vloss"] = vloss
@@ -103,9 +103,10 @@ class AutoEncoder(AlgorithmBase):
         """Evaluate the model effect"""
         self.set_eval()
 
-        data, _ = next(iter(self.test_loader)) if self.test_loader else next(iter(self.val_loader))
-        sample_indices = torch.randint(low=0, high=len(data), size=(num_samples,))
-        data = data[sample_indices].to(self._device)
+        sample = next(iter(self.test_loader)) if self.test_loader else self.val_loader
+        data = sample["data"]
+        indices = torch.randint(low=0, high=len(data), size=(num_samples,))
+        data = data[indices].to(self._device)
 
         with torch.no_grad():
             recons = self.net(data)

@@ -25,3 +25,5 @@ IMG_FORMATS = [
     ".tif",
     ".webp",
 ]
+
+NPY_FORMATS = [".npy", ".npz"]
