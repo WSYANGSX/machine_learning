@@ -1,4 +1,8 @@
-"""Data augmentation module, based on https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py."""
+"""Data augmentation module
+
+Adapted from Ultralytics YOLO base dataset implementation.
+Source: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py.
+"""
 
 import cv2
 import math
