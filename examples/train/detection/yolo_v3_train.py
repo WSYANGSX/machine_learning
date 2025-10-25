@@ -1,7 +1,7 @@
 from machine_learning.modules import DarkNet53
 from machine_learning.algorithms import YoloV3
 from machine_learning.trainer import Trainer, TrainCfg
-from machine_learning.utils.transforms import ImgTransform
+from examples.transforms import ImgTransform
 from machine_learning.utils.aug_cfg import DEFAULT_YOLO_AUG
 from machine_learning.dataset.parsers import YoloParserCfg, YoloParser
 from machine_learning.utils.others import load_config_from_yaml

@@ -1,8 +1,8 @@
 from machine_learning.algorithms import GAN
 from machine_learning.networks import Generator, Discriminator
 from machine_learning.trainer import Trainer, TrainCfg
-from machine_learning.utils.transforms import ImgTransform
-from machine_learning.utils.transforms import DEFAULT_AUG
+from examples.transforms import ImgTransform
+from examples.transforms import DEFAULT_AUG
 from machine_learning.dataset.parsers import ParserCfg, MinistParser
 
 
