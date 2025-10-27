@@ -94,8 +94,8 @@ class YoloDataset(DatasetBase):
         )  # cache imgs and labels
 
         # Buffer thread for data fusion
-        self.augment_buffer = []
-        self.max_augment_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
     @property
     def imgs(self) -> list[np.ndarray | str]:
@@ -333,9 +333,9 @@ class YoloDataset(DatasetBase):
                         (h0, w0),
                         im.shape[:2],
                     )  # im, hw_original, hw_resized
-                    self.augment_buffer.append(i)
-                    if 1 < len(self.augment_buffer) >= self.max_augment_buffer_length:  # prevent empty buffer
-                        j = self.augment_buffer.pop(0)
+                    self.mosaic_buffer.append(i)
+                    if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
+                        j = self.mosaic_buffer.pop(0)
                         if self.cache != "ram":
                             self.imgs[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
@@ -343,7 +343,7 @@ class YoloDataset(DatasetBase):
 
         return im, self.im_hw0[i], self.im_hw[i]
 
-    def get_data_and_label(self, index: int) -> dict[str, Any]:
+    def get_sample(self, index: int) -> dict[str, Any]:
         """Get data and label information from the dataset."""
         sample = deepcopy(self.labels[index])
         sample.pop("shape", None)

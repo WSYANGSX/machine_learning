@@ -207,12 +207,12 @@ class DatasetBase(Dataset):
 
         try:
             # verify data
-            if not verify_data(data_file):
+            if not self.verify_data(data_file):
                 LOGGER.warning(f"Invalid data file: {data_file}")
                 return None
 
             # verify label
-            label = file_read(lb_file)
+            label = self.file_read(lb_file)
 
         except Exception as e:
             LOGGER.error(f"Error reading label at index {i}: {e}")
@@ -285,7 +285,7 @@ class DatasetBase(Dataset):
         """Returns transformed sample for given index."""
         sample = self.get_sample(index)
         if self.transforms:
-            sample["data"] = self.transforms(sample["data"])
+            sample = self.transforms(sample)
         return sample
 
     def get_sample(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
@@ -395,6 +395,106 @@ class DatasetBase(Dataset):
             buffer.pop(i)
 
         self.length = len(self.labels)
+
+    @staticmethod
+    def file_read(data_file: str) -> np.ndarray | None:
+        """
+        Read data file based on file extension.
+
+        Args:
+            data_file: Path to the data file.
+
+        Returns:
+            np.ndarray: Ndarray if file is accessible, None otherwise.
+        """
+
+        # get file extension
+        path = Path(data_file)
+        extension = path.suffix.lower()
+
+        if not path.exists():
+            LOGGER.error(f"File does not exist: {path}.")
+            return None
+        elif not path.is_file():
+            LOGGER.error(f"The path is not a file: {path}.")
+            return None
+
+        try:
+            # read img file with cv2
+            if extension in IMG_FORMATS:  # imgs
+                data = cv2.imread(str(path))  # bgr
+                if data is None:
+                    LOGGER.error(f"Failed to read image: {path}")
+                    return None
+                return data
+
+            elif extension == ".txt":  # text
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    data = np.loadtxt(path, dtype=np.float32)
+                    if is_empty_array(data):
+                        LOGGER.warning(f"Empty text file: {path}")
+                        return None
+                return data
+
+            elif extension == ".npy":  # numpy
+                data = np.load(path)
+                if is_empty_array(data):
+                    LOGGER.warning(f"Empty numpy file: {path}")
+                    return None
+                return data
+
+            else:
+                LOGGER.error(
+                    f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']"
+                )
+                return None
+
+        except Exception as e:
+            LOGGER.error(f"Could not read file '{path}': {e}")
+            return None
+
+    @staticmethod
+    def verify_data(data_file: str) -> bool:
+        """
+        Quickly verify data file availability based on file extension.
+
+        Args:
+            data_file: Path to the data file.
+
+        Returns:
+            bool: True if file is likely valid and accessible, False otherwise.
+        """
+        try:
+            file_path = Path(data_file)
+
+            # Check if file exists and is accessible
+            if not file_path.exists() or not file_path.is_file():
+                return False
+
+            # Check file size (basic sanity check)
+            if file_path.stat().st_size == 0:
+                return False
+
+            # Extension-based validation
+            extension = file_path.suffix.lower()
+
+            if extension in IMG_FORMATS:
+                return _verify_image(file_path)
+            elif extension in NPY_FORMATS:
+                return _verify_numpy(file_path)
+            elif extension in {".txt", ".csv"}:
+                return _verify_text(file_path)
+            elif extension in {".json", ".xml"}:
+                return _verify_structured(file_path)
+            elif extension in {".pkl", ".pickle"}:
+                return _verify_pickle(file_path)
+            else:
+                # For unknown extensions, do basic file check
+                return _verify_generic(file_path)
+
+        except (OSError, IOError, PermissionError):
+            return False
 
 
 class MMDatasetBase(Dataset):
@@ -897,104 +997,6 @@ class MMDatasetBase(Dataset):
 """
 Hepler function
 """
-
-
-def file_read(data_file: str) -> np.ndarray | None:
-    """
-    Read data file based on file extension.
-
-    Args:
-        data_file: Path to the data file.
-
-    Returns:
-        np.ndarray: Ndarray if file is accessible, None otherwise.
-    """
-
-    # get file extension
-    path = Path(data_file)
-    extension = path.suffix.lower()
-
-    if not path.exists():
-        LOGGER.error(f"File does not exist: {path}.")
-        return None
-    elif not path.is_file():
-        LOGGER.error(f"The path is not a file: {path}.")
-        return None
-
-    try:
-        # read img file with cv2
-        if extension in IMG_FORMATS:  # imgs
-            data = cv2.imread(str(path))  # bgr
-            if data is None:
-                LOGGER.error(f"Failed to read image: {path}")
-                return None
-            return data
-
-        elif extension == ".txt":  # text
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                data = np.loadtxt(path, dtype=np.float32)
-                if is_empty_array(data):
-                    LOGGER.warning(f"Empty text file: {path}")
-                    return None
-            return data
-
-        elif extension == ".npy":  # numpy
-            data = np.load(path)
-            if is_empty_array(data):
-                LOGGER.warning(f"Empty numpy file: {path}")
-                return None
-            return data
-
-        else:
-            LOGGER.error(f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']")
-            return None
-
-    except Exception as e:
-        LOGGER.error(f"Could not read file '{path}': {e}")
-        return None
-
-
-def verify_data(data_file: str) -> bool:
-    """
-    Quickly verify data file availability based on file extension.
-
-    Args:
-        data_file: Path to the data file.
-
-    Returns:
-        bool: True if file is likely valid and accessible, False otherwise.
-    """
-    try:
-        file_path = Path(data_file)
-
-        # Check if file exists and is accessible
-        if not file_path.exists() or not file_path.is_file():
-            return False
-
-        # Check file size (basic sanity check)
-        if file_path.stat().st_size == 0:
-            return False
-
-        # Extension-based validation
-        extension = file_path.suffix.lower()
-
-        if extension in IMG_FORMATS:
-            return _verify_image(file_path)
-        elif extension in NPY_FORMATS:
-            return _verify_numpy(file_path)
-        elif extension in {".txt", ".csv"}:
-            return _verify_text(file_path)
-        elif extension in {".json", ".xml"}:
-            return _verify_structured(file_path)
-        elif extension in {".pkl", ".pickle"}:
-            return _verify_pickle(file_path)
-        else:
-            # For unknown extensions, do basic file check
-            return _verify_generic(file_path)
-
-    except (OSError, IOError, PermissionError):
-        return False
 
 
 def _verify_image(file_path: Path) -> bool:

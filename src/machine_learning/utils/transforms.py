@@ -10,16 +10,24 @@ import torch
 import random
 import numpy as np
 
+from PIL import Image
 from copy import deepcopy
 from typing import Tuple, Union
-from PIL import Image
+
+# Basic transform
+from torchvision import transforms
+
+# Yolo relative
 from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
-from ultralytics.utils import LOGGER, colorstr
 from ultralytics.utils.checks import check_version
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
 from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
+
+from machine_learning.utils import colorstr
+from machine_learning.utils.logger import LOGGER
+
 
 DEFAULT_MEAN = (0.0, 0.0, 0.0)
 DEFAULT_STD = (1.0, 1.0, 1.0)
@@ -395,7 +403,7 @@ class BaseMixTransform:
             indexes = [indexes]
 
         # Get images information will be used for Mosaic or MixUp
-        mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
+        mix_labels = [self.dataset.get_sample(i) for i in indexes]
 
         if self.pre_transform is not None:
             for i, data in enumerate(mix_labels):
@@ -1687,7 +1695,7 @@ class CopyPaste(BaseMixTransform):
             indexes = [indexes]
 
         # Get images information will be used for Mosaic or MixUp
-        mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
+        mix_labels = [self.dataset.get_sample(i) for i in indexes]
 
         if self.pre_transform is not None:
             for i, data in enumerate(mix_labels):
