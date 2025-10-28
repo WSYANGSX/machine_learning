@@ -69,7 +69,7 @@ class BaseTransform:
         Applies image transformations to sample.
 
         This method is intended to be overridden by subclasses to implement specific image transformation
-        logic. In its base form, it returns the input labels unchanged.
+        logic. In its base form, it returns the input sample unchanged.
 
         Args:
             sample (Any): The input sample to be transformed. The exact type and structure of sample may
@@ -116,7 +116,7 @@ class BaseTransform:
         transformations. In its base form, it does not perform any operations.
 
         Args:
-            labels (Any): The input sample or semantic segmentation mask to be transformed.
+            sample (Any): The input sample or semantic segmentation mask to be transformed.
 
         Returns:
             (Any): The transformed semantic segmentation mask or sample.
@@ -579,7 +579,7 @@ class Mosaic(BaseMixTransform):
 
     def _mix_transform(self, sample):
         """
-        Applies mosaic augmentation to the input image and labels.
+        Applies mosaic augmentation to the input image and annotations.
 
         This method combines multiple images (3, 4, or 9) into a single mosaic image based on the 'n' attribute.
         It ensures that rectangular annotations are not present and that there are other images available for
@@ -594,14 +594,14 @@ class Mosaic(BaseMixTransform):
             (Dict): A dictionary containing the mosaic-augmented image and updated annotations.
 
         Raises:
-            AssertionError: If 'rect_shape' is not None or if 'mix_labels' is empty.
+            AssertionError: If 'rect_shape' is not None or if 'mix_samples' is empty.
 
         Examples:
             >>> mosaic = Mosaic(dataset, imgsz=640, p=1.0, n=4)
-            >>> augmented_data = mosaic._mix_transform(labels)
+            >>> augmented_sample = mosaic._mix_transform(sample)
         """
         assert sample.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
-        assert len(sample.get("mix_labels", [])), "There are no other images for mosaic augment."
+        assert len(sample.get("mix_samples", [])), "There are no other images for mosaic augment."
         return (
             self._mosaic3(sample) if self.n == 3 else self._mosaic4(sample) if self.n == 4 else self._mosaic9(sample)
         )  # This code is modified for mosaic3 method.
@@ -629,14 +629,14 @@ class Mosaic(BaseMixTransform):
             ...     "img": np.random.rand(480, 640, 3),
             ...     "mix_samples": [{"img": np.random.rand(480, 640, 3)} for _ in range(2)],
             ... }
-            >>> result = mosaic._mosaic3(labels)
+            >>> result = mosaic._mosaic3(sample)
             >>> print(result["img"].shape)
             (640, 640, 3)
         """
         mosaic_samples = []
         s = self.imgsz
         for i in range(3):
-            sample_patch = sample if i == 0 else sample["mix_labels"][i - 1]
+            sample_patch = sample if i == 0 else sample["mix_samples"][i - 1]
             # Load image
             img = sample_patch["img"]
             h, w = sample_patch.pop("resized_shape")
@@ -670,7 +670,7 @@ class Mosaic(BaseMixTransform):
         Creates a 2x2 image mosaic from four input images.
 
         This method combines four images into a single mosaic image by placing them in a 2x2 grid. It also
-        updates the corresponding labels for each image in the mosaic.
+        updates the corresponding annotations for each image in the mosaic.
 
         Args:
             sample (Dict): A dictionary containing image data and annotations for the base image (index 0) and three
@@ -678,7 +678,7 @@ class Mosaic(BaseMixTransform):
 
         Returns:
             (Dict): A dictionary containing the mosaic image and updated annotations. The 'img' key contains the mosaic
-                image as a numpy array, and other keys contain the combined and adjusted labels for all four images.
+                image as a numpy array, and other keys contain the combined and adjusted annotations for all four images.
 
         Examples:
             >>> mosaic = Mosaic(dataset, imgsz=640, p=1.0, n=4)
@@ -686,7 +686,7 @@ class Mosaic(BaseMixTransform):
             ...     "img": np.random.rand(480, 640, 3),
             ...     "mix_samples": [{"img": np.random.rand(480, 640, 3)} for _ in range(3)],
             ... }
-            >>> result = mosaic._mosaic4(labels)
+            >>> result = mosaic._mosaic4(sample)
             >>> assert result["img"].shape == (1280, 1280, 3)
         """
         mosaic_samples = []
@@ -731,15 +731,15 @@ class Mosaic(BaseMixTransform):
         and eight additional images from the dataset are placed around it in a 3x3 grid pattern.
 
         Args:
-            sample (Dict): A dictionary containing the input image and its associated labels. It should have
+            sample (Dict): A dictionary containing the input image and its associated annotations. It should have
                 the following keys:
                 - 'img' (numpy.ndarray): The input image.
                 - 'resized_shape' (Tuple[int, int]): The shape of the resized image (height, width).
                 - 'mix_samples' (List[Dict]): A list of dictionaries containing information for the additional
-                  eight images, each with the same structure as the input labels.
+                  eight images, each with the same structure as the input annotations.
 
         Returns:
-            (Dict): A dictionary containing the mosaic image and updated labels. It includes the following keys:
+            (Dict): A dictionary containing the mosaic image and updated annotations. It includes the following keys:
                 - 'img' (numpy.ndarray): The final mosaic image.
                 - Other keys from the input sample, updated to reflect the new mosaic arrangement.
 
@@ -814,7 +814,7 @@ class Mosaic(BaseMixTransform):
         Examples:
             >>> sample = {"img": np.zeros((100, 100, 3)), "instances": Instances(...)}
             >>> padw, padh = 50, 50
-            >>> updated_sample = Mosaic._update_sample(labels, padw, padh)
+            >>> updated_sample = Mosaic._update_sample(sample, padw, padh)
         """
         nh, nw = sample["img"].shape[:2]
         sample["instances"].convert_bbox(format="xyxy")
@@ -845,7 +845,7 @@ class Mosaic(BaseMixTransform):
         Examples:
             >>> mosaic = Mosaic(dataset, imgsz=640)
             >>> mosaic_samples = [{"cls": np.array([0, 1]), "instances": Instances(...)} for _ in range(4)]
-            >>> result = mosaic._cat_labels(mosaic_samples)
+            >>> result = mosaic._cat_samples(mosaic_samples)
             >>> print(result.keys())
             dict_keys(['im_file', 'ori_shape', 'resized_shape', 'cls', 'instances', 'mosaic_border'])
         """
@@ -879,7 +879,8 @@ class MixUp(BaseMixTransform):
     Applies MixUp augmentation to image datasets.
 
     This class implements the MixUp augmentation technique as described in the paper "mixup: Beyond Empirical Risk
-    Minimization" (https://arxiv.org/abs/1710.09412). MixUp combines two images and their labels using a random weight.
+    Minimization" (https://arxiv.org/abs/1710.09412). MixUp combines two images and their annotations using a random
+    weight.
 
     Attributes:
         dataset (Any): The dataset to which MixUp augmentation will be applied.
@@ -888,7 +889,7 @@ class MixUp(BaseMixTransform):
 
     Methods:
         get_indexes: Returns a random index from the dataset.
-        _mix_transform: Applies MixUp augmentation to the input labels.
+        _mix_transform: Applies MixUp augmentation to the input sample.
 
     Examples:
         >>> from machine_learning.utils.transforms import MixUp
@@ -902,7 +903,7 @@ class MixUp(BaseMixTransform):
         Initializes the MixUp augmentation object.
 
         MixUp is an image augmentation technique that combines two images by taking a weighted sum of their pixel
-        values and labels.
+        values and annotations.
 
         Args:
             dataset (Any): The dataset to which MixUp augmentation will be applied.
@@ -942,20 +943,20 @@ class MixUp(BaseMixTransform):
         "mixup: Beyond Empirical Risk Minimization" (https://arxiv.org/abs/1710.09412).
 
         Args:
-            sample (Dict): A dictionary containing the original image and label information.
+            sample (Dict): A dictionary containing the original image and annotations information.
 
         Returns:
-            (Dict): A dictionary containing the mixed-up image and combined label information.
+            (Dict): A dictionary containing the mixed-up image and combined annotations information.
 
         Examples:
             >>> mixer = MixUp(dataset)
             >>> mixed_sample = mixer._mix_transform(sample)
         """
         r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
-        labels2 = sample["mix_samples"][0]
-        sample["img"] = (sample["img"] * r + labels2["img"] * (1 - r)).astype(np.uint8)
-        sample["instances"] = Instances.concatenate([sample["instances"], labels2["instances"]], axis=0)
-        sample["cls"] = np.concatenate([sample["cls"], labels2["cls"]], 0)
+        sample2 = sample["mix_samples"][0]
+        sample["img"] = (sample["img"] * r + sample2["img"] * (1 - r)).astype(np.uint8)
+        sample["instances"] = Instances.concatenate([sample["instances"], sample2["instances"]], axis=0)
+        sample["cls"] = np.concatenate([sample["cls"], sample2["cls"]], 0)
         return sample
 
 
@@ -1014,7 +1015,7 @@ class RandomPerspective:
 
         Examples:
             >>> transform = RandomPerspective(degrees=10.0, translate=0.1, scale=0.5, shear=5.0)
-            >>> result = transform(labels)  # Apply random perspective to labels
+            >>> result = transform(sample)  # Apply random perspective to sample
         """
         self.degrees = degrees
         self.translate = translate
@@ -1194,14 +1195,14 @@ class RandomPerspective:
 
     def __call__(self, sample):
         """
-        Applies random perspective and affine transformations to an image and its associated labels.
+        Applies random perspective and affine transformations to an image and its associated annotations.
 
         This method performs a series of transformations including rotation, translation, scaling, shearing,
         and perspective distortion on the input image and adjusts the corresponding bounding boxes, segments,
         and keypoints accordingly.
 
         Args:
-            labels (Dict): A dictionary containing image data and annotations.
+            sample (Dict): A dictionary containing image data and annotations.
                 Must include:
                     'img' (ndarray): The input image.
                     'cls' (ndarray): Class labels.
@@ -1210,7 +1211,7 @@ class RandomPerspective:
                     'mosaic_border' (Tuple[int, int]): Border size for mosaic augmentation.
 
         Returns:
-            (Dict): Transformed labels dictionary containing:
+            (Dict): Transformed sample dictionary containing:
                 - 'img' (np.ndarray): The transformed image.
                 - 'cls' (np.ndarray): Updated class labels.
                 - 'instances' (Instances): Updated object instances.
@@ -1329,9 +1330,9 @@ class RandomHSV:
         >>> from ultralytics.data.augment import RandomHSV
         >>> augmenter = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
         >>> image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-        >>> labels = {"img": image}
-        >>> augmenter(labels)
-        >>> augmented_image = augmented_labels["img"]
+        >>> sample = {"img": image}
+        >>> augmented_sample = augmenter(sample)
+        >>> augmented_image = augmented_sample["img"]
     """
 
     def __init__(self, hgain=0.5, sgain=0.5, vgain=0.5) -> None:
@@ -1543,7 +1544,7 @@ class LetterBox:
         Resizes and pads an image for object detection, instance segmentation, or pose estimation tasks.
 
         This method applies letterboxing to the input image, which involves resizing the image while maintaining its
-        aspect ratio and adding padding to fit the new shape. It also updates any associated labels accordingly.
+        aspect ratio and adding padding to fit the new shape. It also updates any associated annotations accordingly.
 
         Args:
             sample (Dict | None): A dictionary containing image data and associated annotations, or empty dict if None.
@@ -1551,7 +1552,7 @@ class LetterBox:
 
         Returns:
             (Dict | Tuple): If 'sample' is provided, returns an updated dictionary with the resized and padded image,
-                updated labels, and additional metadata. If 'sample' is empty, returns a tuple containing the resized
+                updated annotations, and additional metadata. If 'sample' is empty, returns a tuple containing the resized
                 and padded image, and a tuple of (ratio, (left_pad, top_pad)).
 
         Examples:
@@ -1611,7 +1612,7 @@ class LetterBox:
         """
         Updates sample after applying letterboxing to an image.
 
-        This method modifies the bounding box coordinates of instances in the labels
+        This method modifies the bounding box coordinates of instances in the sample
         to account for resizing and padding applied during letterboxing.
 
         Args:
@@ -1878,7 +1879,7 @@ class Albumentations:
         Applies Albumentations transformations to input sample.
 
         This method applies a series of image augmentations using the Albumentations library. It can perform both
-        spatial and non-spatial transformations on the input image and its corresponding labels.
+        spatial and non-spatial transformations on the input image and its corresponding annotations.
 
         Args:
             sample (Dict): A dictionary containing image data and annotations. Expected keys are:
