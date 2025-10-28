@@ -18,7 +18,6 @@ from multiprocessing.pool import ThreadPool
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.utils.logger import LOGGER
-from machine_learning.types.aliases import FilePath
 from machine_learning.utils.constants import NUM_THREADS, IMG_FORMATS, NPY_FORMATS
 from machine_learning.utils.ops import is_empty_array
 
@@ -50,23 +49,29 @@ class DatasetBase(Dataset):
         transforms (callable): Transformation function.
 
     Methods:
-        get_labels(): Get the labels of the dataset.
-        get_labels_np(np.ndarray): Get the labels of the dataset from np.ndarray label source.
-        cache_labels(int): Cache labels from label file paths and format labels in a custom style using lread() and label_format().
-        cache_data_np(np.ndarray): Cache the data of the dataset from np.ndarray data source.
-        cache_data(): Cache data from data file paths.
-        load_data(int): Load a data.
-        cache_data_to_disk(int): Cache data to Disk.
-        __len__(): Return the number of items in the dataset.
-        __getitem__(int): Returns transformed label information for given index.
-        get_data_and_label(int): Returns Data and label information for given index.
-        update_labels_info(dict[str, Any]): Update labels in get_data_and_label().
-        check_cache_ram(float): Check data caching requirements vs available memory.
-        check_cache_disk(float): Check data caching requirements vs disk free space.
-        lread(FilePath): Load labels from label file path by a certain logic.
-        label_format(Any | None): Return the label in the custom format dictionaries.
-        build_transforms(dict[str, Any]): Build data transform.
-
+        create_buffers(int): Builds buffers for data and labels storage.
+        setup_data_labels(np.ndarray | list[str], np.ndarray | list[str]): Setups labels and data storage. Labels are always cached, data is cached conditionally.
+        cache_labels_np(np.ndarray): Caches labels of the dataset from np.ndarray input to buffers.
+        cache_data_np(np.ndarray): Caches the data of the dataset from np.ndarray data source to buffers.
+        cache_labels(Callable | None): Caches labels from label file paths to buffers for faster loading, the callback function input is used to count the cache information.
+        get_labels(int): Reads labels from the specified path index and organize them into a specific format, internally calls label_read() and label_format() methods.
+        label_read(int): Reads label from a specific path and verify the validity of relative data.
+        label_format(Any | None): Formats the label to a custom dict form.
+        cache_data(): Caches data to memory or disk.
+        load_data(int): Loads 1 data from dataset index 'i'.
+        cache_data_to_disk(int): Caches data from data_files index 'i' to Disk.
+        __len__(): Returns the total number of samples in the dataset.
+        __getitem__(int): Returns transformed sample for given index 'i'.
+        get_sample(int): Returns a sample including data and annotations for given index 'i'.
+        update_annotations(dict[str, Any]): Update annotations in a sample returned by get_sample() method.
+        check_cache_ram(float): Checks data caching requirements vs available memory.
+        check_cache_disk(float): Checks data caching requirements vs disk free space.
+        build_transforms(dict[str, Any]): Builds data transform.
+        register_buffer(str, list): Adds a buffer to the buffer dictionary to facilitate unified management of buffers.
+        update_buffer(): Updates buffers and delete invalid items.
+        remove_item(int): Removes a item of buffers according to the index 'i'.
+        file_read(str): Static method that reads file content from given path.
+        verify_data(str): Static method that validates whether the data from given path is vaild.
     """
 
     def __init__(
@@ -96,8 +101,8 @@ class DatasetBase(Dataset):
         self.length = round(len(labels) * self.fraction)
         self.create_buffers(self.length)
 
-        # cache data and labels
-        self.cache_data_labels(data, labels)
+        # setup data and labels
+        self.setup_data_labels(data, labels)
 
         # update buffers length
         self.update_buffers()
@@ -121,7 +126,8 @@ class DatasetBase(Dataset):
         self.buffers["data_files"] = self.data_files
         self.buffers["data_npy_files"] = self.data_npy_files
 
-    def cache_data_labels(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
+    def setup_data_labels(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
+        """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
         # np.ndarray
         if isinstance(data, np.ndarray) and isinstance(labels, np.ndarray):
             self.cache_labels_np(labels)
@@ -159,7 +165,7 @@ class DatasetBase(Dataset):
         pbar.close()
 
     def cache_data_np(self, data: np.ndarray) -> None:
-        """Cache np.ndarray format data to buffers"""
+        """Cache the data of the dataset from np.ndarray data source to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} data from matrix input...")
         pbar = tqdm(enumerate(data), total=len(data))
@@ -188,7 +194,7 @@ class DatasetBase(Dataset):
             pbar.close()
 
     def get_labels(self, i: int) -> dict[str, Any] | None:
-        """Read labels from the specified path and organize them into a specific format.
+        """Read labels from the specified path index and organize them into a specific format.
 
         Args:
             i (int): The index.
@@ -221,7 +227,7 @@ class DatasetBase(Dataset):
         return label
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
-        """Format the label to a custom dict form. The specific logic is implemented by subclasses."""
+        """Format the label to a custom dict form."""
         if label is not None and not isinstance(label, dict):
             label = {"label": label}  # customize dict interface
             return label
@@ -278,18 +284,18 @@ class DatasetBase(Dataset):
         return dt
 
     def __len__(self):
-        """Returns the length of the labels list for the dataset."""
+        """Returns the total number of samples in the dataset."""
         return self.length
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
-        """Returns transformed sample for given index."""
+        """Returns transformed sample for given index 'i'."""
         sample = self.get_sample(index)
         if self.transforms:
             sample = self.transforms(sample)
         return sample
 
     def get_sample(self, index: int) -> tuple[np.ndarray, dict[str, Any]]:
-        """Returns a sample (data and label) for given index."""
+        """Returns a sample including data and annotations for given index 'i'."""
         sample = deepcopy(self.labels[index])
         sample["data"] = self.load_data(index)
         sample = self.update_annotations(sample)
@@ -368,10 +374,12 @@ class DatasetBase(Dataset):
                 return Compose([])
             ```
         """
+        if self.augment:
+            
         return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
 
     def register_buffer(self, name: str, buffer: list) -> None:
-        """Add a buffer item to the buffer dictionary to facilitate unified management of buffers."""
+        """Add a buffer to the buffer dictionary to facilitate unified management of buffers."""
         if len(buffer) != len(self.data):
             raise ValueError(f"The length of {name} buffer must be equal to data buffer.")
 
@@ -381,7 +389,7 @@ class DatasetBase(Dataset):
             raise KeyError(f"Buffer {name} already exists.")
 
     def update_buffers(self) -> None:
-        """Update the buffer and delete invalid data items(None)."""
+        """Update the buffer and delete invalid items."""
         if self.corrupt_idx:
             LOGGER.info(f"Removing invalid items from buffers...: {[id for id in self.corrupt_idx]}")
 
@@ -390,7 +398,7 @@ class DatasetBase(Dataset):
             self.corrupt_idx.clear()
 
     def remove_item(self, i: int) -> None:
-        """Remove a item of buffers according to the index."""
+        """Remove a item of buffers according to the index 'i'."""
         for buffer in self.buffers.values():
             buffer.pop(i)
 
@@ -497,7 +505,7 @@ class DatasetBase(Dataset):
             return False
 
 
-class MMDatasetBase(Dataset):
+class MultiModalDatasetBase(Dataset):
     """
     Base multimodal dataset class for loading and processing multimodal data and labels.
 
@@ -556,6 +564,9 @@ class MMDatasetBase(Dataset):
         super().__init__()
 
         self._data_names = list(data.keys())  # used for building buffers
+        if len(self._data_names) < 2:
+            raise ValueError("The length of data must be greater than or equal to two.")
+
         self._modal_names = list(data.keys()) if modal_names is None else modal_names  # used for data sample
         self._label_names = list(labels.keys()) if isinstance(labels, dict) else None
 
@@ -785,9 +796,9 @@ class MMDatasetBase(Dataset):
                     except Exception as e:
                         LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
                         Path(dtfn).unlink(missing_ok=True)
-                        dt = self.file_read(dtf)
+                        dt = DatasetBase.file_read(dtf)
                 else:
-                    dt = self.file_read(dtf)
+                    dt = DatasetBase.file_read(dtf)
 
                 if dt is None:  # exist modal data error
                     self.corrupt_idx.add(i)
@@ -806,12 +817,12 @@ class MMDatasetBase(Dataset):
 
     def __getitem__(self, index: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """Returns transformed label information for given index."""
-        data, label = self.get_data_and_label(index)
+        data, label = self.get_sample(index)
         if self.transforms:
             data, label = self.transforms(data, label)  # The transform must take label as input.
         return data, label
 
-    def get_data_and_label(self, index: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def get_sample(self, index: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """Returns Data and label information for given index."""
         label = deepcopy(self.labels[index])
         data = self.load_data(index)
@@ -887,43 +898,6 @@ class MMDatasetBase(Dataset):
             )
             return False
         return True
-
-    @staticmethod
-    def file_read(path: FilePath) -> np.ndarray | None:
-        path = Path(path)
-        extension = path.suffix.lower()
-
-        if not path.exists():
-            LOGGER.error(f"File does not exist: {path}")
-            return None
-
-        try:
-            if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path))  # bgr
-                if data is None:
-                    LOGGER.error("Image Not Found.")
-                    return None
-                return data
-
-            elif extension == ".txt":  # text
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    data = np.loadtxt(path, dtype=np.float32)
-                return data
-
-            elif extension == ".npy":  # numpy
-                data = np.load(path)
-                return data
-
-            else:
-                LOGGER.error(
-                    f"Unsupported file type: {extension}. Supported types: {list(IMG_FORMATS)} + ['.txt', '.npy']"
-                )
-                return None
-
-        except Exception as e:
-            LOGGER.error(f"Could not read file '{path}': {e}")
-            return None
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
         """format the label to a custom form."""
