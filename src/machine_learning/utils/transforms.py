@@ -17,12 +17,12 @@ from copy import deepcopy
 from typing import Tuple, Union
 
 # Yolo relative
-from ultralytics.utils.instance import Instances
-from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
 from ultralytics.utils.metrics import bbox_ioa
+from ultralytics.utils.instance import Instances
 from ultralytics.utils.checks import check_version
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
 from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
+from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
 
 from machine_learning.utils import colorstr
 from machine_learning.utils.logger import LOGGER
@@ -2345,6 +2345,9 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
         ]
     )  # transforms
+
+
+# multimodal augmentations ---------------------------------------------------------------------------------------------
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

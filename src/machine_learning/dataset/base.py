@@ -292,12 +292,12 @@ class DatasetBase(Dataset):
         """Returns a sample (data and label) for given index."""
         sample = deepcopy(self.labels[index])
         sample["data"] = self.load_data(index)
-        sample = self.update_labels_info(sample)
+        sample = self.update_annotations(sample)
 
         return sample
 
-    def update_labels_info(self, sample: dict[str, Any]) -> dict[str, Any]:
-        """Custom your label format here."""
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """Update your annotations here."""
         return sample
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
@@ -815,12 +815,12 @@ class MMDatasetBase(Dataset):
         """Returns Data and label information for given index."""
         label = deepcopy(self.labels[index])
         data = self.load_data(index)
-        label = self.update_labels_info(label)
+        label = self.update_annotations(label)
 
         return data, label
 
-    def update_labels_info(self, label: dict[str, Any]) -> dict[str, Any]:
-        """Custom your label format here."""
+    def update_annotations(self, label: dict[str, Any]) -> dict[str, Any]:
+        """Update your annotations here."""
         return label
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:

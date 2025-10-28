@@ -393,11 +393,11 @@ class YoloDataset(DatasetBase):
         )  # for evaluation
         if self.rect:
             sample["rect_shape"] = self.batch_shapes[self.batch[index]]
-        return self.update_labels_info(sample)
+        return self.update_annotations(sample)
 
-    def update_labels_info(self, sample: dict[str, Any]) -> dict[str, Any]:
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """
-        Custom your label format here.
+        Custom your annotations here.
 
         Note:
             cls is not with bboxes now, classification and semantic segmentation need an independent cls label
