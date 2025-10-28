@@ -23,6 +23,45 @@ from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.ops import resample_segments
 
 
+class ClassificationDataset(DatasetBase):
+    """
+    Dataset class for loading data and labels for data classification. Based from DatasetBase class.
+
+    Args:
+        data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
+        labels (list[str] | np.ndarray): Path list to the labels or labels itself with np.ndarray format.
+        cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
+        augment (bool, optional): If True, data augmentation is applied. Defaults to True.
+        hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
+        batch_size (int, optional): Size of batches. Defaults to None.
+        fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+        mode (Literal["train", "val", "test"]): The mode of the dataset.
+
+    Returns:
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+    """
+
+    def __init__(
+        self,
+        data: np.ndarray | list[str],
+        labels: np.ndarray | list[str],
+        cache: bool = False,
+        augment: bool = True,
+        hyp: dict[str, Any] = {},
+        fraction: float = 1.0,
+        mode: Literal["train", "val", "test"] = "train",
+    ):
+        super().__init__(data, labels, cache, augment, hyp, fraction, mode)
+
+    def label_format(self, label: Any | None) -> dict[str, Any] | None:
+        """Format the label to a dict with 'cls' item."""
+        if label is not None and not isinstance(label, dict):
+            label = {"cls": label}  # customize dict interface
+            return label
+        else:
+            return label
+
+
 class YoloDataset(DatasetBase):
     """
     Dataset class for loading images and labels for object detection and/or segmentation tasks in YOLO format.

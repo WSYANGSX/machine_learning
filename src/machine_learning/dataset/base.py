@@ -221,7 +221,7 @@ class DatasetBase(Dataset):
         return label
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
-        """format the label from np.ndarray to a custom form."""
+        """Format the label to a custom dict form. The specific logic is implemented by subclasses."""
         if label is not None and not isinstance(label, dict):
             label = {"label": label}  # customize dict interface
             return label
