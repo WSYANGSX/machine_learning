@@ -130,8 +130,8 @@ class YoloDataset(DatasetBase):
         self.num_corrupt = 0
 
         # key points setting
-        self.nkpt, self.ndim = self.hyp.get("kpt_shape", (0, 0))
-        if self.use_keypoints and (self.nkpt <= 0 or self.ndim not in {2, 3}):
+        self.nkpt, self.kpt_dim = self.hyp.get("kpt_shape", (0, 0))
+        if self.use_keypoints and (self.nkpt <= 0 or self.kpt_dim not in {2, 3}):
             raise ValueError(
                 "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                 "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
@@ -198,10 +198,10 @@ class YoloDataset(DatasetBase):
                     lb = np.array(lb, dtype=np.float32)
                 if nl := len(lb):
                     if self.use_keypoints:
-                        assert lb.shape[1] == (5 + self.nkpt * self.ndim), (
-                            f"Labels require {(5 + self.nkpt * self.ndim)} columns each"
+                        assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
+                            f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each"
                         )
-                        points = lb[:, 5:].reshape(-1, self.ndim)[:, :2]
+                        points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
                     else:
                         assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected"
                         points = lb[:, 1:]
@@ -222,13 +222,13 @@ class YoloDataset(DatasetBase):
                         LOGGER.warning(f"{im_file}: {nl - len(i)} duplicate labels removed")
                 else:
                     self.num_empty += 1  # label empty
-                    lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
+                    lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
             else:
                 self.num_missing += 1  # label missing
-                lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
+                lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
             if self.use_keypoints:
-                keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.ndim)
-                if self.ndim == 2:
+                keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
+                if self.kpt_dim == 2:
                     kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                     keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
             lb = lb[:, :5]
@@ -471,7 +471,8 @@ class YoloDataset(DatasetBase):
 
 class ImgIrDataset(MMDatasetBase):
     """
-    Dataset class for loading RGB and IR images with corresponding labels for object detection and/or segmentation tasks in YOLO format.
+    Dataset class for loading RGB and IR images with corresponding labels for object detection and/or segmentation tasks
+    in YOLO format.
     """
 
     def __init__(
@@ -558,8 +559,8 @@ class ImgIrDataset(MMDatasetBase):
         self.num_corrupt = 0
 
         # key points setting
-        self.nkpt, self.ndim = self.hyp.get("kpt_shape", (0, 0))
-        if self.use_keypoints and (self.nkpt <= 0 or self.ndim not in {2, 3}):
+        self.nkpt, self.kpt_dim = self.hyp.get("kpt_shape", (0, 0))
+        if self.use_keypoints and (self.nkpt <= 0 or self.kpt_dim not in {2, 3}):
             raise ValueError(
                 "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                 "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
@@ -660,10 +661,10 @@ class ImgIrDataset(MMDatasetBase):
                 lb = np.array(lb, dtype=np.float32)
             if nl := len(lb):
                 if self.use_keypoints:
-                    assert lb.shape[1] == (5 + self.nkpt * self.ndim), (
-                        f"Labels require {(5 + self.nkpt * self.ndim)} columns each."
+                    assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
+                        f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
                     )
-                    points = lb[:, 5:].reshape(-1, self.ndim)[:, :2]
+                    points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
                 else:
                     assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected."
                     points = lb[:, 1:]
@@ -684,13 +685,13 @@ class ImgIrDataset(MMDatasetBase):
                     LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
             else:
                 self.num_empty += 1  # label empty
-                lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
+                lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
         else:
             self.num_missing += 1  # label missing
-            lb = np.zeros((0, (5 + self.nkpt * self.ndim) if self.use_keypoints else 5), dtype=np.float32)
+            lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
         if self.use_keypoints:
-            keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.ndim)
-            if self.ndim == 2:
+            keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
+            if self.kpt_dim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
         lb = lb[:, :5]

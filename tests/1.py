@@ -1,3 +1,5 @@
 import albumentations as A
 
-print(A.__version__)
+a=[]
+if a:
+    print(1)
