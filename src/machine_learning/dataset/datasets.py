@@ -15,7 +15,7 @@ from multiprocessing.pool import ThreadPool
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
-from machine_learning.dataset.base import DatasetBase, MMDatasetBase
+from machine_learning.dataset.base import DatasetBase, MultiModalDatasetBase
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
 from machine_learning.utils.transforms import Compose, Format, Instances, LetterBox, v8_transforms
 
@@ -508,7 +508,7 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class ImgIrDataset(MMDatasetBase):
+class ImgIrDataset(MultiModalDatasetBase):
     """
     Dataset class for loading RGB and IR images with corresponding labels for object detection and/or segmentation tasks
     in YOLO format.

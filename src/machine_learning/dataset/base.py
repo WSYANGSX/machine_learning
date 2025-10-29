@@ -78,7 +78,7 @@ class DatasetBase(Dataset):
         self,
         data: np.ndarray | list[str],
         labels: np.ndarray | list[str],
-        cache: bool = False,
+        cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] = {},
         fraction: float = 1.0,
@@ -87,11 +87,15 @@ class DatasetBase(Dataset):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
+        self._check_input_match(data, labels)
+
         self.hyp = Dict(hyp)
         self.augment = augment
+        if not (0 < fraction <= 1.0):
+            raise ValueError("Fraction must be in (0, 1].")
         self.fraction = fraction
 
-        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        self.cache = self.normalize_cache(cache)
         self.mode = mode
 
         # used for statistics of invalid labels and data ids
@@ -104,11 +108,24 @@ class DatasetBase(Dataset):
         # setup data and labels
         self.setup_data_labels(data, labels)
 
-        # update buffers length
-        self.update_buffers()
-
         # Transforms
         self.transforms = self.build_transforms(hyp=self.hyp)
+
+    def _check_input_match(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]):
+        """
+        Check whether the type and the lengths of the data and labels are consistent.
+        """
+        if not isinstance(labels, (list, np.ndarray)):
+            raise TypeError(f"Unsupported labels type: {type(labels)}. Expected list or np.ndarray")
+
+        if not isinstance(data, (list, np.ndarray)):
+            raise TypeError(f"Unsupported data type: {type(data)}. Expected list or np.ndarray")
+
+        if type(data) is not type(labels):
+            raise TypeError(f"The type of data {type(data)} does not match the type of labels {type(labels)}")
+
+        if len(labels) != len(data):
+            raise ValueError(f"Labels length {len(labels)} != data length {len(data)}")
 
     def create_buffers(self, length: int) -> None:
         """Build buffers for data and labels storage."""
@@ -129,17 +146,19 @@ class DatasetBase(Dataset):
     def setup_data_labels(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
         """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
         # np.ndarray
-        if isinstance(data, np.ndarray) and isinstance(labels, np.ndarray):
+        if isinstance(labels, np.ndarray):
             self.cache_labels_np(labels)
             self.cache_data_np(data)
 
         # list[str]
-        elif isinstance(data, list) and isinstance(labels, list):
+        elif isinstance(labels, list):
             self.label_files = labels[: self.length]
             self.data_files = data[: self.length]
 
             # cache labels
             self.cache_labels()
+            # update buffers length
+            self.update_buffers()
 
             # cache data
             self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
@@ -246,7 +265,7 @@ class DatasetBase(Dataset):
                 if self.cache == "disk":
                     b += x
                 else:
-                    if x:
+                    if x is not None:
                         self.data[i] = x
                         b += self.data[i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
@@ -257,11 +276,13 @@ class DatasetBase(Dataset):
         f = self.data_npy_files[i]
         if not f.exists():
             data = self.file_read(self.data_files[i])
-            if data:
+            if data is not None:
                 np.save(f, data, allow_pickle=False)
-                return self.data_npy_files[i].stat().st_size
-
-        return 0.0
+                return f.stat().st_size
+            else:
+                return 0.0
+        else:
+            return 0.0
 
     def load_data(self, i: int) -> np.ndarray | None:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
@@ -349,7 +370,7 @@ class DatasetBase(Dataset):
                 LOGGER.info("Skipping caching data to disk, directory not writeable.")
                 return False
         disk_required = b * self.length / (n - skips) * (1 + safety_margin)  # bytes required to cache data to disk
-        total, _, free = shutil.disk_usage(Path(self.data_files[0]).parent.parent)
+        total, _, free = shutil.disk_usage(Path(self.data_files[0]).parent)
         if disk_required > free:
             self.cache = None
             LOGGER.info(
@@ -375,8 +396,9 @@ class DatasetBase(Dataset):
             ```
         """
         if self.augment:
-            
-        return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
+            ...
+        else:
+            return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
 
     def register_buffer(self, name: str, buffer: list) -> None:
         """Add a buffer to the buffer dictionary to facilitate unified management of buffers."""
@@ -395,6 +417,8 @@ class DatasetBase(Dataset):
 
             for i in sorted(self.corrupt_idx, reverse=True):
                 self.remove_item(i)
+
+            LOGGER.info(f"Updated buffers length: {self.length}")
             self.corrupt_idx.clear()
 
     def remove_item(self, i: int) -> None:
@@ -504,6 +528,18 @@ class DatasetBase(Dataset):
         except (OSError, IOError, PermissionError):
             return False
 
+    @staticmethod
+    def normalize_cache(cache: bool | Literal["ram", "disk"] | None) -> Literal["ram", "disk"] | None:
+        if cache is True:
+            return "ram"
+        if cache is False or cache is None:
+            return None
+        if isinstance(cache, str):
+            cache_l = cache.lower()
+            if cache_l in ("ram", "disk"):
+                return cache_l
+        raise ValueError("Cache must be True/False/'ram'/'disk'/None")
+
 
 class MultiModalDatasetBase(Dataset):
     """
@@ -516,11 +552,12 @@ class MultiModalDatasetBase(Dataset):
         augment (bool, optional): Whether to apply data augmentation. Defaults to True.
         hyp (dict, optional): Hyperparameters for data augmentation. Defaults to None.
         fraction (float): Fraction of dataset to use. Defaults to 1.0 (use all data).
-        modal_names (list[str] | None): List of modal names. Defaults to None.
+        modals (list[str] | None): List of modal names. Defaults to None.
+        dropout (bool): Whether some modal data is allowed to be missing.
         mode (Literal["train", "val", "test"]): Dataset mode.
 
     Properties:
-        modal_names (list[str]): List of multimodal data names.
+        modals (list[str]): List of multimodal data names.
         label_names (list[str] | None): List of multimodal label names.
         data (dict[str, list[np.ndarray]]): Multimodal data buffer dictionary.
         data_files (dict[str, list[str]]): Multimodal file paths buffer dictionary.
@@ -553,28 +590,41 @@ class MultiModalDatasetBase(Dataset):
         self,
         data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
-        cache: bool = False,
+        cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] = {},
         fraction: float = 1.0,
-        modal_names: list[str] | None = None,
+        modals: list[str] | None = None,
+        dropout: bool = False,
         mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
-        self._data_names = list(data.keys())  # used for building buffers
+        self._check_lengths_match(data, labels)
+
+        # used for building buffers
+        self._data_names = list(data.keys())
+        self._label_names = list(labels.keys()) if isinstance(labels, dict) else None
+
         if len(self._data_names) < 2:
             raise ValueError("The length of data must be greater than or equal to two.")
 
-        self._modal_names = list(data.keys()) if modal_names is None else modal_names  # used for data sample
-        self._label_names = list(labels.keys()) if isinstance(labels, dict) else None
+        # deal with modal names
+        if modals is not None:
+            if len(modals) != len(self._data_names):
+                raise ValueError(f"The length of modals ({len(modals)}) must match data keys ({len(self._data_names)})")
+            self._modals = modals
+        else:
+            self._modals = [self.to_singular_modal(name) for name in self._data_names]
+        self.modal_mapping = {data_name: self.modal_filter(data_name) for data_name in self._data_names}
 
         self.hyp = Dict(hyp)
         self.augment = augment
         self.fraction = fraction
-        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        self.cache = DatasetBase.normalize_cache(cache)
         self.mode = mode
+        self.dropout = dropout
 
         # used for statistics of invalid labels and data ids
         self.corrupt_idx = set()
@@ -587,11 +637,8 @@ class MultiModalDatasetBase(Dataset):
         self.length = round(length * self.fraction)
         self.create_buffers(self.length, labels)
 
-        # init cache
-        self.init_cache(data, labels)
-
-        # update buffers length
-        self.update_buffers()
+        # setup data and labels
+        self.setup_data_labels(data, labels)
 
         # Transforms
         self.transforms = self.build_transforms(hyp=self.hyp)
@@ -601,12 +648,58 @@ class MultiModalDatasetBase(Dataset):
         return self._data_names
 
     @property
-    def modal_names(self) -> list[str]:
-        return self._modal_names
+    def modals(self) -> list[str]:
+        return self._modals
 
     @property
-    def label_names(self) -> list[str]:
+    def label_names(self) -> list[str] | None:
         return self._label_names
+
+    def _check_lengths_match(
+        self,
+        data: dict[str, np.ndarray | list[str]],
+        labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
+    ):
+        """
+        Check whether the lengths of the multimodal data and labels are consistent, and whether the types and structures
+        match appropriately.
+        """
+        data_lens = {name: len(v) for name, v in data.items()}
+        if len(set(data_lens.values())) != 1:
+            raise ValueError(f"All data must have the same length, got: {data_lens}")
+        data_len = next(iter(data_lens.values()))
+
+        data_types = {type(v) for v in data.values()}
+        if len(data_types) != 1:
+            raise ValueError(f"All data values must be of the same type, got: {data_types}")
+        data_type = next(iter(data_types))
+
+        if isinstance(labels, (list, np.ndarray)):
+            if type(labels) is not data_type:
+                raise TypeError(f"Labels type {type(labels)} does not match data type {data_type}")
+
+            if len(labels) != data_len:
+                raise ValueError(f"Labels length {len(labels)} != data length {data_len}")
+
+        elif isinstance(labels, dict):
+            label_types = {type(v) for v in labels.values()}
+            if len(label_types) != 1:
+                raise ValueError(f"All label values must be of the same type, got: {label_types}")
+
+            label_type = next(iter(label_types))
+            if label_type is not data_type:
+                raise TypeError(f"Labels type {label_type} does not match data type {data_type}")
+
+            label_lens = {k: len(v) for k, v in labels.items()}
+            if len(set(label_lens.values())) != 1:
+                raise ValueError(f"All label entries must have the same length, got: {label_lens}")
+
+            label_len = next(iter(label_lens.values()))
+            if label_len != data_len:
+                raise ValueError(f"Labels length {label_len} != data length {data_len}")
+
+        else:
+            raise TypeError(f"Unsupported labels type: {type(labels)}")
 
     def create_buffers(self, length: int, labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray]) -> None:
         """Build buffers for data and labels storage."""
@@ -624,39 +717,36 @@ class MultiModalDatasetBase(Dataset):
 
         if self.label_names is not None:
             if isinstance(next(iter(labels.values())), list):
-                self.label_files = {lb: [None] * length for lb in self.label_names}
+                self.label_files = {name: [None] * length for name in self.label_names}
                 self.buffers["label_files"] = self.label_files
         elif isinstance(labels, list):
             self.label_files = [None] * length
             self.buffers["label_files"] = self.label_files
 
-    def init_cache(
+    def setup_data_labels(
         self,
         data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, np.ndarray | list[str]],
     ) -> None:
         # np.ndarray
-        if all(isinstance(v, np.ndarray) for v in data.values()) and (
-            isinstance(labels, np.ndarray)
-            or (isinstance(labels, dict) and all(isinstance(v, np.ndarray) for v in labels.values()))
-        ):
-            self.get_labels_np(labels)
+        if isinstance(next(iter(data.values())), np.ndarray):
+            self.cache_labels_np(labels)
             self.cache_data_np(data)
 
         # list[str]
-        elif all(isinstance(v, list) for v in data.values()) and (
-            isinstance(labels, list) or (isinstance(labels, dict) and all(isinstance(v, list) for v in labels.values()))
-        ):
+        elif isinstance(next(iter(data.values())), list):
             for name in self.data_names:
                 self.data_files[name] = data[name][: self.length]
             if isinstance(labels, list):
                 self.label_files = labels[: self.length]
             elif isinstance(labels, dict):
-                for lb in self.label_names:
-                    self.label_files[lb] = labels[lb][: self.length]
+                for name in self.label_names:
+                    self.label_files[name] = labels[name][: self.length]
 
             # labels
-            self.get_labels()
+            self.cache_labels()
+            # update buffers
+            self.update_buffers()
 
             # data
             for name in self.data_names:
@@ -667,26 +757,8 @@ class MultiModalDatasetBase(Dataset):
             elif self.cache == "disk" and self.check_cache_disk():
                 self.cache_data()
 
-        else:
-            raise TypeError("Invalid input type of data or labels!")
-
-    def get_labels(self, desc_func: Callable | None = None) -> None:
-        """Get labels from path list to buffers."""
-        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        LOGGER.info(f"Caching {self.mode} labels...")
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(self.cache_labels, range(self.length))
-            pbar = tqdm(enumerate(results), total=len(self.label_files))
-            for _, lb in pbar:
-                if lb:
-                    b += asizeof.asizeof(lb)
-                pbar.desc = (
-                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
-                )
-            pbar.close()
-
-    def get_labels_np(self, labels: np.ndarray | dict[str, np.ndarray]) -> None:
-        """Get labels from matrix input to buffers."""
+    def cache_labels_np(self, labels: np.ndarray | dict[str, np.ndarray]) -> None:
+        """Cache labels from matrix input to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} labels from matrix input...")
         if isinstance(labels, np.ndarray):
@@ -700,43 +772,90 @@ class MultiModalDatasetBase(Dataset):
             pbar = tqdm(range(len(next(iter(labels.values())))))
             for i in pbar:
                 label = {}  # multi labels, e.g. {"img": [], "ir": []}
-                for lb in self.label_names:
-                    label[self.modal_filter(lb)] = labels[lb][i]
+                for name in self.label_names:
+                    label[self.modal_mapping[name]] = labels[name][i]
                 label = self.label_format(label)
                 self.labels[i] = label
                 b += asizeof.asizeof(label)
                 pbar.desc = f"Caching {self.mode} labels ({b / gb:.5f}GB)"
         pbar.close()
 
-    def cache_labels(self, index: int) -> dict[str, Any] | None:
-        """Cache label from paths to ram for faster loading."""
-        label = self.lread(index)
+    def cache_labels(self, desc_func: Callable | None = None) -> None:
+        """Cache labels from path list to buffers."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        LOGGER.info(f"Caching {self.mode} labels...")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(self.get_labels, range(self.length))
+            pbar = tqdm(enumerate(results), total=self.length)
+            for i, lb in pbar:
+                if lb is not None:
+                    self.labels[i] = lb
+                    b += asizeof.asizeof(lb)
+                else:
+                    self.corrupt_idx.add(i)
+                pbar.desc = (
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                )
+            pbar.close()
+
+    def get_labels(self, i: int) -> dict[str, Any] | None:
+        """Reads labels from the specified path index 'i' and organize them into a specific format."""
+        label = self.label_read(i)
         label = self.label_format(label)
-        if label:
-            self.labels[index] = label
-            return label
-        else:  # label corrupt
-            self.corrupt_idx.add(index)
+
+        return label
+
+    def label_read(self, i: int) -> np.ndarray | dict[str, np.ndarray] | None:
+        """Read label from a specific path and verify the validity of relative data."""
+        # verify data
+        data_accesses = []
+        for name in self.data_names:
+            data_file = self.data_files[name][i]
+            access = DatasetBase.verify_data(data_file)
+            data_accesses.append(access)
+
+        # Determine if should return None based on dropout mode
+        if self.dropout:
+            # In dropout mode: only return None if ALL data files are inaccessible
+            should_return_none = all(not access for access in data_accesses)
+        else:
+            # In normal mode: return None if ANY data file is inaccessible
+            should_return_none = any(not access for access in data_accesses)
+
+        if should_return_none:
             return None
 
-    def lread(self, index: int) -> np.ndarray | dict[str, np.ndarray] | None:
-        """Users implement their own label reading logic."""
+        # Read label based on label_files type
         if isinstance(self.label_files, list):
-            lb_path = self.label_files[index]
-            label = self.file_read(lb_path)
+            lb_file = self.label_files[i]
+            label = DatasetBase.file_read(lb_file)
+            return label
 
         elif isinstance(self.label_files, dict):
             label = {}
             for name in self.label_names:
-                lb_path = self.label_files[name][index]
-                lb = self.file_read(lb_path)
-                if lb is None:
-                    label = None
-                    break
-                else:
-                    label[self.modal_filter(name)] = lb
+                label_path = self.label_files[name][i]
+                lb = DatasetBase.file_read(label_path)
+                if lb is not None:
+                    label[self.modal_mapping[name]] = lb
 
-        return label
+            if self.dropout:
+                should_return_none = len(label) == 0
+            else:
+                should_return_none = len(label) != len(self.label_names)
+
+            return label if not should_return_none else None
+
+        else:
+            raise TypeError(f"Unsupported label_files type: {type(self.label_files)}")
+
+    def label_format(self, label: Any | None) -> dict[str, Any] | None:
+        """format the label to a custom form."""
+        if label is not None and not isinstance(label, dict):
+            label = {"label": label}  # Customize
+            return label
+        else:
+            return label
 
     def cache_data_np(self, data: dict[str, np.ndarray]) -> None:
         """Cache np.ndarray format data to buffers"""
@@ -760,27 +879,26 @@ class MultiModalDatasetBase(Dataset):
             pbar = tqdm(enumerate(results), total=self.length)
             for i, x in pbar:
                 if self.cache == "disk":
-                    for name in self.data_names:
-                        try:
-                            b += self.data_files[name][i].stat().st_size
-                        except FileNotFoundError:
-                            b += 0.0
+                    b += x
                 else:
                     if x:
                         for name in self.data_names:
-                            self.data[name][i] = x[self.modal_filter(name)]
+                            self.data[name][i] = x[self.modal_mapping[name]]
                             b += self.data[name][i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
 
     def cache_data_to_disk(self, i: int) -> float:
         """Cache data from paths to disk with as an .npy file for faster loading."""
+        b = 0.0
         for name in self.data_names:
-            f = self.data_npy_files[name][i]
+            f: Path = self.data_npy_files[name][i]
             if not f.exists():
                 data = self.file_read(self.data_files[name][i])
-                if data:
+                if data is not None:
                     np.save(f, data, allow_pickle=False)
+                    b += f.stat().st_size
+        return b
 
     def load_data(self, i: int) -> dict[str, np.ndarray] | None:
         """Loads 1 data and label from dataset index 'i', returns (data, label)."""
@@ -800,14 +918,13 @@ class MultiModalDatasetBase(Dataset):
                 else:
                     dt = DatasetBase.file_read(dtf)
 
-                if dt is None:  # exist modal data error
-                    self.corrupt_idx.add(i)
-                    return None
+                if dt is None:  # modal dropout
+                    data[self.modal_mapping[name]] = np.array([])
                 else:
-                    data[self.modal_filter(name)] = dt
+                    data[self.modal_mapping[name]] = dt
 
             else:
-                data[self.modal_filter(name)] = dt
+                data[self.modal_mapping[name]] = dt
 
         return data
 
@@ -815,24 +932,24 @@ class MultiModalDatasetBase(Dataset):
         """Returns the length of the labels list for the dataset."""
         return self.length
 
-    def __getitem__(self, index: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         """Returns transformed label information for given index."""
-        data, label = self.get_sample(index)
+        sample = self.get_sample(index)
         if self.transforms:
-            data, label = self.transforms(data, label)  # The transform must take label as input.
-        return data, label
+            sample = self.transforms(sample)  # The transform must take label as input.
+        return sample
 
-    def get_sample(self, index: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def get_sample(self, index: int) -> dict[str, Any]:
         """Returns Data and label information for given index."""
-        label = deepcopy(self.labels[index])
-        data = self.load_data(index)
-        label = self.update_annotations(label)
+        sample = deepcopy(self.labels[index])
+        sample.update(self.load_data(index))
+        sample = self.update_annotations(sample)
 
-        return data, label
+        return sample
 
-    def update_annotations(self, label: dict[str, Any]) -> dict[str, Any]:
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Update your annotations here."""
-        return label
+        return sample
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
         """Check data caching requirements vs available memory."""
@@ -843,7 +960,7 @@ class MultiModalDatasetBase(Dataset):
             i = random.randint(0, self.length - 1)
             data = []
             for name in self.data_names:
-                dt = self.file_read(self.data_files[name][i])
+                dt = DatasetBase.file_read(self.data_files[name][i])
                 if dt is None:
                     data = []
                     skips += 1
@@ -880,7 +997,7 @@ class MultiModalDatasetBase(Dataset):
                     LOGGER.info("Skipping caching data to disk, directory not writeable.")
                     return False
                 # read data
-                dt = self.file_read(self.data_files[name][i])
+                dt = DatasetBase.file_read(self.data_files[name][i])
                 if dt is None:
                     skips += 1
                     data = []
@@ -888,7 +1005,7 @@ class MultiModalDatasetBase(Dataset):
                     data.append(dt)
             b += np.sum([d.nbytes if d is not None else 0.0 for d in data])
         disk_required = b * self.length / (n - skips) * (1 + safety_margin)  # bytes required to cache data to disk
-        total, _, free = shutil.disk_usage(Path(self.data_files[0]).parent.parent)
+        total, _, free = shutil.disk_usage(Path(self.data_files[next(iter(self.data_names))][0]).parent.parent)
         if disk_required > free:
             self.cache = None
             LOGGER.info(
@@ -898,14 +1015,6 @@ class MultiModalDatasetBase(Dataset):
             )
             return False
         return True
-
-    def label_format(self, label: Any | None) -> dict[str, Any] | None:
-        """format the label to a custom form."""
-        if label is not None and not isinstance(label, dict):
-            label = {"label": label}  # Customize
-            return label
-        else:
-            return label
 
     def build_transforms(self, hyp: dict[str, Any] | None = None):
         """
@@ -930,10 +1039,12 @@ class MultiModalDatasetBase(Dataset):
                 raise ValueError(f"The length of {name} buffer must be equal to labels buffer.")
 
         elif isinstance(buffer, dict):
-            if buffer.keys() != self.modal_names:
+            if set(buffer.keys()) != set(self.data_names):
                 raise ValueError(f"The keys of {name} buffer must be the same as data buffer.")
-            for sub_buffer in buffer.values():
-                if len(sub_buffer) != len(self.labels):
+            for sub in buffer.values():
+                if not isinstance(sub, list):
+                    raise TypeError("Each sub-buffer must be a list.")
+                if len(sub) != len(self.labels):
                     raise ValueError(f"The length of {name} buffer must be equal to labels buffer.")
 
         if name not in self.buffers.keys():
@@ -948,6 +1059,8 @@ class MultiModalDatasetBase(Dataset):
 
             for i in sorted(self.corrupt_idx, reverse=True):
                 self.remove_item(i)
+
+            LOGGER.info(f"Updated buffers length: {self.length}")
             self.corrupt_idx.clear()
 
     def remove_item(self, i: int) -> None:
@@ -961,9 +1074,30 @@ class MultiModalDatasetBase(Dataset):
 
         self.length = len(self.labels)
 
+    def to_singular_modal(self, string: str) -> str:
+        "Intelligence converts plural modal name into singular forms."
+        # Common rules for converting plurals to singulars
+        plural_to_singular = {
+            "ies": "y",  # cities -> city
+            "ses": "s",  # buses -> bus
+            "xes": "x",  # boxes -> box
+            "zes": "z",  # quizzes -> quiz
+            "ches": "ch",  # churches -> church
+            "shes": "sh",  # dishes -> dish
+            "s": "",  # cats -> cat
+        }
+
+        # Apply convert rules
+        for plural, singular in plural_to_singular.items():
+            if string.endswith(plural):
+                return string[: -len(plural)] + singular
+
+        # if no match, return raw string
+        return string
+
     def modal_filter(self, string: str) -> str:
         """Map the plural form of data names to singular modal names."""
-        for modal in self.modal_names:
+        for modal in self.modals:
             if re.match(modal, string):
                 return modal
 
@@ -982,6 +1116,7 @@ def _verify_image(file_path: Path) -> bool:
         img.verify()  # PIL verify
         if "." + img.format.lower() not in IMG_FORMATS:
             raise TypeError(f"Invalid image format {img.format}.")
+        return True
 
     except Exception:
         return False

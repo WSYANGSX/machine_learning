@@ -1,5 +1,4 @@
-import albumentations as A
+import numpy as np
 
-a=[]
-if a:
-    print(1)
+a = np.array([])
+print(a)

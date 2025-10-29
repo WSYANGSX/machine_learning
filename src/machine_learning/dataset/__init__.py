@@ -3,7 +3,7 @@ from typing import Literal, Any
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
-from .base import DatasetBase, MMDatasetBase
+from .base import DatasetBase, MultiModalDatasetBase
 from .datasets import YoloDataset, ImgIrDataset
 from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser
 
@@ -13,7 +13,7 @@ __all__ = [
     # datasets
     "DatasetBase",
     "YoloDataset",
-    "MMDatasetBase",
+    "MultiModalDatasetBase",
     "ImgIrDataset",
     # parsers
     "ParserBase",
@@ -85,21 +85,21 @@ def build_dataset(
             fraction=fraction,
             mode=mode,
         )
-    elif type == "MMDatasetBase":
-        modal_names = cfg.get("modals")
-        return MMDatasetBase(
+    elif type == "MultiModalDatasetBase":
+        modals = cfg.get("modals")
+        return MultiModalDatasetBase(
             data=parsing["data"],
             labels=parsing["labels"],
             cache=cache,
             augment=augment,
             hyp=cfg,
             fraction=fraction,
-            modal_names=modal_names,
+            modals=modals,
             mode=mode,
         )
 
     elif type == "ImgIrDataset":
-        modal_names = cfg.get("modals", ["img", "ir"])
+        modals = cfg.get("modals", ["img", "ir"])
         return ImgIrDataset(
             imgs=parsing["data"],
             labels=parsing["labels"],
@@ -115,7 +115,7 @@ def build_dataset(
             augment=augment,
             hyp=cfg,
             batch_size=batch_size,
-            modal_names=modal_names,
+            modals=modals,
             fraction=fraction,
             mode=mode,
         )
