@@ -49,13 +49,17 @@ class DatasetBase(Dataset):
         transforms (callable): Transformation function.
 
     Methods:
-        _check_input_match(np.ndarray | list[str], np.ndarray | list[str]): Check whether the type and the lengths of the data and labels are consistent.
+        _check_input_match(np.ndarray | list[str], np.ndarray | list[str]): Check whether the type and the lengths of
+        the data and labels are consistent.
         create_buffers(int): Builds buffers for data and labels storage.
-        setup_data_labels(np.ndarray | list[str], np.ndarray | list[str]): Setups labels and data storage. Labels are always cached, data is cached conditionally.
+        setup_data_labels(np.ndarray | list[str], np.ndarray | list[str]): Setups labels and data storage. Labels are
+        always cached, data is cached conditionally.
         cache_labels_np(np.ndarray): Caches labels of the dataset from np.ndarray input to buffers.
         cache_data_np(np.ndarray): Caches the data of the dataset from np.ndarray data source to buffers.
-        cache_labels(Callable | None): Caches labels from label file paths to buffers for faster loading, the callback function input is used to count the cache information.
-        get_labels(int): Reads labels from the specified path index and organize them into a specific format, internally calls label_read() and label_format() methods.
+        cache_labels(Callable | None): Caches labels from label file paths to buffers for faster loading, the callback
+        function input is used to count the cache information.
+        get_labels(int): Reads labels from the specified path index and organize them into a specific format, internally
+        calls label_read() and label_format() methods.
         label_read(int): Reads label from a specific path and verify the validity of relative data.
         label_format(Any | None): Formats the label to a custom dict form.
         cache_data(): Caches data to memory or disk.
@@ -562,40 +566,41 @@ class MultiModalDatasetBase(Dataset):
     Properties:
         modals (list[str]): List of multimodal data names.
         label_names (list[str] | None): List of multimodal label names.
-        data (dict[str, list[np.ndarray]]): The multimodal data buffer dictionary contains list-buffers for each modality.
-        data_files (dict[str, list[str]]): The multimodal data buffer dictionary contains list-buffers for each modality paths.
-        data_npy_files (dict[str, list[str]]): The multimodal data buffer dictionary contains list-buffers for each modality .npy file paths.
+        data (dict[str, list[np.ndarray]]): Multimodal dict-buffer contains list-buffers for each modality data.
+        data_files (dict[str, list[str]]): Multimodal dict-buffer contains list-buffers for each modality data paths.
+        data_npy_files (dict[str, list[str]]): Multimodal dict-buffer has list-buffers for each modality .npy files.
         labels (list[dict[str, Any]]): The list-buffer for label data.
-        label_files (list[str] | dict[str, list[str]]): The list-buffer or list-buffers dictionary for multimodal label file paths.
+        label_files (list[str] | dict[str, list[str]]): The list-buffer or list-buffers dict for multimodal label files.
         length (int): Number of data samples in the dataset.
         transforms (callable): Transformation function.
         modal_mapping: Mapping dict that map the plural form of data names to singular modal names.
 
     Methods:
-        _check_input_match(dict[str, np.ndarray | list[str]], np.ndarray | list[str] | dict[str, list[str] | np.ndarray]): Check whether the lengths of the multimodal data and labels are consistent, and whether the types and structures match appropriately.
-        create_buffers(int, np.ndarray | list[str] | dict[str, list[str] | np.ndarray]): Build buffers for data and labels storage.
-        setup_data_labels(dict[str, np.ndarray | list[str]], np.ndarray | list[str] | dict[str, np.ndarray | list[str]]): Setups labels and data storage. Labels are always cached, data is cached conditionally.
-        cache_labels_np(np.ndarray | dict[str, np.ndarray]): Cache labels from matrix input to buffers.
-        cache_labels(Callable | None): Cache labels from path list to buffers.
-        get_labels(int): Reads labels from the specified path index 'i' and organize them into a specific format.
-        label_read(int): Read label from a specific path and verify the validity of relative data.
-        label_format(Any | None): Format the label to a custom dict form.
-        cache_data_np(dict[str, np.ndarray]): Cache np.ndarray format data to buffers.
+        _check_input_match(): Check whether the lengths of the multimodal data and labels are consistent, and whether
+        the types and structures match appropriately.
+        create_buffers(): Build buffers for storage.
+        setup_data_labels(): Setups labels and data storage. Labels are always cached, data is cached conditionally.
+        cache_labels_np(): Cache labels from matrix input to buffers.
+        cache_labels(): Cache labels from path list to buffers.
+        get_labels(): Reads labels from the specified path index 'i' and organize them into a specific format.
+        label_read(): Read label from a specific path and verify the validity of relative data.
+        label_format(): Format the label to a custom dict form.
+        cache_data_np(): Cache np.ndarray format data to buffers.
         cache_data(): Cache data to memory or disk.
-        load_data(int): Loads 1 multimodal data from dataset index 'i', and return a data dict.
-        cache_data_to_disk(int): Cache data from paths to disk with as an .npy file for faster loading.
+        load_data(): Loads 1 multimodal data from dataset index 'i', and return a data dict.
+        cache_data_to_disk(): Cache data from paths to disk with as an .npy file for faster loading.
         __len__(): Returns the length of the dataset.
-        __getitem__(int): Returns transformed sample for given index.
-        get_sample(int): Returns a sample for given index.
-        update_annotations(dict[str, Any]): Update your annotations here.
-        check_cache_ram(float): Check data caching requirements vs available memory.
-        check_cache_disk(float): Check data caching requirements vs disk free space.
-        build_transforms(dict[str, Any]): Build data transformation pipeline.
-        register_buffer(str, list | dict[str, list]): Add a buffer item to the buffer management dictionary to facilitate unified management of buffers.
+        __getitem__(): Returns transformed sample for given index.
+        get_sample(): Returns a sample for given index.
+        update_annotations(): Update your annotations here.
+        check_cache_ram(): Check data caching requirements vs available memory.
+        check_cache_disk(): Check data caching requirements vs disk free space.
+        build_transforms(): Build data transformation pipeline.
+        register_buffer(): Add a buffer to the buffer management dict to facilitate unified management of buffers.
         update_buffers(): Update the buffer and delete invalid items.
-        remove_item(int): Remove a item of buffers according to the index.
-        to_singular_modal(string): Intelligence converts plural modal name into singular forms.
-        modal_filter(str): Map the plural form of data names to singular modal names.
+        remove_item(): Remove a item of buffers according to the index.
+        to_singular_modal(): Intelligence converts plural modal name into singular forms.
+        modal_filter(): Map the plural form of data names to singular modal names.
     """
 
     def __init__(

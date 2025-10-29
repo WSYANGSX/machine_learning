@@ -85,7 +85,8 @@ class YoloDataset(DatasetBase):
         mode (Literal["train", "val", "test"]): The mode of the dataset.
 
     Returns:
-        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an detection or segmentation
+        model.
     """
 
     def __init__(
@@ -510,13 +511,36 @@ class YoloDataset(DatasetBase):
 
 class YOLOMultiModalDataset(MultiModalDatasetBase):
     """
-    Dataset class for loading RGB and IR images with corresponding labels for object detection and/or segmentation tasks
-    in YOLO format.
+    Dataset class for loading multispectral images with corresponding labels for object detection and/or segmentation
+    tasks in YOLO format.
+
+    Args:
+        imgs (dict[str, np.ndarray | list[str]]): Multispectral image paths list or data arrays.
+        labels (np.ndarray | list[str] | dict[str, list[str]]): Label path lists or label arrays.
+        nc (int): Num of classes.
+        imgsz (int): Image size. Defaults to 640.
+        rect (bool): If True, rectangular training is used. Defaults to False.
+        stride (int): Stride. Defaults to 32.
+        pad (float): Padding. Defaults to 0.0.
+        single_cls (bool): If True, single class training is used. Defaults to False.
+        classes (list): List of included classes. Default is None.
+        cache (bool): Cache data to RAM or disk during training. Defaults to False.
+        augment (bool): If True, data augmentation is applied. Defaults to True.
+        hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
+        batch_size (int): Size of batches. Defaults to None.
+        fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+        modals (list[str]): List of modal names. Defaults to None.
+        task ("detect", "pose", "segment"): The task of this dataset used for. Defaults to "detect".
+        mode (Literal["train", "val", "test"]): The mode of the dataset.
+
+    Returns:
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an detection or segmentation
+        model utilizing multispectral images.
     """
 
     def __init__(
         self,
-        data: dict[str, np.ndarray | list[str]],
+        imgs: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
         nc: int,
         imgsz: int = 640,
@@ -530,7 +554,8 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
-        modal_names: list[str] | None = None,
+        modals: list[str] | None = None,
+        dropout: bool = False,
         task: Literal["detect", "pose", "segment"] = "detect",
         mode: Literal["train", "val", "test"] = "train",
     ):
@@ -550,14 +575,15 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         self.use_obb = self.task == "obb"
 
         super().__init__(
-            data=data,
+            data=imgs,
             labels=labels,
             cache=cache,
             augment=augment,
             hyp=hyp,
             batch_size=batch_size,
             fraction=fraction,
-            modal_names=modal_names,
+            dropout=dropout,
+            modals=modals,
             mode=mode,
         )
 
@@ -565,32 +591,8 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         self.augment_buffer = []
         self.max_augment_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
-    @property
-    def imgs(self) -> list:
-        return self.data["img"]
-
-    @property
-    def img_files(self) -> list:
-        return self.data_files["img"]
-
-    @property
-    def img_npy_files(self) -> list:
-        return self.data_npy_files["img"]
-
-    @property
-    def irs(self) -> list:
-        return self.data["ir"]
-
-    @property
-    def ir_files(self) -> list:
-        return self.data_files["ir"]
-
-    @property
-    def ir_npy_files(self) -> list:
-        return self.data_npy_files["ir"]
-
-    def get_labels(self):
-        """Get labels from path list to buffers."""
+    def cache_labels(self):
+        """Cache labels from path list to buffers."""
         # statistical indicators
         self.num_missing = 0
         self.num_found = 0
@@ -620,7 +622,7 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             assert self.batch_size is not None
             self.set_rectangle()
 
-    def lread(self, index: int) -> tuple:
+    def label_read(self, index: int) -> tuple:
         """Read label"""
         if isinstance(self.label_files, list):
             im_file, ir_file, lb_file = self.img_files[index], self.ir_files[index], self.label_files[index]
@@ -889,12 +891,12 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         return {"img": (im, self.hw0["im"][i], self.hw["im"][i]), "ir": (ir, self.hw0["ir"][i], self.hw["ir"][i])}
 
     def __getitem__(self, index) -> dict[str, Any]:
-        sample = self.get_data_and_label(index)
+        sample = self.get_sample(index)
         if self.transforms:
             sample = self.transforms(sample)  # The transform must take label as input.
         return sample
 
-    def get_data_and_label(self, index: int) -> dict[str, Any]:
+    def get_sample(self, index: int) -> dict[str, Any]:
         """Get data and label information from the dataset."""
         sample = deepcopy(self.labels[index])
         sample.pop("shape", None)
@@ -907,7 +909,7 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             sample["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_labels_info(sample)
 
-    def update_labels_info(self, sample: dict[str, Any]) -> dict[str, Any]:
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """
         Custom your label format here.
 
