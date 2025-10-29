@@ -49,6 +49,7 @@ class DatasetBase(Dataset):
         transforms (callable): Transformation function.
 
     Methods:
+        _check_input_match(np.ndarray | list[str], np.ndarray | list[str]): Check whether the type and the lengths of the data and labels are consistent.
         create_buffers(int): Builds buffers for data and labels storage.
         setup_data_labels(np.ndarray | list[str], np.ndarray | list[str]): Setups labels and data storage. Labels are always cached, data is cached conditionally.
         cache_labels_np(np.ndarray): Caches labels of the dataset from np.ndarray input to buffers.
@@ -72,6 +73,7 @@ class DatasetBase(Dataset):
         remove_item(int): Removes a item of buffers according to the index 'i'.
         file_read(str): Static method that reads file content from given path.
         verify_data(str): Static method that validates whether the data from given path is vaild.
+        normalize_cache(bool | Literal["ram", "disk"] | None): Standardized cache configuration options.
     """
 
     def __init__(
@@ -530,6 +532,7 @@ class DatasetBase(Dataset):
 
     @staticmethod
     def normalize_cache(cache: bool | Literal["ram", "disk"] | None) -> Literal["ram", "disk"] | None:
+        """Standardized cache configuration options."""
         if cache is True:
             return "ram"
         if cache is False or cache is None:
@@ -547,7 +550,7 @@ class MultiModalDatasetBase(Dataset):
 
     Args:
         data (dict[str, np.ndarray | list[str]]): Multimodal data path list or data arrays.
-        labels (np.ndarray | list[str] | dict[str, list[str]]): Label path list or label arrays.
+        labels (np.ndarray | list[str] | dict[str, list[str]]): Label path lists or label arrays.
         cache (bool, optional): Whether to cache data to RAM or disk during training. Defaults to False.
         augment (bool, optional): Whether to apply data augmentation. Defaults to True.
         hyp (dict, optional): Hyperparameters for data augmentation. Defaults to None.
@@ -559,31 +562,40 @@ class MultiModalDatasetBase(Dataset):
     Properties:
         modals (list[str]): List of multimodal data names.
         label_names (list[str] | None): List of multimodal label names.
-        data (dict[str, list[np.ndarray]]): Multimodal data buffer dictionary.
-        data_files (dict[str, list[str]]): Multimodal file paths buffer dictionary.
-        data_npy_files (dict[str, list[str]]): Data .npy file paths buffer dictionary.
-        labels (list[dict[str, Any]]): List of label data.
-        label_files (list[str] | dict[str, list[str]]): Multimodal label file paths.
+        data (dict[str, list[np.ndarray]]): The multimodal data buffer dictionary contains list-buffers for each modality.
+        data_files (dict[str, list[str]]): The multimodal data buffer dictionary contains list-buffers for each modality paths.
+        data_npy_files (dict[str, list[str]]): The multimodal data buffer dictionary contains list-buffers for each modality .npy file paths.
+        labels (list[dict[str, Any]]): The list-buffer for label data.
+        label_files (list[str] | dict[str, list[str]]): The list-buffer or list-buffers dictionary for multimodal label file paths.
         length (int): Number of data samples in the dataset.
         transforms (callable): Transformation function.
+        modal_mapping: Mapping dict that map the plural form of data names to singular modal names.
 
     Methods:
-        get_labels(Callable | None): Get dataset labels.
-        get_labels_np(np.ndarray | dict[str, np.ndarray]): Get labels from numpy array label source.
-        cache_labels(int): Cache labels from label file paths and format using lread() and label_format().
-        cache_data_np(dict[str, np.ndarray]): Cache data from numpy array data source.
-        cache_data(): Cache data from data file paths.
-        load_data(int): Load data at specified index.
-        cache_data_to_disk(int): Cache data to disk.
-        __len__(): Return dataset length.
-        __getitem__(int): Return transformed data and label information for given index.
-        get_data_and_label(int): Return data and label information for given index.
-        update_labels_info(dict[str, Any]): Update label information in get_data_and_label().
+        _check_input_match(dict[str, np.ndarray | list[str]], np.ndarray | list[str] | dict[str, list[str] | np.ndarray]): Check whether the lengths of the multimodal data and labels are consistent, and whether the types and structures match appropriately.
+        create_buffers(int, np.ndarray | list[str] | dict[str, list[str] | np.ndarray]): Build buffers for data and labels storage.
+        setup_data_labels(dict[str, np.ndarray | list[str]], np.ndarray | list[str] | dict[str, np.ndarray | list[str]]): Setups labels and data storage. Labels are always cached, data is cached conditionally.
+        cache_labels_np(np.ndarray | dict[str, np.ndarray]): Cache labels from matrix input to buffers.
+        cache_labels(Callable | None): Cache labels from path list to buffers.
+        get_labels(int): Reads labels from the specified path index 'i' and organize them into a specific format.
+        label_read(int): Read label from a specific path and verify the validity of relative data.
+        label_format(Any | None): Format the label to a custom dict form.
+        cache_data_np(dict[str, np.ndarray]): Cache np.ndarray format data to buffers.
+        cache_data(): Cache data to memory or disk.
+        load_data(int): Loads 1 multimodal data from dataset index 'i', and return a data dict.
+        cache_data_to_disk(int): Cache data from paths to disk with as an .npy file for faster loading.
+        __len__(): Returns the length of the dataset.
+        __getitem__(int): Returns transformed sample for given index.
+        get_sample(int): Returns a sample for given index.
+        update_annotations(dict[str, Any]): Update your annotations here.
         check_cache_ram(float): Check data caching requirements vs available memory.
         check_cache_disk(float): Check data caching requirements vs disk free space.
-        lread(FilePath): Load labels from label file path.
-        label_format(Any): Return labels in custom format dictionaries.
         build_transforms(dict[str, Any]): Build data transformation pipeline.
+        register_buffer(str, list | dict[str, list]): Add a buffer item to the buffer management dictionary to facilitate unified management of buffers.
+        update_buffers(): Update the buffer and delete invalid items.
+        remove_item(int): Remove a item of buffers according to the index.
+        to_singular_modal(string): Intelligence converts plural modal name into singular forms.
+        modal_filter(str): Map the plural form of data names to singular modal names.
     """
 
     def __init__(
@@ -601,7 +613,7 @@ class MultiModalDatasetBase(Dataset):
         """Initialize DatasetBase with given configuration and options."""
         super().__init__()
 
-        self._check_lengths_match(data, labels)
+        self._check_input_match(data, labels)
 
         # used for building buffers
         self._data_names = list(data.keys())
@@ -621,6 +633,8 @@ class MultiModalDatasetBase(Dataset):
 
         self.hyp = Dict(hyp)
         self.augment = augment
+        if not (0 < fraction <= 1.0):
+            raise ValueError("Fraction must be in (0, 1].")
         self.fraction = fraction
         self.cache = DatasetBase.normalize_cache(cache)
         self.mode = mode
@@ -655,7 +669,7 @@ class MultiModalDatasetBase(Dataset):
     def label_names(self) -> list[str] | None:
         return self._label_names
 
-    def _check_lengths_match(
+    def _check_input_match(
         self,
         data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
@@ -728,6 +742,7 @@ class MultiModalDatasetBase(Dataset):
         data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, np.ndarray | list[str]],
     ) -> None:
+        """Setups labels and data storage. Labels are always cached, data is cached conditionally."""
         # np.ndarray
         if isinstance(next(iter(data.values())), np.ndarray):
             self.cache_labels_np(labels)
@@ -850,7 +865,7 @@ class MultiModalDatasetBase(Dataset):
             raise TypeError(f"Unsupported label_files type: {type(self.label_files)}")
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
-        """format the label to a custom form."""
+        """Format the label to a custom dict form."""
         if label is not None and not isinstance(label, dict):
             label = {"label": label}  # Customize
             return label
@@ -858,7 +873,7 @@ class MultiModalDatasetBase(Dataset):
             return label
 
     def cache_data_np(self, data: dict[str, np.ndarray]) -> None:
-        """Cache np.ndarray format data to buffers"""
+        """Cache np.ndarray format data to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} data from matrix input...")
         pbar = tqdm(range(len(next(iter(data.values())))))
@@ -901,7 +916,7 @@ class MultiModalDatasetBase(Dataset):
         return b
 
     def load_data(self, i: int) -> dict[str, np.ndarray] | None:
-        """Loads 1 data and label from dataset index 'i', returns (data, label)."""
+        """Loads 1 multimodal data from dataset index 'i', and return a data dict."""
         data = {}
         for name in self.data_names:
             dt, dtf, dtfn = self.data[name][i], self.data_files[name][i], self.data_npy_files[name][i]
@@ -929,18 +944,18 @@ class MultiModalDatasetBase(Dataset):
         return data
 
     def __len__(self):
-        """Returns the length of the labels list for the dataset."""
+        """Returns the length of the dataset."""
         return self.length
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        """Returns transformed label information for given index."""
+        """Returns transformed sample for given index."""
         sample = self.get_sample(index)
         if self.transforms:
             sample = self.transforms(sample)  # The transform must take label as input.
         return sample
 
     def get_sample(self, index: int) -> dict[str, Any]:
-        """Returns Data and label information for given index."""
+        """Returns a sample for given index."""
         sample = deepcopy(self.labels[index])
         sample.update(self.load_data(index))
         sample = self.update_annotations(sample)
@@ -1053,7 +1068,7 @@ class MultiModalDatasetBase(Dataset):
             raise KeyError(f"Buffer {name} already exists.")
 
     def update_buffers(self) -> None:
-        """Update the buffer and delete invalid data (None)."""
+        """Update the buffer and delete invalid items."""
         if self.corrupt_idx:
             LOGGER.info(f"Removing invalid items from buffers...: {[id for id in self.corrupt_idx]}")
 

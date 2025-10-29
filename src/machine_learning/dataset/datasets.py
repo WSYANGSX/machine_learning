@@ -25,7 +25,7 @@ from ultralytics.utils.ops import resample_segments
 
 class ClassificationDataset(DatasetBase):
     """
-    Dataset class for loading data and labels for data classification. Based from DatasetBase class.
+    Dataset class for loading data and labels for classification. Based from DatasetBase class.
 
     Args:
         data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
@@ -38,7 +38,7 @@ class ClassificationDataset(DatasetBase):
         mode (Literal["train", "val", "test"]): The mode of the dataset.
 
     Returns:
-        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an classification model.
     """
 
     def __init__(
@@ -508,7 +508,7 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class ImgIrDataset(MultiModalDatasetBase):
+class YOLOMultiModalDataset(MultiModalDatasetBase):
     """
     Dataset class for loading RGB and IR images with corresponding labels for object detection and/or segmentation tasks
     in YOLO format.
