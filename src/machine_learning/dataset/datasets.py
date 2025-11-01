@@ -15,8 +15,8 @@ from multiprocessing.pool import ThreadPool
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
-from machine_learning.dataset.base import DatasetBase, MultiModalDatasetBase
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
+from machine_learning.dataset.base import DatasetBase, MultiModalDatasetBase
 from machine_learning.utils.transforms import Compose, Format, Instances, LetterBox, v8_transforms
 
 from ultralytics.utils.ops import segments2boxes
@@ -30,10 +30,10 @@ class ClassificationDataset(DatasetBase):
     Args:
         data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
         labels (list[str] | np.ndarray): Path list to the labels or labels itself with np.ndarray format.
+        batch_size (int, optional): Size of batches.
         cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
         augment (bool, optional): If True, data augmentation is applied. Defaults to True.
         hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
-        batch_size (int, optional): Size of batches. Defaults to None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
         mode (Literal["train", "val", "test"]): The mode of the dataset.
 
@@ -45,13 +45,23 @@ class ClassificationDataset(DatasetBase):
         self,
         data: np.ndarray | list[str],
         labels: np.ndarray | list[str],
-        cache: bool = False,
+        batch_size: int,
+        cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] = {},
         fraction: float = 1.0,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        super().__init__(data, labels, cache, augment, hyp, fraction, mode)
+        super().__init__(
+            data=data,
+            labels=labels,
+            batch_size=batch_size,
+            cache=cache,
+            augment=augment,
+            hyp=hyp,
+            fraction=fraction,
+            mode=mode,
+        )
 
     def label_format(self, label: Any | None) -> dict[str, Any] | None:
         """Format the label to a dict with 'cls' item."""
@@ -127,15 +137,12 @@ class YoloDataset(DatasetBase):
             data=imgs,
             labels=labels,
             cache=cache,
+            batch_size=batch_size,
             augment=augment,
             hyp=hyp,
             fraction=fraction,
             mode=mode,
         )  # cache imgs and labels
-
-        # Buffer thread for data fusion
-        self.mosaic_buffer = []
-        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
 
     @property
     def imgs(self) -> list[np.ndarray | str]:
@@ -160,6 +167,14 @@ class YoloDataset(DatasetBase):
     @img_npy_files.setter
     def img_npy_files(self, value: list[str]) -> None:
         self.data_npy_files = value
+
+    def setup_data_labels(self, data, labels):
+        """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
+        # add mosaic_buffer used for images fusion
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
+        super().setup_data_labels(data, labels)
 
     def cache_labels(self):
         """Get labels from path list to buffers."""
@@ -356,30 +371,29 @@ class YoloDataset(DatasetBase):
             else:
                 im = self.file_read(imf)
 
-            if im is not None:
-                h0, w0 = im.shape[:2]  # orig hw
-                if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
-                    r = self.imgsz / max(h0, w0)  # ratio
-                    if r != 1:  # if sizes are not equal
-                        w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
-                        im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
-                elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
-                    im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+            h0, w0 = im.shape[:2]  # orig hw
+            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
 
-                # Add to buffer if training with augmentations
-                if self.augment:
-                    self.imgs[i], self.im_hw0[i], self.im_hw[i] = (
-                        im,
-                        (h0, w0),
-                        im.shape[:2],
-                    )  # im, hw_original, hw_resized
-                    self.mosaic_buffer.append(i)
-                    if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
-                        j = self.mosaic_buffer.pop(0)
-                        if self.cache != "ram":
-                            self.imgs[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+            # Add to buffer if training with augmentations
+            if self.augment:
+                self.imgs[i], self.im_hw0[i], self.im_hw[i] = (
+                    im,
+                    (h0, w0),
+                    im.shape[:2],
+                )  # im, hw_original, hw_resized
+                self.mosaic_buffer.append(i)
+                if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
+                    j = self.mosaic_buffer.pop(0)
+                    if self.cache != "ram":
+                        self.imgs[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
-                return im, (h0, w0), im.shape[:2]
+            return im, (h0, w0), im.shape[:2]
 
         return im, self.im_hw0[i], self.im_hw[i]
 
@@ -509,7 +523,7 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class YOLOMultiModalDataset(MultiModalDatasetBase):
+class YoloMultiModalDataset(MultiModalDatasetBase):
     """
     Dataset class for loading multispectral images with corresponding labels for object detection and/or segmentation
     tasks in YOLO format.
@@ -578,18 +592,21 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             data=imgs,
             labels=labels,
             cache=cache,
-            augment=augment,
             hyp=hyp,
-            batch_size=batch_size,
             fraction=fraction,
-            dropout=dropout,
+            augment=augment,
             modals=modals,
+            dropout=dropout,
             mode=mode,
         )
 
-        # Buffer thread for data fusion
-        self.augment_buffer = []
-        self.max_augment_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+    def setup_data_labels(self, data, labels):
+        """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
+        # add mosaic_buffer used for images fusion
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
+        super().setup_data_labels(data, labels)
 
     def cache_labels(self):
         """Cache labels from path list to buffers."""
@@ -598,6 +615,7 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         self.num_found = 0
         self.num_empty = 0
         self.num_corrupt = 0
+        self.num_skip = 0
 
         # key points setting
         self.nkpt, self.kpt_dim = self.hyp.get("kpt_shape", (0, 0))
@@ -609,10 +627,13 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
 
         def get_stats_desc():
             return (
-                f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt."
+                f"{self.num_found} couple of {tuple(self.modals)} images, "
+                f"{self.num_missing + self.num_empty} backgrounds, "
+                f"{self.num_skip} skip, "
+                f"{self.num_corrupt} corrupt."
             )
 
-        super().get_labels(get_stats_desc)
+        super().cache_labels(get_stats_desc)
 
         # update labels
         self.update_labels(include_class=self.classes)
@@ -622,136 +643,242 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             assert self.batch_size is not None
             self.set_rectangle()
 
-    def label_read(self, index: int) -> tuple:
+    def label_read(self, i: int) -> tuple | None:
         """Read label"""
-        if isinstance(self.label_files, list):
-            im_file, ir_file, lb_file = self.img_files[index], self.ir_files[index], self.label_files[index]
-            # Number (missing, found, empty, corrupt), segments, keypoints
-            segments, keypoints = [], None
-            try:
-                # Verify images
-                im = Image.open(im_file)
-                im.verify()  # PIL verify
-
-                # Verify irs
-                ir = Image.open(ir_file)
-                ir.verify()  # PIL verify
-
-                assert im.size == ir.size, "Image and IR size mismatch."
-                shape = (im.size[1], im.size[0])  # hw
-                assert "." + im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}."
-                assert "." + ir.format.lower() in IMG_FORMATS, f"Invalid ir format {ir.format}."
-
-                # Verify labels
-                lb, segments, keypoints = self.verify_label(lb_file)
-                return im_file, ir_file, lb, shape, segments, keypoints
-
-            except Exception as e:
-                self.num_corrupt += 1
-                LOGGER.info(f"{im_file}/{ir_file}: ignoring corrupt image/ir/label: {e}.")
-                return None, None, None, None, None, None
-
-        elif isinstance(self.label_files, dict):
-            im_file, ir_file, im_lb_file, ir_lb_file = (
-                self.img_files[index],
-                self.ir_files[index],
-                self.label_files["img"][index],
-                self.label_files["ir"][index],
-            )
-            # Number (missing, found, empty, corrupt), segments, keypoints
-            segments, keypoints = [], None
-
-            try:
-                # Verify images
-                im = Image.open(im_file)
-                im.verify()  # PIL verify
-
-                # Verify irs
-                ir = Image.open(ir_file)
-                ir.verify()  # PIL verify
-
-                assert im.size == ir.size, "Image and IR size mismatch."
-                shape = (im.size[1], im.size[0])  # hw
-                assert "." + im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}."
-                assert "." + ir.format.lower() in IMG_FORMATS, f"Invalid ir format {ir.format}."
-
-                # Verify labels
-                im_lb, im_segments, im_keypoints = self.verify_label(im_lb_file)
-                ir_lb, ir_segments, ir_keypoints = self.verify_label(ir_lb_file)
-                lb = np.concatenate((im_lb, ir_lb), axis=0)
-                segments = np.concatenate((im_segments, ir_segments), axis=0)
-                keypoints = np.concatenate((im_keypoints, ir_keypoints), axis=0)
-
-                return im_file, ir_file, lb, shape, segments, keypoints
-
-            except Exception as e:
-                self.num_corrupt += 1
-                LOGGER.info(f"{im_file}/{ir_file}: ignoring corrupt image/ir/label: {e}.")
-                return None, None, None, None, None, None
-
-    def verify_label(self, lb_file: str) -> tuple:
-        # Verify labels
-        if os.path.isfile(lb_file):
-            self.num_found += 1  # label found
-            with open(lb_file) as f:
-                lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
-                if any(len(x) > 6 for x in lb) and (not self.use_keypoints):  # is segment
-                    classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1, xy2, ...)
-                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                lb = np.array(lb, dtype=np.float32)
-            if nl := len(lb):
-                if self.use_keypoints:
-                    assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
-                        f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
-                    )
-                    points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
-                else:
-                    assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected."
-                    points = lb[:, 1:]
-                assert points.max() <= 1, f"Non-normalized or out of bounds coordinates {points[points > 1]}."
-                assert lb.min() >= 0, f"Negative label values {lb[lb < 0]}."
-
-                # All labels
-                max_cls = lb[:, 0].max()  # max label count
-                assert max_cls <= self.nc, (
-                    f"Label class {int(max_cls)} exceeds dataset class count {self.nc}."
-                    f"Possible class labels are 0-{self.nc - 1}."
-                )
-                _, i = np.unique(lb, axis=0, return_index=True)
-                if len(i) < nl:  # duplicate row check
-                    lb = lb[i]  # remove duplicates
-                    if segments:
-                        segments = [segments[x] for x in i]
-                    LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
-            else:
-                self.num_empty += 1  # label empty
-                lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
+        # verify data
+        data_accesses, shapes, files = self.verify_data(i)  # accessibilities, shape
+        # Determine if should return None based on dropout mode
+        if self.dropout:
+            # In dropout mode: only return None if ALL data files are inaccessible
+            corrupt = all(not access for access in data_accesses)
         else:
-            self.num_missing += 1  # label missing
-            lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
-        if self.use_keypoints:
-            keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
-            if self.kpt_dim == 2:
-                kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
-                keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
-        lb = lb[:, :5]
-        return lb, segments, keypoints
+            # In normal mode: return None if ANY data file is inaccessible
+            corrupt = any(not access for access in data_accesses)
+
+        # verify data shape and access
+        shape = set(shapes)
+        if len(shape) != 1:
+            self.num_skip += 1
+            LOGGER.info(f"Multispectral images mismatch in size, skip index {i}.")
+            return None, None, None, None, None
+        shape = next(iter(shape))
+
+        if corrupt:
+            self.num_corrupt += 1
+            LOGGER.info(f"Ignoring corrupt data index {i}.")
+            return None, None, None, None, None
+
+        # Read labels
+        res = self.verify_label(i)
+        if res is not None:
+            return files, shape, *res
+        else:
+            return None, None, None, None, None
+
+    def verify_data(self, i: int) -> tuple[list, list, dict]:
+        """Verify data"""
+        data_accesses, shapes, files = [], [], {}
+
+        for name in self.data_names:
+            file = self.data_files[name][i]
+            files[f"{self.modal_mapping[name]}_file"] = file
+            try:
+                img = Image.open(file)
+                img.verify()  # PIL verify
+                if "." + img.format.lower() not in IMG_FORMATS:
+                    raise TypeError(f"Invalid image format {img.format}.")
+                data_accesses.append(True)
+                shapes.append((img.size[1], img.size[0]))  # hw
+
+            except Exception:
+                data_accesses.append(False)
+
+        return data_accesses, shapes, files
+
+    def verify_label(self, i: int) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Verify labels"""
+        segments, keypoints = [], None
+
+        # Labels with list format
+        if isinstance(self.label_files, list):
+            lb_file = self.label_files[i]
+            try:
+                if os.path.isfile(lb_file):
+                    self.num_found += 1  # label found
+                    with open(lb_file) as f:
+                        lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                        if any(len(x) > 6 for x in lb) and (not self.use_keypoints):  # is segment
+                            classes = np.array([x[0] for x in lb], dtype=np.float32)
+                            segments = [
+                                np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb
+                            ]  # (cls, xy1, xy2, ...)
+                            lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                        lb = np.array(lb, dtype=np.float32)
+                    if nl := len(lb):
+                        if self.use_keypoints:
+                            assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
+                                f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
+                            )
+                            points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
+                        else:
+                            assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected."
+                            points = lb[:, 1:]
+                        assert points.max() <= 1, f"Non-normalized or out of bounds coordinates {points[points > 1]}."
+                        assert lb.min() >= 0, f"Negative label values {lb[lb < 0]}."
+
+                        # All labels
+                        max_cls = lb[:, 0].max()  # max label count
+                        assert max_cls <= self.nc, (
+                            f"Label class {int(max_cls)} exceeds dataset class count {self.nc}."
+                            f"Possible class labels are 0-{self.nc - 1}."
+                        )
+                        _, i = np.unique(lb, axis=0, return_index=True)
+                        if len(i) < nl:  # duplicate row check
+                            lb = lb[i]  # remove duplicates
+                            if segments:
+                                segments = [segments[x] for x in i]
+                            LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
+                    else:
+                        self.num_empty += 1  # label empty
+                        lb = np.zeros(
+                            (0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32
+                        )
+                else:
+                    self.num_missing += 1  # label missing
+                    lb = np.zeros((0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32)
+                if self.use_keypoints:
+                    keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
+                    if self.kpt_dim == 2:
+                        kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(
+                            np.float32
+                        )
+                        keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
+                lb = lb[:, :5]
+                return lb, segments, keypoints
+
+            except Exception as e:
+                self.num_corrupt += 1
+                LOGGER.info(f"Ignoring corrupt label at {lb_file}: {e}.")
+                return None
+
+        # Labels with dict format
+        if isinstance(self.label_files, dict):
+            # statistical indicators
+            lb_found, lb_missing, lb_empty, lb_corrupt = [], [], [], []
+            lb_ls, segments_ls, keypoints_ls = [], [], []
+
+            for name in self.label_files:
+                lb_file = self.label_files[name][i]
+                try:
+                    if os.path.isfile(lb_file):
+                        lb_found.append(True)  # label found
+                        with open(lb_file) as f:
+                            lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                            if any(len(x) > 6 for x in lb) and (not self.use_keypoints):  # is segment
+                                classes = np.array([x[0] for x in lb], dtype=np.float32)
+                                segments = [
+                                    np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb
+                                ]  # (cls, xy1, xy2, ...)
+                                lb = np.concatenate(
+                                    (classes.reshape(-1, 1), segments2boxes(segments)), 1
+                                )  # (cls, xywh)
+                            lb = np.array(lb, dtype=np.float32)
+                        if nl := len(lb):
+                            if self.use_keypoints:
+                                assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
+                                    f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
+                                )
+                                points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
+                            else:
+                                assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected."
+                                points = lb[:, 1:]
+                            assert points.max() <= 1, (
+                                f"Non-normalized or out of bounds coordinates {points[points > 1]}."
+                            )
+                            assert lb.min() >= 0, f"Negative label values {lb[lb < 0]}."
+
+                            # All labels
+                            max_cls = lb[:, 0].max()  # max label count
+                            assert max_cls <= self.nc, (
+                                f"Label class {int(max_cls)} exceeds dataset class count {self.nc}."
+                                f"Possible class labels are 0-{self.nc - 1}."
+                            )
+                            _, i = np.unique(lb, axis=0, return_index=True)
+                            if len(i) < nl:  # duplicate row check
+                                lb = lb[i]  # remove duplicates
+                                if segments:
+                                    segments = [segments[x] for x in i]
+                                LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
+                        else:
+                            lb_empty.append(True)  # label empty
+                            lb = np.zeros(
+                                (0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32
+                            )
+                    else:
+                        lb_missing.append(True)  # label missing
+                        lb = np.zeros(
+                            (0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32
+                        )
+                    if self.use_keypoints:
+                        keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
+                        if self.kpt_dim == 2:
+                            kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(
+                                np.float32
+                            )
+                            keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
+                    lb = lb[:, :5]
+
+                    lb_ls.append(lb), segments_ls.append(segments), keypoints_ls.append(keypoints)
+
+                except Exception:
+                    lb_corrupt.append(True)
+
+            if self.dropout:
+                if all(lb_corrupt):
+                    self.num_corrupt += 1
+                    LOGGER.info(f"Ignoring corrupt label index {i}.")
+                    return None
+                else:
+                    self.num_found += 1 if any(lb_found) else 0
+                    self.num_empty += 1 if all(lb_empty) else 0
+                    self.num_missing += 1 if all(lb_missing) else 0
+
+                    return (
+                        np.concatenate(lb_ls, axis=0),
+                        np.concatenate(segments_ls, axis=0),
+                        np.concatenate(keypoints_ls, axis=0),
+                    )
+            else:
+                if any(lb_corrupt):
+                    self.num_corrupt += 1
+                    LOGGER.info(f"Ignoring corrupt label at {lb_file}.")
+                    return None
+                else:
+                    self.num_found += 1 if all(lb_found) else 0
+                    self.num_empty += 1 if all(lb_empty) else 0
+                    self.num_missing += 1 if all(lb_missing) else 0
+
+                    return (
+                        np.unique(np.concatenate(lb_ls, axis=0), axis=0),
+                        np.unique(np.concatenate(segments_ls, axis=0), axis=0),
+                        np.unique(np.concatenate(keypoints_ls, axis=0), axis=0),
+                    )
 
     def label_format(self, label: tuple) -> dict[str, Any] | None:
-        im_file, ir_file, lb, shape, segments, keypoint = label
-        if im_file and ir_file:
-            return {
-                "im_file": im_file,
-                "ir_file": ir_file,
-                "shape": shape,
-                "cls": lb[:, 0:1],  # n, 1
-                "bboxes": lb[:, 1:],  # n, 4
-                "segments": segments,
-                "keypoints": keypoint,
-                "normalized": True,
-                "bbox_format": "xywh",
-            }
+        file_dict, shape, lb, segments, keypoint = label
+        if file_dict is not None:
+            file_dict.update(
+                {
+                    "shape": shape,
+                    "cls": lb[:, 0:1],  # n, 1
+                    "bboxes": lb[:, 1:],  # n, 4
+                    "segments": segments,
+                    "keypoints": keypoint,
+                    "normalized": True,
+                    "bbox_format": "xywh",
+                }
+            )
+            return file_dict
         else:
             return None
 
@@ -782,12 +909,18 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         s = np.array([x.pop("shape") for x in self.labels])  # hw
         ar = s[:, 0] / s[:, 1]  # aspect ratio
         irect = ar.argsort()
-        self.im_files = [self.im_files[i] for i in irect]
-        self.ir_files = [self.ir_files[i] for i in irect]
+
+        # Rearrange the data files
+        for fs in self.data_files.values():
+            fs[:] = [fs[i] for i in irect]
+
+        # Rearrange the labels
         if isinstance(self.labels, list):
-            self.labels = [self.labels[i] for i in irect]
+            self.labels[:] = [self.labels[i] for i in irect]
         elif isinstance(self.labels, dict):
-            self.labels = {lb: [self.labels[lb][i] for i in irect] for lb in self.label_names}
+            for lbs in self.labels.values():
+                lbs[:] = [lbs[i] for i in irect]
+
         ar = ar[irect]
 
         # Set training image shapes
@@ -813,82 +946,88 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             pbar = tqdm(enumerate(results), total=self.length)
             for i, x in pbar:
                 if self.cache == "disk":
-                    for modal in self.modal_names:
-                        try:
-                            b += self.data_files[modal][i].stat().st_size
-                        except FileNotFoundError:
-                            b += 0.0
+                    b += x
                 else:
                     if x:
-                        for modal in self.modal_names:
-                            self.data[modal][i], self.hw0[modal][i], self.hw[modal][i] = x[modal]
-                            if self.data[modal][i]:
-                                b += self.data[modal][i].nbytes
+                        for name in self.data_names:
+                            self.data[name][i] = x[0][self.modal_mapping[name]]
+                            self.hw0[i] = x[1]
+                            self.hw[i] = x[2]
+                            b += self.data[name][i].nbytes
                 pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
             pbar.close()
 
-    def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
+    def load_data(self, i: int, rect_mode: bool = True) -> tuple[dict, tuple, tuple]:
         """Loads 1 img and label from dataset index 'i', returns (img, label)."""
-        im, imf, imfn = self.imgs[i], self.img_files[i], self.img_npy_files[i]
-        ir, irf, irfn = self.irs[i], self.ir_files[i], self.ir_npy_files[i]
+        data, hw0, hw = {}, None, None
 
-        # load image and ir
-        if im is None and ir is None:  # not cached in RAM
-            if imfn.exists():  # cached in Disk
-                try:
-                    im = np.load(imfn)
-                except Exception as e:
-                    LOGGER.warning(f"Removing corrupt *.npy image file {imfn} due to: {e}.")
-                    Path(imfn).unlink(missing_ok=True)
-                    im = self.file_read(imf)
-            else:
-                im = self.file_read(imf)
+        # Whether data has been loaded into ram
+        cached_ram = next(iter(self.data.values()))[i] is not None
 
-            if irfn.exists():  # cached in Disk
-                try:
-                    ir = np.load(irfn)
-                except Exception as e:
-                    LOGGER.warning(f"Removing corrupt *.npy image file {irfn} due to: {e}.")
-                    Path(irfn).unlink(missing_ok=True)
-                    ir = self.file_read(irf)
-            else:
-                ir = self.file_read(irf)
+        if cached_ram:  # cached in ram
+            for name in self.data_names:
+                data[self.modal_mapping[name]] = self.data[name][i]
+            hw = self.hw[i]
+            hw0 = self.hw0[i]
 
-            if im is not None and ir is not None:
-                im_h0, im_w0 = im.shape[:2]  # orig hw
-                ir_h0, ir_w0 = ir.shape[:2]
-                if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
-                    im_r = self.imgsz / max(im_h0, im_w0)  # ratio
-                    if im_r != 1:  # if sizes are not equal
-                        w, h = (min(math.ceil(im_w0 * im_r), self.imgsz), min(math.ceil(im_h0 * im_r), self.imgsz))
-                        im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
-                    ir_r = self.imgsz / max(ir_h0, ir_w0)
-                    if ir_r != 1:  # if sizes are not equal
-                        w, h = (min(math.ceil(ir_w0 * ir_r), self.imgsz), min(math.ceil(ir_h0 * ir_r), self.imgsz))
-                        ir = cv2.resize(ir, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:  # not cached in ram
+            for name in self.data_names:
+                dtf, dtfn = self.data_files[name][i], self.data_npy_files[name][i]
+                # read data
+                if dtfn.exists():  # cached in Disk
+                    try:
+                        dt = np.load(dtfn)
+                    except Exception as e:
+                        LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
+                        Path(dtfn).unlink(missing_ok=True)
+                        dt = DatasetBase.file_read(dtf)
                 else:
-                    if not (im_h0 == im_w0 == self.imgsz):  # resize by stretching image to square imgsz
-                        im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
-                    if not (ir_h0 == ir_w0 == self.imgsz):  # resize by stretching image to square imgsz
-                        ir = cv2.resize(ir, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+                    dt = DatasetBase.file_read(dtf)
 
-                # Add to buffer if training with augmentations
-                if self.augment:
-                    self.imgs[i], self.hw0["im"][i], self.hw["im"][i] = im, (im_h0, im_w0), im.shape[:2]
-                    self.irs[i], self.hw0["ir"][i], self.hw["ir"][i] = ir, (ir_h0, ir_w0), ir.shape[:2]
-                    self.augment_buffer.append(i)
-                    if 1 < len(self.augment_buffer) >= self.max_augment_buffer_length:  # prevent empty buffer
-                        j = self.augment_buffer.pop(0)
-                        if self.cache != "ram":
-                            self.imgs[j], self.hw0["im"][j], self.hw["im"][j] = None, None, None
-                            self.irs[j], self.hw0["ir"][j], self.hw["ir"][j] = None, None, None
+                data[self.modal_mapping[name]] = dt  # may be None, dropout mode
 
-                return {"img": (im, (im_h0, im_w0), im.shape[:2]), "ir": (ir, (ir_h0, ir_w0), ir.shape[:2])}
+            shapes = set([dt.shape[:2] for dt in data.values()])
+            if len(shapes) != 1:
+                raise ValueError(
+                    "The hight and width of the multispectral images actually loaded from the disk are inconsistent."
+                )
+
+            h0, w0 = next(iter(shapes))
+            hw0 = (h0, w0)
+            # deal with load data
+            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                else:
+                    w, h = w0, h0
             else:
-                self.corrupt_idx.add(i)  # data corrupt
-                return {"img": (None, None, None), "ir": (None, None, None)}
+                if not (h0 == w0 == self.imgsz):
+                    w = h = self.imgsz
+                else:
+                    w, h = w0, h0
+            hw = (h, w)
 
-        return {"img": (im, self.hw0["im"][i], self.hw["im"][i]), "ir": (ir, self.hw0["ir"][i], self.hw["ir"][i])}
+            for modal, dt in data.items():
+                if dt is not None:
+                    data[modal] = cv2.resize(dt, (w, h), interpolation=cv2.INTER_LINEAR)
+                else:
+                    data[modal] = np.zeros((w, h))
+
+            if self.augment:
+                for name in self.data_names:
+                    self.data[name][i] = data[self.modal_mapping[name]]
+                self.hw0[i] = hw0
+                self.hw[i] = hw
+                self.mosaic_buffer.append(i)
+                if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
+                    j = self.mosaic_buffer.pop(0)
+                    if self.cache != "ram":
+                        for name in self.data_names:
+                            self.data[name][j] = None
+                        self.hw0[j], self.hw[j] = None, None
+
+        return data, hw0, hw
 
     def __getitem__(self, index) -> dict[str, Any]:
         sample = self.get_sample(index)
@@ -900,14 +1039,17 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         """Get data and label information from the dataset."""
         sample = deepcopy(self.labels[index])
         sample.pop("shape", None)
-        sample["img"], sample["ori_shape"], sample["resized_shape"] = self.load_data(index)
+        data, sample["ori_shape"], sample["resized_shape"] = self.load_data(index)
         sample["ratio_pad"] = (
             sample["resized_shape"][0] / sample["ori_shape"][0],
             sample["resized_shape"][1] / sample["ori_shape"][1],
         )  # for evaluation
         if self.rect:
             sample["rect_shape"] = self.batch_shapes[self.batch[index]]
-        return self.update_labels_info(sample)
+
+        sample.update(data)
+
+        return self.update_annotations(sample)
 
     def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """
@@ -944,14 +1086,15 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         for _ in range(n):
             i = random.randint(0, self.length - 1)
             data = []
-            for modal in self.modal_names:
-                data.append(self.file_read(self.data_files[modal][i]))
-            if all(dt is None for dt in data):
-                skips += 1
-                continue
-            b += np.sum(
-                [d.nbytes * (self.imgsz / max(d.shape[0], d.shape[1])) ** 2 if d is not None else 0.0 for d in data]
-            )
+            for name in self.data_names:
+                dt = DatasetBase.file_read(self.data_files[name][i])
+                if dt is None:
+                    data = []
+                    skips += 1
+                    break
+                else:
+                    data.append(dt)
+            b += np.sum([d.nbytes * (self.imgsz / max(d.shape[0], d.shape[1])) ** 2 for d in data])
         mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache data into RAM
         mem = psutil.virtual_memory()
         if mem_required > mem.available:
@@ -964,37 +1107,22 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
             return False
         return True
 
-    def create_buffers(self, length):
+    def create_buffers(
+        self,
+        length: int,
+        labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
+    ) -> None:
         """Build buffers for data and labels storage."""
-        super().create_buffers(length)
+        super().create_buffers(length, labels)
 
-        self.hw0 = {modal: [None] * length for modal in self.modal_names}
+        self.hw0 = [None] * length
         self.register_buffer("hw0", self.hw0)
-        self.hw = {modal: [None] * length for modal in self.modal_names}
+        self.hw = [None] * length
         self.register_buffer("hw", self.hw)
 
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        if self.augment:
-            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
-            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
-            transforms = v8_transforms(self, self.imgsz, hyp)
-        else:
-            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
-        transforms.append(
-            Format(
-                bbox_format="xywh",
-                normalize=True,
-                return_mask=self.use_segments,
-                return_keypoint=self.use_keypoints,
-                return_obb=self.use_obb,
-                batch_idx=True,
-                mask_ratio=hyp.mask_ratio,
-                mask_overlap=hyp.mask_overlap,
-                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
-            )
-        )
-        return transforms
+        ...
 
     def close_mosaic(self):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
@@ -1004,15 +1132,14 @@ class YOLOMultiModalDataset(MultiModalDatasetBase):
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
         self.transforms = self.build_transforms(hyp)
 
-    @staticmethod
-    def collate_fn(batch):
+    def collate_fn(self, batch):
         """Collates data samples into batches."""
         new_batch = {}
         keys = batch[0].keys()
         values = list(zip(*[list(b.values()) for b in batch]))
         for i, k in enumerate(keys):
             value = values[i]
-            if k == "img":
+            if k in self.modals:
                 value = torch.stack(value, 0)
             if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
                 value = torch.cat(value, 0)

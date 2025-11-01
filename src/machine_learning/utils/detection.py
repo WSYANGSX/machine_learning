@@ -655,7 +655,7 @@ def class_maps(classes: list[str]) -> dict[int, str]:
 def add_bbox(
     img: np.ndarray,
     bbox: np.ndarray,
-    class_name: str,
+    class_name: str | None = None,
     color: tuple[int] = (255, 0, 0),
     thickness: int = 2,
 ) -> np.ndarray:
@@ -678,39 +678,40 @@ def add_bbox(
     # Add bbox
     cv2.rectangle(img_copy, (x_min, y_min), (x_max, y_max), color=color, thickness=thickness)
 
-    # Obtain the text size
-    ((text_width, text_height), _) = cv2.getTextSize(class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
-    label_height = int(1.3 * text_height)
+    if class_name is not None:
+        # Obtain the text size
+        ((text_width, text_height), _) = cv2.getTextSize(class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+        label_height = int(1.3 * text_height)
 
-    # Intelligently adjust the label position (to prevent exceeding the image boundary)
-    if y_min - label_height < 0:  # Insufficient space at the top
-        # Place the label at the bottom inside the bounding box
-        label_y_top = y_min
-        label_y_bottom = label_y_top + label_height
-        text_y = label_y_top + label_height - int(0.3 * text_height)
-    else:  # Normal condition
-        # Place the label at the top of the bounding box
-        label_y_top = y_min - label_height
-        label_y_bottom = y_min
-        text_y = y_min - int(0.3 * text_height)
+        # Intelligently adjust the label position (to prevent exceeding the image boundary)
+        if y_min - label_height < 0:  # Insufficient space at the top
+            # Place the label at the bottom inside the bounding box
+            label_y_top = y_min
+            label_y_bottom = label_y_top + label_height
+            text_y = label_y_top + label_height - int(0.3 * text_height)
+        else:  # Normal condition
+            # Place the label at the top of the bounding box
+            label_y_top = y_min - label_height
+            label_y_bottom = y_min
+            text_y = y_min - int(0.3 * text_height)
 
-    # Make sure the label does not extend beyond the bottom of the image
-    if label_y_bottom > h:
-        label_y_top = max(0, h - label_height)
-        label_y_bottom = h
-        text_y = label_y_bottom - int(0.3 * text_height)
+        # Make sure the label does not extend beyond the bottom of the image
+        if label_y_bottom > h:
+            label_y_top = max(0, h - label_height)
+            label_y_bottom = h
+            text_y = label_y_bottom - int(0.3 * text_height)
 
-    # Draw the label background and text
-    cv2.rectangle(img_copy, (x_min, label_y_top), (x_min + text_width, label_y_bottom), color, -1)
-    cv2.putText(
-        img_copy,
-        text=class_name,
-        org=(x_min, text_y),
-        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-        fontScale=0.35,
-        color=(255, 255, 255),
-        lineType=cv2.LINE_AA,
-    )
+        # Draw the label background and text
+        cv2.rectangle(img_copy, (x_min, label_y_top), (x_min + text_width, label_y_bottom), color, -1)
+        cv2.putText(
+            img_copy,
+            text=class_name,
+            org=(x_min, text_y),
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+            fontScale=0.35,
+            color=(255, 255, 255),
+            lineType=cv2.LINE_AA,
+        )
 
     return img_copy
 
@@ -718,8 +719,8 @@ def add_bbox(
 def visualize_img_bboxes(
     img: np.ndarray,
     bboxes: np.ndarray,
-    class_ids: Sequence[int] | np.ndarray,
-    class_maps: Sequence[str] | Mapping[int, str],
+    class_ids: np.ndarray | Sequence[int] | None = None,
+    class_maps: Sequence[str] | Mapping[int, str] | None = None,
     cmap: str | None = None,
 ) -> None:
     """Plot the image with bounding boxes.
@@ -731,10 +732,23 @@ def visualize_img_bboxes(
         class_maps (Sequence[str] | Mapping[int, str]): The names corresponding to the class numbers of objects.
         cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
     """
-    assert len(class_ids) == len(bboxes), "The length of bboxes and class_ids must be the same."
-    for bbox, class_id in zip(bboxes, class_ids):
-        class_name = class_maps[class_id]
-        img = add_bbox(img, bbox, class_name)
+    if class_ids is None:
+        for bbox in bboxes:
+            img = add_bbox(img, bbox)
+    else:
+        if len(class_ids) != len(bboxes):
+            raise ValueError("The length of bboxes and class_ids must be the same.")
+
+        if class_maps is not None:
+            for bbox, class_id in zip(bboxes, class_ids):
+                class_name = class_maps[class_id]
+                img = add_bbox(img, bbox, class_name)
+        else:
+            class_maps = {i: str(i) for i in class_ids}
+            for bbox, class_id in zip(bboxes, class_ids):
+                class_name = class_maps[class_id]
+                img = add_bbox(img, bbox, class_name)
+
     plt.figure(figsize=(12, 12))
     plt.axis("off")
     plt.imshow(img, cmap)

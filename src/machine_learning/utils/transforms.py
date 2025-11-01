@@ -33,7 +33,7 @@ DEFAULT_STD = (1.0, 1.0, 1.0)
 DEFAULT_CROP_FRACTION = 1.0
 
 
-class BaseTransform:
+class TransformBase:
     """
     Base class for image transformations.
 

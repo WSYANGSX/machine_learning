@@ -1,4 +1,4 @@
-from typing import Any, Literal, Callable
+from typing import Any, Callable, Literal
 
 import os
 import re
@@ -32,10 +32,11 @@ class DatasetBase(Dataset):
     Args:
         data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
         labels (list[str] | np.ndarray): Path list to the labels or labels itself with np.ndarray format.
+        batch_size (int): The batch size of the dataset or dataloader. It can be used to specially group the data in a
+        dataset, such as rectangle training in YoloDataset.
         cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
-        augment (bool, optional): If True, data augmentation is applied. Defaults to True.
-        hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
-        batch_size (int, optional): Size of batches. Defaults to None.
+        augment (bool): If True, data augmentation is applied. Defaults to True.
+        hyp (dict, optional): Hyperparameters for data augmentation. Defaults to None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
         mode (Literal["train", "val", "test"]): The mode of the dataset.
 
@@ -84,8 +85,9 @@ class DatasetBase(Dataset):
         self,
         data: np.ndarray | list[str],
         labels: np.ndarray | list[str],
+        batch_size: int,
         cache: bool | Literal["ram", "disk"] | None = False,
-        augment: bool = True,
+        augment: bool = False,
         hyp: dict[str, Any] = {},
         fraction: float = 1.0,
         mode: Literal["train", "val", "test"] = "train",
@@ -96,11 +98,11 @@ class DatasetBase(Dataset):
         self._check_input_match(data, labels)
 
         self.hyp = Dict(hyp)
-        self.augment = augment
         if not (0 < fraction <= 1.0):
             raise ValueError("Fraction must be in (0, 1].")
-        self.fraction = fraction
 
+        self.fraction = fraction
+        self.batch_size = batch_size
         self.cache = self.normalize_cache(cache)
         self.mode = mode
 
@@ -110,6 +112,9 @@ class DatasetBase(Dataset):
         # create buffers
         self.length = round(len(labels) * self.fraction)
         self.create_buffers(self.length)
+
+        # Augment
+        self.augment = augment
 
         # setup data and labels
         self.setup_data_labels(data, labels)
@@ -151,6 +156,13 @@ class DatasetBase(Dataset):
 
     def setup_data_labels(self, data: np.ndarray | list[str], labels: np.ndarray | list[str]) -> None:
         """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
+
+        # ******************************************
+        #
+        # add properties used for cache_data() here.
+        #
+        # ******************************************
+
         # np.ndarray
         if isinstance(labels, np.ndarray):
             self.cache_labels_np(labels)
@@ -163,8 +175,6 @@ class DatasetBase(Dataset):
 
             # cache labels
             self.cache_labels()
-            # update buffers length
-            self.update_buffers()
 
             # cache data
             self.data_npy_files = [Path(f).with_suffix(".npy") for f in self.data_files]
@@ -217,6 +227,9 @@ class DatasetBase(Dataset):
                     f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
                 )
             pbar.close()
+
+        # update buffers length
+        self.update_buffers()
 
     def get_labels(self, i: int) -> dict[str, Any] | None:
         """Read labels from the specified path index and organize them into a specific format.
@@ -460,7 +473,7 @@ class DatasetBase(Dataset):
         try:
             # read img file with cv2
             if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path))  # bgr
+                data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)  # bgr
                 if data is None:
                     LOGGER.error(f"Failed to read image: {path}")
                     return None
@@ -556,7 +569,7 @@ class MultiModalDatasetBase(Dataset):
         data (dict[str, np.ndarray | list[str]]): Multimodal data path list or data arrays.
         labels (np.ndarray | list[str] | dict[str, list[str]]): Label path lists or label arrays.
         cache (bool, optional): Whether to cache data to RAM or disk during training. Defaults to False.
-        augment (bool, optional): Whether to apply data augmentation. Defaults to True.
+        augment (bool, optional): If True, data augmentation is applied. Defaults to True.
         hyp (dict, optional): Hyperparameters for data augmentation. Defaults to None.
         fraction (float): Fraction of dataset to use. Defaults to 1.0 (use all data).
         modals (list[str] | None): List of modal names. Defaults to None.
@@ -608,7 +621,7 @@ class MultiModalDatasetBase(Dataset):
         data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
         cache: bool | Literal["ram", "disk"] | None = False,
-        augment: bool = True,
+        augment: bool = False,
         hyp: dict[str, Any] = {},
         fraction: float = 1.0,
         modals: list[str] | None = None,
@@ -637,13 +650,13 @@ class MultiModalDatasetBase(Dataset):
         self.modal_mapping = {data_name: self.modal_filter(data_name) for data_name in self._data_names}
 
         self.hyp = Dict(hyp)
-        self.augment = augment
         if not (0 < fraction <= 1.0):
             raise ValueError("Fraction must be in (0, 1].")
         self.fraction = fraction
         self.cache = DatasetBase.normalize_cache(cache)
         self.mode = mode
         self.dropout = dropout
+        self.augment = augment
 
         # used for statistics of invalid labels and data ids
         self.corrupt_idx = set()
@@ -720,7 +733,11 @@ class MultiModalDatasetBase(Dataset):
         else:
             raise TypeError(f"Unsupported labels type: {type(labels)}")
 
-    def create_buffers(self, length: int, labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray]) -> None:
+    def create_buffers(
+        self,
+        length: int,
+        labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
+    ) -> None:
         """Build buffers for data and labels storage."""
         self.buffers = {}
 
@@ -765,8 +782,6 @@ class MultiModalDatasetBase(Dataset):
 
             # labels
             self.cache_labels()
-            # update buffers
-            self.update_buffers()
 
             # data
             for name in self.data_names:
@@ -818,6 +833,9 @@ class MultiModalDatasetBase(Dataset):
                 )
             pbar.close()
 
+        # update buffers
+        self.update_buffers()
+
     def get_labels(self, i: int) -> dict[str, Any] | None:
         """Reads labels from the specified path index 'i' and organize them into a specific format."""
         label = self.label_read(i)
@@ -837,12 +855,12 @@ class MultiModalDatasetBase(Dataset):
         # Determine if should return None based on dropout mode
         if self.dropout:
             # In dropout mode: only return None if ALL data files are inaccessible
-            should_return_none = all(not access for access in data_accesses)
+            corrupt = all(not access for access in data_accesses)
         else:
             # In normal mode: return None if ANY data file is inaccessible
-            should_return_none = any(not access for access in data_accesses)
+            corrupt = any(not access for access in data_accesses)
 
-        if should_return_none:
+        if corrupt:
             return None
 
         # Read label based on label_files type
@@ -860,11 +878,11 @@ class MultiModalDatasetBase(Dataset):
                     label[self.modal_mapping[name]] = lb
 
             if self.dropout:
-                should_return_none = len(label) == 0
+                corrupt = len(label) == 0
             else:
-                should_return_none = len(label) != len(self.label_names)
+                corrupt = len(label) != len(self.label_names)
 
-            return label if not should_return_none else None
+            return label if not corrupt else None
 
         else:
             raise TypeError(f"Unsupported label_files type: {type(self.label_files)}")
