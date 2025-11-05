@@ -224,7 +224,7 @@ class DatasetBase(Dataset):
                 else:  # label corrupt
                     self.corrupt_idx.add(i)
                 pbar.desc = (
-                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB)" + desc_func() if desc_func is not None else ""
                 )
             pbar.close()
 
@@ -829,7 +829,7 @@ class MultiModalDatasetBase(Dataset):
                 else:
                     self.corrupt_idx.add(i)
                 pbar.desc = (
-                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB)" + desc_func() if desc_func is not None else ""
                 )
             pbar.close()
 

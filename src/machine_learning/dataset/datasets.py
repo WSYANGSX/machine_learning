@@ -636,7 +636,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         def get_stats_desc():
             return (
-                f"{self.num_found} couple of {tuple(self.modals)} images, "
+                f" {self.num_found} couple of {tuple(self.modals)} images, "
                 f"{self.num_missing + self.num_empty} backgrounds, "
                 f"{self.num_skip} skip, "
                 f"{self.num_corrupt} corrupt."
