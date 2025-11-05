@@ -43,4 +43,6 @@ __all__ = [
     "ClassifyLetterBox",
     "CenterCrop",
     "ToTensor",
+    "classify_transforms",
+    "classify_augmentations",
 ]
