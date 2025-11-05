@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 from machine_learning.utils import load_cfg
-from machine_learning.dataset import YoloMultiModalDataset
-from machine_learning.dataset.parsers import VedaiParser, FlirAlignedParser, MinistParser
+from machine_learning.data.dataset import YoloMultiModalDataset
+from machine_learning.data.dataset.parsers import VedaiParser, FlirAlignedParser, MinistParser
 from machine_learning.utils.img import plot_imgs
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 
