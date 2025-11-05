@@ -16,10 +16,12 @@ from .transforms import (
     LetterBox,
     Albumentations,
     Format,
-    v8_transforms,
     ClassifyLetterBox,
     CenterCrop,
     ToTensor,
+    v8_transforms,
+    classify_transforms,
+    classify_augmentations,
 )
 
 

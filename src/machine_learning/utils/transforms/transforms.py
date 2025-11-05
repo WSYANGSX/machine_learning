@@ -10,7 +10,7 @@ from PIL import Image
 from copy import deepcopy
 from typing import Tuple
 
-from .base import TransformBase, MixTransformBase
+from .base import TransformBase, MixTransformBase, Compose
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.checks import check_version
@@ -1810,6 +1810,7 @@ class RandomLoadText:
         return sample
 
 
+# Yolov8 augmentations -------------------------------------------------------------------------------------------------
 def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """
     Applies a series of image transformations for training.
@@ -1877,7 +1878,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
     )  # transforms
 
 
-# multimodal augmentations ---------------------------------------------------------------------------------------------
+# Multimodal augmentations ---------------------------------------------------------------------------------------------
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------
