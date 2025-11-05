@@ -260,9 +260,6 @@ class AlgorithmBase(ABC):
         self._train_dataset = build_dataset(type, self.flatten_cfg, trian_parsing, self.batch_size, "train")
         self._val_dataset = build_dataset(type, self.flatten_cfg, val_parsing, self.batch_size, "val")
 
-        if isinstance(self._train_dataset, MultiModalDatasetBase):
-            LOGGER.info(f"Modal names of datasets: {self._train_dataset.modal_names}")
-
     def _init_eval_dataset(self, dataset: str | Mapping[str, Any]) -> None:
         """Initialize the test dataset of the algorithm."""
         type, _, val_parsing, test_parsing = self.parse_dataset(dataset)
@@ -273,9 +270,6 @@ class AlgorithmBase(ABC):
             self._test_dataset = build_dataset(type, self.flatten_cfg, test_parsing, self.batch_size, "test")
         else:
             self._test_dataset = build_dataset(type, self.flatten_cfg, val_parsing, self.batch_size, "test")
-
-        if isinstance(self._test_dataset, MultiModalDatasetBase):
-            LOGGER.info(f"Modal names of datasets: {self._test_dataset.modal_names}")
 
     def _init_train_dataloaders(self) -> None:
         """Initialize train and val dataloaders."""

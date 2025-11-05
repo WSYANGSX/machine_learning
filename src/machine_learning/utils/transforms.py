@@ -1,4 +1,4 @@
-"""Data augmentation module
+"""Data transform and augmentation module
 
 Adapted from Ultralytics YOLO base dataset implementation.
 Source: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py.

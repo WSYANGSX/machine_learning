@@ -27,10 +27,16 @@ hyp = {
     "shear": 0.0,
 }
 
-dataset = YoloDataset(imgs=parsing["train"]["data"], labels=parsing["train"]["labels"], cache=None, fraction=1, hyp=hyp)
-label1 = dataset.get_data_and_label(1)
-label2 = dataset.get_data_and_label(2)
-label3 = dataset.get_data_and_label(3)
-label4 = dataset.get_data_and_label(4)
-label5 = dataset.get_data_and_label(5)
-print(label1["img"])
+dataset = YoloDataset(imgs=parsing["train"]["imgs"], labels=parsing["train"]["labels"], cache=None, fraction=1, hyp=hyp)
+label1 = dataset.get_sample(1)
+label2 = dataset.get_sample(2)
+label3 = dataset.get_sample(3)
+label4 = dataset.get_sample(4)
+label5 = dataset.get_sample(5)
+print(
+    label1["img"].shape,
+    label2["img"].shape,
+    label3["img"].shape,
+    label4["img"].shape,
+    label5["img"].shape,
+)

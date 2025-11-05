@@ -29,16 +29,24 @@ dataset = YoloMultiModalDataset(
     modals=data_cfg["modals"],
     rect=True,
 )
-print(dataset.modals)
-dataset.remove_item(100)
-dataset.remove_item(500)
-sample = dataset.get_sample(1)
-img = sample["img"]
-ir = sample["ir"]
-cls = sample["cls"]
-cls = np.array(cls, dtype=np.int32).reshape(
-    -1,
-)
-bbox = yolo2voc(sample["instances"].bboxes, img.shape[1], img.shape[0])
-print(sample["img_file"])
-visualize_img_bboxes(img=img, bboxes=bbox)
+
+# print(dataset.modals)
+# dataset.remove_item(100)
+# dataset.remove_item(500)
+# sample = dataset.get_sample(1)
+# img = sample["img"]
+# ir = sample["ir"]
+# print(img.shape, ir.shape)
+# cls = sample["cls"]
+# plot_imgs([img, ir])
+
+sample1 = dataset.get_sample(1)
+sample2 = dataset.get_sample(2)
+sample3 = dataset.get_sample(3)
+sample4 = dataset.get_sample(4)
+sample5 = dataset.get_sample(5)
+print(sample1["img"].shape, sample1["ir"].shape)
+print(sample2["img"].shape, sample2["ir"].shape)
+print(sample3["img"].shape, sample3["ir"].shape)
+print(sample4["img"].shape, sample4["ir"].shape)
+print(sample5["img"].shape, sample5["ir"].shape)

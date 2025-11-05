@@ -11,6 +11,7 @@ from PIL import Image
 from tqdm import tqdm
 from pathlib import Path
 from copy import deepcopy
+from itertools import chain
 from multiprocessing.pool import ThreadPool
 
 from machine_learning.utils.logger import LOGGER
@@ -115,7 +116,7 @@ class YoloDataset(DatasetBase):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
-        task: Literal["detect", "pose", "segment"] = "detect",
+        task: Literal["detect", "pose", "segment", "obb"] = "detect",
         mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize BaseDataset with given configuration and options."""
@@ -210,13 +211,20 @@ class YoloDataset(DatasetBase):
 
     def update_labels(self, include_class: Optional[list]):
         """Update labels to include only these classes (optional)."""
-        include_class_array = np.array(include_class).reshape(1, -1)
+        if include_class is None and not self.single_cls:
+            return
+
+        include_class_array = None
+        if include_class is not None:
+            include_class_array = np.array(include_class).reshape(1, -1)
+
         for i in range(len(self.labels)):
-            if include_class is not None:
+            if include_class_array is not None:
                 cls = self.labels[i]["cls"]
                 bboxes = self.labels[i]["bboxes"]
                 segments = self.labels[i]["segments"]
                 keypoints = self.labels[i]["keypoints"]
+
                 j = (cls == include_class_array).any(1)
                 self.labels[i]["cls"] = cls[j]
                 self.labels[i]["bboxes"] = bboxes[j]
@@ -224,6 +232,7 @@ class YoloDataset(DatasetBase):
                     self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
                 if keypoints is not None:
                     self.labels[i]["keypoints"] = keypoints[j]
+
             if self.single_cls:
                 self.labels[i]["cls"][:, 0] = 0
 
@@ -570,7 +579,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         fraction: float = 1.0,
         modals: list[str] | None = None,
         dropout: bool = False,
-        task: Literal["detect", "pose", "segment"] = "detect",
+        task: Literal["detect", "pose", "segment", "obb"] = "detect",
         mode: Literal["train", "val", "test"] = "train",
     ):
         """Initialize MultimodalDataset with given configuration and options."""
@@ -655,25 +664,24 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
             # In normal mode: return None if ANY data file is inaccessible
             corrupt = any(not access for access in data_accesses)
 
-        # verify data shape and access
-        shape = set(shapes)
-        if len(shape) != 1:
-            self.num_skip += 1
-            LOGGER.info(f"Multispectral images mismatch in size, skip index {i}.")
-            return None, None, None, None, None
-        shape = next(iter(shape))
-
         if corrupt:
             self.num_corrupt += 1
             LOGGER.info(f"Ignoring corrupt data index {i}.")
-            return None, None, None, None, None
+            return None
+
+        # verify data shape and access
+        if len(set(shapes)) != 1 or len(shapes) == 0:
+            self.num_skip += 1
+            LOGGER.info(f"Multispectral images mismatch in size, skip index {i}.")
+            return None
+        shape = shapes[0]
 
         # Read labels
         res = self.verify_label(i)
         if res is not None:
             return files, shape, *res
         else:
-            return None, None, None, None, None
+            return None
 
     def verify_data(self, i: int) -> tuple[list, list, dict]:
         """Verify data"""
@@ -697,10 +705,10 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
     def verify_label(self, i: int) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         """Verify labels"""
-        segments, keypoints = [], None
 
         # Labels with list format
         if isinstance(self.label_files, list):
+            segments, keypoints = [], None
             lb_file = self.label_files[i]
             try:
                 if os.path.isfile(lb_file):
@@ -768,6 +776,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
             lb_ls, segments_ls, keypoints_ls = [], [], []
 
             for name in self.label_files:
+                segs, kpts = [], None
                 lb_file = self.label_files[name][i]
                 try:
                     if os.path.isfile(lb_file):
@@ -776,38 +785,38 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                             lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
                             if any(len(x) > 6 for x in lb) and (not self.use_keypoints):  # is segment
                                 classes = np.array([x[0] for x in lb], dtype=np.float32)
-                                segments = [
+                                segs = [
                                     np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb
                                 ]  # (cls, xy1, xy2, ...)
-                                lb = np.concatenate(
-                                    (classes.reshape(-1, 1), segments2boxes(segments)), 1
-                                )  # (cls, xywh)
+                                lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segs)), 1)  # (cls, xywh)
                             lb = np.array(lb, dtype=np.float32)
                         if nl := len(lb):
                             if self.use_keypoints:
                                 assert lb.shape[1] == (5 + self.nkpt * self.kpt_dim), (
-                                    f"Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
+                                    f"{lb_file}: Labels require {(5 + self.nkpt * self.kpt_dim)} columns each."
                                 )
                                 points = lb[:, 5:].reshape(-1, self.kpt_dim)[:, :2]
                             else:
-                                assert lb.shape[1] == 5, f"Labels require 5 columns, {lb.shape[1]} columns detected."
+                                assert lb.shape[1] == 5, (
+                                    f"{lb_file}: Labels require 5 columns, {lb.shape[1]} columns detected."
+                                )
                                 points = lb[:, 1:]
                             assert points.max() <= 1, (
-                                f"Non-normalized or out of bounds coordinates {points[points > 1]}."
+                                f"{lb_file}: Non-normalized or out of bounds coordinates {points[points > 1]}."
                             )
-                            assert lb.min() >= 0, f"Negative label values {lb[lb < 0]}."
+                            assert lb.min() >= 0, f"{lb_file}: Negative label values {lb[lb < 0]}."
 
                             # All labels
                             max_cls = lb[:, 0].max()  # max label count
                             assert max_cls <= self.nc, (
-                                f"Label class {int(max_cls)} exceeds dataset class count {self.nc}."
+                                f"{lb_file}: Label class {int(max_cls)} exceeds dataset class count {self.nc}."
                                 f"Possible class labels are 0-{self.nc - 1}."
                             )
                             _, i = np.unique(lb, axis=0, return_index=True)
                             if len(i) < nl:  # duplicate row check
                                 lb = lb[i]  # remove duplicates
-                                if segments:
-                                    segments = [segments[x] for x in i]
+                                if len(segs) > 0:
+                                    segs = [segs[x] for x in i]
                                 LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
                         else:
                             lb_empty.append(True)  # label empty
@@ -820,77 +829,121 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                             (0, (5 + self.nkpt * self.kpt_dim) if self.use_keypoints else 5), dtype=np.float32
                         )
                     if self.use_keypoints:
-                        keypoints = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
+                        kpts = lb[:, 5:].reshape(-1, self.nkpt, self.kpt_dim)
                         if self.kpt_dim == 2:
-                            kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(
-                                np.float32
-                            )
-                            keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
-                    lb = lb[:, :5]
+                            kpt_mask = np.where((kpts[..., 0] < 0) | (kpts[..., 1] < 0), 0.0, 1.0).astype(np.float32)
+                            kpts = np.concatenate([kpts, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
 
-                    lb_ls.append(lb), segments_ls.append(segments), keypoints_ls.append(keypoints)
+                    lb = lb[:, :5]
+                    lb_ls.append(lb), segments_ls.append(segs)
+                    if kpts is not None:
+                        keypoints_ls.append(kpts)
 
                 except Exception:
+                    LOGGER.warning(f"{lb_file}: Ignoring corrupted label in multi-labels.")
                     lb_corrupt.append(True)
 
             if self.dropout:
                 if all(lb_corrupt):
                     self.num_corrupt += 1
-                    LOGGER.info(f"Ignoring corrupt label index {i}.")
+                    LOGGER.info(f"Ignoring corrupt multi-labels with index '{i}'.")
                     return None
                 else:
                     self.num_found += 1 if any(lb_found) else 0
                     self.num_empty += 1 if all(lb_empty) else 0
                     self.num_missing += 1 if all(lb_missing) else 0
 
-                    return (
-                        np.concatenate(lb_ls, axis=0),
-                        np.concatenate(segments_ls, axis=0),
-                        np.concatenate(keypoints_ls, axis=0),
-                    )
+                    lb = np.concatenate(lb_ls, axis=0)
+                    segments = list(chain(*segments_ls))
+                    keypoints = np.concatenate(keypoints_ls, axis=0) if len(keypoints_ls) > 0 else None
+
+                    lb_unique, unique_idx = np.unique(lb, axis=0, return_index=True)
+                    if len(unique_idx) < len(lb):  # duplicate row check
+                        lb = lb_unique  # remove duplicates
+                        if len(segments) > 0:
+                            segments = [segments[j] for j in unique_idx]
+                        if keypoints is not None and len(keypoints) > 0:
+                            keypoints = keypoints[unique_idx]
+                        LOGGER.warning("Duplicate labels removed in multi-labels.")
+
+                    return lb, segments, keypoints
+
             else:
                 if any(lb_corrupt):
                     self.num_corrupt += 1
-                    LOGGER.info(f"Ignoring corrupt label at {lb_file}.")
+                    LOGGER.info(f"Ignoring corrupt multi-labels with index '{i}'.")
                     return None
                 else:
                     self.num_found += 1 if all(lb_found) else 0
                     self.num_empty += 1 if all(lb_empty) else 0
                     self.num_missing += 1 if all(lb_missing) else 0
 
-                    return (
-                        np.unique(np.concatenate(lb_ls, axis=0), axis=0),
-                        np.unique(np.concatenate(segments_ls, axis=0), axis=0),
-                        np.unique(np.concatenate(keypoints_ls, axis=0), axis=0),
-                    )
+                    lb = np.concatenate(lb_ls, axis=0)
+                    segments = list(chain(*segments_ls))
+                    keypoints = np.concatenate(keypoints_ls, axis=0) if len(keypoints_ls) > 0 else None
 
-    def label_format(self, label: tuple) -> dict[str, Any] | None:
-        file_dict, shape, lb, segments, keypoint = label
-        if file_dict is not None:
-            file_dict.update(
-                {
-                    "shape": shape,
-                    "cls": lb[:, 0:1],  # n, 1
-                    "bboxes": lb[:, 1:],  # n, 4
-                    "segments": segments,
-                    "keypoints": keypoint,
-                    "normalized": True,
-                    "bbox_format": "xywh",
-                }
-            )
-            return file_dict
-        else:
+                    lb_unique, unique_idx = np.unique(lb, axis=0, return_index=True)
+                    if len(unique_idx) < len(lb):  # duplicate row check
+                        lb = lb_unique  # remove duplicates
+                        if len(segments) > 0:
+                            segments = [segments[j] for j in unique_idx]
+                        if keypoints is not None and len(keypoints) > 0:
+                            keypoints = keypoints[unique_idx]
+                        LOGGER.warning("Duplicate labels removed in multi-labels.")
+
+                    return lb, segments, keypoints
+
+    def label_format(self, label: tuple | None) -> dict[str, Any] | None:
+        """Custom multimodal yolo label format.
+
+        Example:
+            {
+                # data file paths
+                "< modal_1 >_file": "/home/yangxf/...",    # modal_n is the modal name in self.modals
+                "< modal_2 >_file": "/home/yangxf/...",
+                ...
+                "shape": (640, 512),
+                "cls": np.array([[0], [1], [25], ...]),
+                "bboxes": ...,
+                "segments": ...,
+                "keypoints": ...,
+                "normalized": True,
+                "bbox_format": "xywh",
+            }
+        """
+        if label is None:
             return None
 
-    def update_labels(self, include_class: Optional[list]):
+        file_dict, shape, lb, segments, keypoint = label
+        file_dict.update(
+            {
+                "shape": shape,
+                "cls": lb[:, 0:1],  # n, 1
+                "bboxes": lb[:, 1:],  # n, 4
+                "segments": segments,
+                "keypoints": keypoint,
+                "normalized": True,
+                "bbox_format": "xywh",
+            }
+        )
+        return file_dict
+
+    def update_labels(self, include_class: Optional[list]) -> None:
         """Update labels to include only these classes (optional)."""
-        include_class_array = np.array(include_class).reshape(1, -1)
+        if include_class is None and not self.single_cls:
+            return
+
+        include_class_array = None
+        if include_class is not None:
+            include_class_array = np.array(include_class).reshape(1, -1)
+
         for i in range(len(self.labels)):
-            if include_class is not None:
+            if include_class_array is not None:
                 cls = self.labels[i]["cls"]
                 bboxes = self.labels[i]["bboxes"]
                 segments = self.labels[i]["segments"]
                 keypoints = self.labels[i]["keypoints"]
+
                 j = (cls == include_class_array).any(1)
                 self.labels[i]["cls"] = cls[j]
                 self.labels[i]["bboxes"] = bboxes[j]
@@ -898,6 +951,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                     self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
                 if keypoints is not None:
                     self.labels[i]["keypoints"] = keypoints[j]
+
             if self.single_cls:
                 self.labels[i]["cls"][:, 0] = 0
 
