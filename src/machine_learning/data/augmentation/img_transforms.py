@@ -88,7 +88,7 @@ class ImgTransformBase(TransformBase):
         This method is intended to be overridden by subclasses to implement specific image transformation
         logic. In its base form, it returns the input sample unchanged.
         """
-        raise NotImplementedError("The transform logic for image is not implemented.")
+        return image
 
     def apply_to_instances(self, instances: Instances, *args: Any, **params: Any) -> Instances:
         """
@@ -98,7 +98,7 @@ class ImgTransformBase(TransformBase):
         sample. It is designed to be overridden by subclasses to implement specific instance transformation
         logic.
         """
-        raise NotImplementedError("The transform logic for instances is not implemented.")
+        return instances
 
     def apply_to_masks(self, masks: np.ndarray, **params) -> np.ndarray:
         """
@@ -107,7 +107,7 @@ class ImgTransformBase(TransformBase):
         This method is intended to be overridden by subclasses to implement specific semantic segmentation
         transformations. In its base form, it does not perform any operations.
         """
-        raise NotImplementedError("The transform logic for masks is not implemented.")
+        return masks
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         """Apply data augmentation to sample with parameters."""
@@ -128,7 +128,11 @@ class ImgTransformBase(TransformBase):
             else:
                 res[key] = val
 
-        return res
+        return self.update_sample(res, **params)
+
+    def update_sample(self, sample: dict[str, Any], **params: Any) -> dict[str, Any]:
+        """Update the logic for annotations in sample, to be implemented by subclasses."""
+        return sample
 
 
 class MixTransformBase(ImgTransformBase):
@@ -139,7 +143,12 @@ class MixTransformBase(ImgTransformBase):
     probability-based application of transforms and manages the mixing of multiple images and labels.
     """
 
-    def __init__(self, dataset, p=0.0, pre_transform=None) -> None:
+    def __init__(
+        self,
+        dataset: Dataset,
+        p: float = 0.0,
+        pre_transform: TransformBase | Compose = None,
+    ) -> None:
         """
         Initializes the ImgMixTransformBase object for mix transformations like MixUp and Mosaic.
 
@@ -280,9 +289,7 @@ class Mosaic(MixTransformBase):
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         assert sample.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
-
-        sample = super().apply_with_params(sample, params)
-        return self.cat_samples(sample, **params)
+        return super().apply_with_params(sample, params)
 
     def apply_to_image(
         self,
@@ -355,7 +362,8 @@ class Mosaic(MixTransformBase):
 
                 img9[y1:y2, x1:x2] = img[y1 - padh :, x1 - padw :]
 
-            return img9
+            # Labels assuming imgsz*2 mosaic size
+            return img9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
 
     def apply_to_instances(
         self,
@@ -428,7 +436,7 @@ class Mosaic(MixTransformBase):
 
                 instances.convert_bbox(format="xyxy")
                 instances.denormalize(w, h)
-                instances.add_padding(padw, padh)
+                instances.add_padding(padw + self.border[0], padh + self.border[1])
                 mosaic_instances.append(instances)
 
         return Instances.concatenate(mosaic_instances, axis=0)
@@ -441,14 +449,14 @@ class Mosaic(MixTransformBase):
     ) -> np.ndarray:
         return self.apply_to_image(masks, mix_samples, "masks", **params)
 
-    def cat_samples(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
+    def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
         """
         Concatenates and processes annotations in mixed samples for mosaic augmentation.
 
         This method combines annotations from multiple images used in mosaic augmentation, clips instances to the
         mosaic border, and removes zero-area boxes.
         """
-        imgsz = self.imgsz * 2 if self.n == 4 else self.imgsz * 3  # mosaic imgsz
+        imgsz = self.imgsz * 2  # mosaic imgsz
 
         cls = [sample["cls"]]
         for ms in mix_samples:
@@ -482,7 +490,12 @@ class MixUp(MixTransformBase):
         p (float): Probability of applying MixUp augmentation.
     """
 
-    def __init__(self, dataset, p=0.0, pre_transform=None) -> None:
+    def __init__(
+        self,
+        dataset: Dataset,
+        p: float = 0.0,
+        pre_transform: TransformBase | Compose = None,
+    ) -> None:
         """
         Initializes the MixUp augmentation object.
 
@@ -514,21 +527,19 @@ class MixUp(MixTransformBase):
         params.update({"ratio": ratio})
         return params
 
-    def apply_to_image(self, image, mix_samples, image_category=None, **params):
+    def apply_to_image(
+        self, image: np.ndarray, mix_samples: dict[str, Any], image_category: str | None = None, **params
+    ) -> np.ndarray:
         ratio = params["ratio"]
         return (image * ratio + mix_samples[0][image_category] * (1 - ratio)).astype(np.uint8)
 
-    def apply_to_instances(self, instances, mix_samples, **params):
+    def apply_to_instances(self, instances: Instances, mix_samples: dict[str, Any], **params) -> Instances:
         return Instances.concatenate([instances, mix_samples[0]["instances"]], axis=0)
 
-    def apply_to_masks(self, masks, mix_samples, **params):
+    def apply_to_masks(self, masks: np.ndarray, mix_samples: dict[str, Any], **params) -> np.ndarray:
         return super().apply_to_masks(masks, mix_samples, **params)
 
-    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample = super().apply_with_params(sample, params)
-        return self.cat_samples(sample, **params)
-
-    def cat_samples(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
+    def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
         sample["cls"] = np.concatenate([sample["cls"], mix_samples[0]["cls"]], 0)
         return sample
 
@@ -553,13 +564,13 @@ class RandomPerspective(ImgTransformBase):
 
     def __init__(
         self,
-        degrees=0.0,
-        translate=0.1,
-        scale=0.5,
-        shear=0.0,
-        perspective=0.0,
-        border=(0, 0),
-        pre_transform=None,
+        degrees: float = 0.0,
+        translate: float = 0.1,
+        scale: float = 0.5,
+        shear: float = 0.0,
+        perspective: float = 0.0,
+        border: tuple[int, int] = (0, 0),
+        pre_transform: TransformBase | Compose = None,
     ):
         """
         Initializes RandomPerspective object with transformation parameters.
@@ -586,30 +597,13 @@ class RandomPerspective(ImgTransformBase):
         self.border = border  # mosaic border
         self.pre_transform = pre_transform
 
-    def affine_transform(self, img, border):
-        """
-        Applies a sequence of affine transformations centered around the image center.
+    def get_params_on_data(self, params: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
+        img = sample["img"]
 
-        This function performs a series of geometric transformations on the input image, including
-        translation, perspective change, rotation, scaling, and shearing. The transformations are
-        applied in a specific order to maintain consistency.
+        # border
+        border = sample.pop("mosaic_border", self.border)
+        size = (img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2)  # w, h
 
-        Args:
-            img (np.ndarray): Input image to be transformed.
-            border (Tuple[int, int]): Border dimensions for the transformed image.
-
-        Returns:
-            (Tuple[np.ndarray, np.ndarray, float]): A tuple containing:
-                - np.ndarray: Transformed image.
-                - np.ndarray: 3x3 transformation matrix.
-                - float: Scale factor applied during the transformation.
-
-        Examples:
-            >>> import numpy as np
-            >>> img = np.random.rand(100, 100, 3)
-            >>> border = (10, 10)
-            >>> transformed_img, matrix, scale = affine_transform(img, border)
-        """
         # Center
         C = np.eye(3, dtype=np.float32)
 
@@ -641,33 +635,72 @@ class RandomPerspective(ImgTransformBase):
 
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
-        # Affine image
+
+        return {
+            "transform_matrix": M,
+            "scale": s,
+            "border": border,
+            "size": size,
+            "hw": img.shape[:2],
+            "origin_instances": sample["instances"],
+        }
+
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        if self.pre_transform and "mosaic_border" not in sample:
+            sample = self.pre_transform(sample)
+        sample.pop("ratio_pad", None)  # do not need ratio pad
+
+        return super().apply_with_params(sample, params)
+
+    def apply_to_image(self, image: np.ndarray, image_category: str | None = None, *args, **params) -> np.ndarray:
+        """
+        Applies a sequence of affine transformations centered around the image center.
+        """
+        M = params["transform_matrix"]
+        border = params["border"]
+        size = params["size"]  # (W,H)
+
         if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
             if self.perspective:
-                img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(114, 114, 114))
+                img = cv2.warpPerspective(image, M, dsize=size, borderValue=(114, 114, 114))
             else:  # affine
-                img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(114, 114, 114))
-        return img, M, s
+                img = cv2.warpAffine(image, M[:2], dsize=size, borderValue=(114, 114, 114))
 
-    def apply_bboxes(self, bboxes, M):
+        return img
+
+    def apply_to_instances(self, instances: Instances, *args, **params) -> Instances:
+        M = params["transform_matrix"]
+        size = params["size"]  # (W, H)
+        h, w = params["hw"]  # origin img (h,w)
+
+        # Make sure the coord formats are right
+        instances.convert_bbox(format="xyxy")
+        instances.denormalize(w, h)
+
+        # bboxes
+        bboxes = self._apply_bboxes(instances.bboxes, M)
+
+        # segments
+        segments = instances.segments
+        if len(segments):
+            bboxes, segments = self._apply_segments(segments, M)
+
+        # keypoints
+        keypoints = instances.keypoints
+        if keypoints is not None:
+            keypoints = self._apply_keypoints(keypoints, M)
+
+        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
+        new_instances.clip(*size)  # clip
+
+        return new_instances
+
+    def apply_to_masks(self, masks: np.ndarray, **params) -> np.ndarray:
+        return self.apply_to_image(masks, **params)
+
+    def _apply_bboxes(self, bboxes: np.ndarray, M: np.ndarray) -> np.ndarray:
         """
         Apply affine transformation to bounding boxes.
-
-        This function applies an affine transformation to a set of bounding boxes using the provided
-        transformation matrix.
-
-        Args:
-            bboxes (torch.Tensor): Bounding boxes in xyxy format with shape (N, 4), where N is the number
-                of bounding boxes.
-            M (torch.Tensor): Affine transformation matrix with shape (3, 3).
-
-        Returns:
-            (torch.Tensor): Transformed bounding boxes in xyxy format with shape (N, 4).
-
-        Examples:
-            >>> bboxes = torch.tensor([[10, 10, 20, 20], [30, 30, 40, 40]])
-            >>> M = torch.eye(3)
-            >>> transformed_bboxes = apply_bboxes(bboxes, M)
         """
         n = len(bboxes)
         if n == 0:
@@ -683,27 +716,9 @@ class RandomPerspective(ImgTransformBase):
         y = xy[:, [1, 3, 5, 7]]
         return np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1)), dtype=bboxes.dtype).reshape(4, n).T
 
-    def apply_segments(self, segments, M):
+    def _apply_segments(self, segments: np.ndarray, M: np.ndarray) -> np.ndarray:
         """
         Apply affine transformations to segments and generate new bounding boxes.
-
-        This function applies affine transformations to input segments and generates new bounding boxes based on
-        the transformed segments. It clips the transformed segments to fit within the new bounding boxes.
-
-        Args:
-            segments (np.ndarray): Input segments with shape (N, M, 2), where N is the number of segments and M is the
-                number of points in each segment.
-            M (np.ndarray): Affine transformation matrix with shape (3, 3).
-
-        Returns:
-            (Tuple[np.ndarray, np.ndarray]): A tuple containing:
-                - New bounding boxes with shape (N, 4) in xyxy format.
-                - Transformed and clipped segments with shape (N, M, 2).
-
-        Examples:
-            >>> segments = np.random.rand(10, 500, 2)  # 10 segments with 500 points each
-            >>> M = np.eye(3)  # Identity transformation matrix
-            >>> new_bboxes, new_segments = apply_segments(segments, M)
         """
         n, num = segments.shape[:2]
         if n == 0:
@@ -720,27 +735,9 @@ class RandomPerspective(ImgTransformBase):
         segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])
         return bboxes, segments
 
-    def apply_keypoints(self, keypoints, M):
+    def _apply_keypoints(self, keypoints: np.ndarray, M: np.ndarray) -> np.ndarray:
         """
         Applies affine transformation to keypoints.
-
-        This method transforms the input keypoints using the provided affine transformation matrix. It handles
-        perspective rescaling if necessary and updates the visibility of keypoints that fall outside the image
-        boundaries after transformation.
-
-        Args:
-            keypoints (np.ndarray): Array of keypoints with shape (N, 17, 3), where N is the number of instances,
-                17 is the number of keypoints per instance, and 3 represents (x, y, visibility).
-            M (np.ndarray): 3x3 affine transformation matrix.
-
-        Returns:
-            (np.ndarray): Transformed keypoints array with the same shape as input (N, 17, 3).
-
-        Examples:
-            >>> random_perspective = RandomPerspective()
-            >>> keypoints = np.random.rand(5, 17, 3)  # 5 instances, 17 keypoints each
-            >>> M = np.eye(3)  # Identity transformation
-            >>> transformed_keypoints = random_perspective.apply_keypoints(keypoints, M)
         """
         n, nkpt = keypoints.shape[:2]
         if n == 0:
@@ -754,117 +751,43 @@ class RandomPerspective(ImgTransformBase):
         visible[out_mask] = 0
         return np.concatenate([xy, visible], axis=-1).reshape(n, nkpt, 3)
 
-    def __call__(self, sample):
+    def update_sample(self, sample: dict[str, Any], **params) -> dict[str, Any]:
         """
         Applies random perspective and affine transformations to an image and its associated annotations.
-
-        This method performs a series of transformations including rotation, translation, scaling, shearing,
-        and perspective distortion on the input image and adjusts the corresponding bounding boxes, segments,
-        and keypoints accordingly.
-
-        Args:
-            sample (Dict): A dictionary containing image data and annotations.
-                Must include:
-                    'img' (ndarray): The input image.
-                    'cls' (ndarray): Class labels.
-                    'instances' (Instances): Object instances with bounding boxes, segments, and keypoints.
-                May include:
-                    'mosaic_border' (Tuple[int, int]): Border size for mosaic augmentation.
-
-        Returns:
-            (Dict): Transformed sample dictionary containing:
-                - 'img' (np.ndarray): The transformed image.
-                - 'cls' (np.ndarray): Updated class labels.
-                - 'instances' (Instances): Updated object instances.
-                - 'resized_shape' (Tuple[int, int]): New image shape after transformation.
-
-        Examples:
-            >>> transform = RandomPerspective()
-            >>> image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
-            >>> sample = {
-            ...     "img": image,
-            ...     "cls": np.array([0, 1, 2]),
-            ...     "instances": Instances(bboxes=np.array([[10, 10, 50, 50], [100, 100, 150, 150]])),
-            ... }
-            >>> result = transform(sampe)
-            >>> assert result["img"].shape[:2] == result["resized_shape"]
         """
-        if self.pre_transform and "mosaic_border" not in sample:
-            sample = self.pre_transform(sample)
-        sample.pop("ratio_pad", None)  # do not need ratio pad
-
-        img = sample["img"]
-        cls = sample["cls"]
-        instances = sample.pop("instances")
-        # Make sure the coord formats are right
-        instances.convert_bbox(format="xyxy")
-        instances.denormalize(*img.shape[:2][::-1])
-
-        border = sample.pop("mosaic_border", self.border)
-        self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
-        # M is affine matrix
-        # Scale for func:`box_candidates`
-        img, M, scale = self.affine_transform(img, border)
-
-        bboxes = self.apply_bboxes(instances.bboxes, M)
-
-        segments = instances.segments
-        keypoints = instances.keypoints
-        # Update bboxes if there are segments.
-        if len(segments):
-            bboxes, segments = self.apply_segments(segments, M)
-
-        if keypoints is not None:
-            keypoints = self.apply_keypoints(keypoints, M)
-        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
-        # Clip
-        new_instances.clip(*self.size)
+        scale = params["scale"]
+        origin_instances = params["origin_instances"]
+        new_instances = sample["instances"]
 
         # Filter instances
-        instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
+        origin_instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
         # Make the bboxes have the same scale with new_bboxes
-        i = self.box_candidates(
-            box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
+        keep = self.box_candidates(
+            box1=origin_instances.bboxes.T,
+            box2=new_instances.bboxes.T,
+            area_thr=0.01 if len(new_instances.segments) else 0.10,
         )
-        sample["instances"] = new_instances[i]
-        sample["cls"] = cls[i]
-        sample["img"] = img
-        sample["resized_shape"] = img.shape[:2]
+
+        sample["instances"] = new_instances[keep]
+        sample["cls"] = sample["cls"][keep]
+        sample["resized_shape"] = sample["img"].shape[:2]
         return sample
 
     @staticmethod
-    def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):
+    def box_candidates(
+        box1: np.ndarray,
+        box2: np.ndarray,
+        wh_thr: float = 2,
+        ar_thr: float = 100,
+        area_thr: float = 0.1,
+        eps: float = 1e-16,
+    ):
         """
         Compute candidate boxes for further processing based on size and aspect ratio criteria.
 
         This method compares boxes before and after augmentation to determine if they meet specified
         thresholds for width, height, aspect ratio, and area. It's used to filter out boxes that have
         been overly distorted or reduced by the augmentation process.
-
-        Args:
-            box1 (numpy.ndarray): Original boxes before augmentation, shape (4, N) where n is the
-                number of boxes. Format is [x1, y1, x2, y2] in absolute coordinates.
-            box2 (numpy.ndarray): Augmented boxes after transformation, shape (4, N). Format is
-                [x1, y1, x2, y2] in absolute coordinates.
-            wh_thr (float): Width and height threshold in pixels. Boxes smaller than this in either
-                dimension are rejected.
-            ar_thr (float): Aspect ratio threshold. Boxes with an aspect ratio greater than this
-                value are rejected.
-            area_thr (float): Area ratio threshold. Boxes with an area ratio (new/old) less than
-                this value are rejected.
-            eps (float): Small epsilon value to prevent division by zero.
-
-        Returns:
-            (numpy.ndarray): Boolean array of shape (n) indicating which boxes are candidates.
-                True values correspond to boxes that meet all criteria.
-
-        Examples:
-            >>> random_perspective = RandomPerspective()
-            >>> box1 = np.array([[0, 0, 100, 100], [0, 0, 50, 50]]).T
-            >>> box2 = np.array([[10, 10, 90, 90], [5, 5, 45, 45]]).T
-            >>> candidates = random_perspective.box_candidates(box1, box2)
-            >>> print(candidates)
-            [True True]
         """
         w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
         w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
@@ -872,7 +795,7 @@ class RandomPerspective(ImgTransformBase):
         return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
 
-class RandomHSV:
+class RandomHSV(ImgTransformBase):
     """
     Randomly adjusts the Hue, Saturation, and Value (HSV) channels of an image.
 
@@ -882,21 +805,9 @@ class RandomHSV:
         hgain (float): Maximum variation for hue. Range is typically [0, 1].
         sgain (float): Maximum variation for saturation. Range is typically [0, 1].
         vgain (float): Maximum variation for value. Range is typically [0, 1].
-
-    Methods:
-        __call__: Applies random HSV augmentation to an image.
-
-    Examples:
-        >>> import numpy as np
-        >>> from ultralytics.data.augment import RandomHSV
-        >>> augmenter = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
-        >>> image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-        >>> sample = {"img": image}
-        >>> augmented_sample = augmenter(sample)
-        >>> augmented_image = augmented_sample["img"]
     """
 
-    def __init__(self, hgain=0.5, sgain=0.5, vgain=0.5) -> None:
+    def __init__(self, hgain: float = 0.5, sgain: float = 0.5, vgain: float = 0.5) -> None:
         """
         Initializes the RandomHSV object for random HSV (Hue, Saturation, Value) augmentation.
 
@@ -906,50 +817,42 @@ class RandomHSV:
             hgain (float): Maximum variation for hue. Should be in the range [0, 1].
             sgain (float): Maximum variation for saturation. Should be in the range [0, 1].
             vgain (float): Maximum variation for value. Should be in the range [0, 1].
-
-        Examples:
-            >>> hsv_aug = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
-            >>> hsv_aug(image)
         """
+        super().__init__()
         self.hgain = hgain
         self.sgain = sgain
         self.vgain = vgain
 
-    def __call__(self, sample):
-        """
-        Applies random HSV augmentation to an image within predefined limits.
+    def get_params(self):
+        gains = np.random.uniform(-1, 1, 3) * np.array([self.hgain, self.sgain, self.vgain]) + 1.0
+        return {"gains": gains}
 
-        This method modifies the input image by randomly adjusting its Hue, Saturation, and Value (HSV) channels.
-        The adjustments are made within the limits set by hgain, sgain, and vgain during initialization.
+    def apply_to_image(self, image: np.ndarray, image_category: str | None = None, *args, **params) -> np.ndarray:
+        if image_category not in ("img", "image"):
+            return image
 
-        Args:
-            sample (Dict): A dictionary containing image data and metadata. Must include an 'img' key with
-                the image as a numpy array.
+        h_gain, s_gain, v_gain = params["gains"]
+        if (self.hgain == 0) and (self.sgain == 0) and (self.vgain == 0):
+            return image
 
-        Returns:
-            (None): The function modifies the input 'sample' dictionary in-place, updating the 'img' key
-                with the HSV-augmented image.
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
 
-        Examples:
-            >>> hsv_augmenter = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
-            >>> sample = {"img": np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)}
-            >>> hsv_augmenter(sample)
-            >>> augmented_img = sample["img"]
-        """
-        img = sample["img"]
-        if self.hgain or self.sgain or self.vgain:
-            r = np.random.uniform(-1, 1, 3) * [self.hgain, self.sgain, self.vgain] + 1  # random gains
-            hue, sat, val = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
-            dtype = img.dtype  # uint8
+        # Construct LUT
+        x = np.arange(256, dtype=np.uint8)
 
-            x = np.arange(0, 256, dtype=r.dtype)
-            lut_hue = ((x * r[0]) % 180).astype(dtype)
-            lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
-            lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
+        lut_h = ((x.astype(np.float32) * h_gain) % 180).astype(np.uint8)
+        lut_s = np.clip(x.astype(np.float32) * s_gain, 0, 255).astype(np.uint8)
+        lut_v = np.clip(x.astype(np.float32) * v_gain, 0, 255).astype(np.uint8)
 
-            im_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
-            cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR, dst=img)  # no return needed
-        return sample
+        h = cv2.LUT(h, lut_h)
+        s = cv2.LUT(s, lut_s)
+        v = cv2.LUT(v, lut_v)
+
+        hsv_aug = cv2.merge((h, s, v))
+        image = cv2.cvtColor(hsv_aug, cv2.COLOR_HSV2BGR)
+
+        return image
 
 
 class RandomFlip:
@@ -962,15 +865,6 @@ class RandomFlip:
         p (float): Probability of applying the flip. Must be between 0 and 1.
         direction (str): Direction of flip, either 'horizontal' or 'vertical'.
         flip_idx (array-like): Index mapping for flipping keypoints, if applicable.
-
-    Methods:
-        __call__: Applies the random flip transformation to an image and its annotations.
-
-    Examples:
-        >>> transform = RandomFlip(p=0.5, direction="horizontal")
-        >>> result = transform({"img": image, "instances": instances})
-        >>> flipped_image = result["img"]
-        >>> flipped_instances = result["instances"]
     """
 
     def __init__(self, p=0.5, direction="horizontal", flip_idx=None) -> None:
@@ -981,13 +875,6 @@ class RandomFlip:
             p (float): The probability of applying the flip. Must be between 0 and 1.
             direction (str): The direction to apply the flip. Must be 'horizontal' or 'vertical'.
             flip_idx (List[int] | None): Index mapping for flipping keypoints, if any.
-
-        Raises:
-            AssertionError: If direction is not 'horizontal' or 'vertical', or if p is not between 0 and 1.
-
-        Examples:
-            >>> flip = RandomFlip(p=0.5, direction="horizontal")
-            >>> flip_with_idx = RandomFlip(p=0.7, direction="vertical", flip_idx=[1, 0, 3, 2, 5, 4])
         """
         assert direction in {"horizontal", "vertical"}, f"Support direction `horizontal` or `vertical`, got {direction}"
         assert 0 <= p <= 1.0, f"The probability should be in range [0, 1], but got {p}."
