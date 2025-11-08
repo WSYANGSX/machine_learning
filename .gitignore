@@ -18,6 +18,3 @@ build/
 
 # 忽略训练模型
 checkpoints/
-
-# 忽略数据集文件夹
-data/

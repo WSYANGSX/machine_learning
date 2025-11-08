@@ -19,7 +19,7 @@ def set_seed(seed: int = 23) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
 
-    # Cudnn 设置（确保可重复性，但可能牺牲性能）
+    # Cudnn Settings (Ensure repeatability, but may sacrifice performance)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
