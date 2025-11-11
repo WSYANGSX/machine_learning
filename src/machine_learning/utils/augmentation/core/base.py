@@ -6,14 +6,14 @@ from abc import ABC, abstractmethod
 
 class TransformBase(ABC):
     """
-    Base class for all transforms in ML.
+    Base class for all transforms in augmentation.
 
     Args:
         p (float): The probability of applying this transform.
     """
 
-    _data_targets: tuple[str]  # targets that this transform can work on
-    _annotation_targets: tuple[str]
+    _targets: tuple[str]  # targets that this transform can work on
+    _annotation_targets: tuple[str]  # annotation targets that need to be update with targets
 
     def __init__(self, p: float = 1):
         self._p = p
@@ -55,8 +55,8 @@ class TransformBase(ABC):
 
     def set_keys(self) -> None:
         """Set _available_keys."""
-        if hasattr(self, "_data_targets") and len(self._data_targets) > 0:
-            self._available_keys.update(self._data_targets)
+        if hasattr(self, "_targets") and len(self._targets) > 0:
+            self._available_keys.update(self._targets)
         if hasattr(self, "_annotation_targets") and len(self._annotation_targets) > 0:
             self._available_keys.update(self._annotation_targets)
 
@@ -69,9 +69,9 @@ class TransformBase(ABC):
         """
         return {}
 
-    def get_params_on_data(self, params: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         """Returns parameters dependent on input sample."""
-        return params
+        return {}
 
     @abstractmethod
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -81,7 +81,7 @@ class TransformBase(ABC):
     def __call__(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Apply the transform to the input sample."""
         params = self.get_params()
-        params_dependent_on_data = self.get_params_on_data(params, sample)
+        params_dependent_on_data = self.get_params_on_sample(sample, params)
         params.update(params_dependent_on_data)
         self._params = params
 

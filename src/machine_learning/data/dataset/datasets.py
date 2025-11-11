@@ -18,8 +18,8 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
 from machine_learning.data.dataset.base import DatasetBase, MultiModalDatasetBase
-from machine_learning.data.augmentation import Compose
-from machine_learning.data.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
+from machine_learning.utils.augmentation import Compose
+from machine_learning.utils.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
 
 from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.ops import resample_segments
