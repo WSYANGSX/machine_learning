@@ -43,7 +43,7 @@ class TransformBase(TransformInterface):
     """
 
     _targets = ("img", "ir", "depth")
-    _annotation_targets = ("instances", "masks")
+    _annotation_targets = ("instances", "mask", "masks")
 
     def __init__(self, p: float = 1) -> None:
         """
@@ -68,6 +68,7 @@ class TransformBase(TransformInterface):
         targets.update(
             {
                 "instances": self.apply_to_instances,
+                "mask": self.apply_to_mask,
                 "masks": self.apply_to_masks,
             }
         )
@@ -101,19 +102,28 @@ class TransformBase(TransformInterface):
         """
         return instances
 
-    def apply_to_masks(self, masks: np.ndarray, **params: dict[str, Any]) -> np.ndarray:
+    def apply_to_mask(self, mask: np.ndarray, **params: dict[str, Any]) -> np.ndarray:
         """
-        Applies semantic masks transformations.
+        Applies semantic mask transformations.
 
-        All mask inputs are required to be either (H, W) for semantic segmentation or (N, H, W) for instance
-        segmentation. Any other format should be converted before transformation.
+        All mask inputs are required to be (H, W) for semantic segmentation.
 
         Args:
-            masks (np.ndarray): The masks used for segmentation tasks. Shape (H, W) for Semantic Segmentation and
-            (N, H, W) for Instance Segmentation.
+            mask (np.ndarray): The mask used for semantic segmentation tasks with shape (H, W).
             params (dict[str, Any]): Additional parameters for the transformation.
         """
-        return masks
+        return mask
+
+    def apply_to_masks(self, masks: np.ndarray, **params: dict[str, Any]) -> np.ndarray:
+        """
+        Applies instances masks transformations.
+
+        All mask inputs are required to be  (N, H, W) for instances egmentation.
+        Args:
+            masks (np.ndarray): The masks used for instances egmentation tasks with shape (N, H, W).
+            params (dict[str, Any]): Additional parameters for the transformation.
+        """
+        return np.stack([self.apply_to_mask(mask, **params) for mask in masks])
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         """Apply data augmentation to sample with parameters."""
@@ -151,7 +161,7 @@ class TransformBase(TransformInterface):
                 None,
             )
             if size is None:
-                raise ValueError("No valid target found in the sample to infer target size.")
+                raise ValueError("No valid target found in the sample to infer size.")
         return size
 
 
@@ -201,11 +211,11 @@ class MixTransformBase(TransformBase):
 
         return {"mix_samples": mix_samples}
 
-    def get_indexes(self) -> list[int]:
+    def get_indexes(self) -> int:
         """
-        Gets a list of shuffled indexes for mosaic augmentation.
+        Gets index for mix augmentation.
         """
-        raise NotImplementedError
+        return random.randint(0, len(self.dataset) - 1)
 
     def apply_to_target(
         self,
@@ -227,11 +237,19 @@ class MixTransformBase(TransformBase):
         """
         raise NotImplementedError
 
+    def apply_to_mask(
+        self, mask: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
+        """
+        Applies semantic segmentation transformations.
+        """
+        raise NotImplementedError
+
     def apply_to_masks(
         self, masks: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
     ) -> np.ndarray:
         """
-        Applies semantic segmentation transformations to the masks.
+        Applies instance segmentation transformations.
         """
         raise NotImplementedError
 
@@ -286,16 +304,7 @@ class Mosaic(MixTransformBase):
         return params
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = {}
-        sample_params["size0"] = self.get_target_size(sample)
-        mask_mode = sample.get("mask_mode")
-        if mask_mode is not None:
-            assert mask_mode in ("semantic", "instance"), (
-                f"Invaild mask mode in sample, expect 'semantic' or 'instance', but got {mask_mode}."
-            )
-            sample_params["mask_mode"] = mask_mode
-
-        return sample_params
+        return {"size0": self.get_target_size(sample)}
 
     def get_indexes(self):
         """
@@ -319,20 +328,21 @@ class Mosaic(MixTransformBase):
         category: str,
         mix_samples: list[dict[str, Any]],
         size0: tuple[int, int],
+        mosaic_center: tuple[int, int],
         **params: dict[str, Any],
     ) -> np.ndarray:
         # channel
-        c = 1 if target.ndim == 2 else target.shape[2]
+        ch = 1 if target.ndim == 2 else target.shape[2]
         # data type
-        pad_val = 0.0 if target.dtype.kind == "f" else 114 if category in ("img", "image", "rgb") else 0
+        pad_val = 0.0 if target.dtype.kind == "f" else 114 if category == "img" else 0
 
         # mosaic4
         if self.n == 4:
-            yc, xc = params["mosaic_center"]
-            if c == 1:
+            yc, xc = mosaic_center
+            if ch == 1:
                 target4 = np.full((self.imgsz * 2, self.imgsz * 2), pad_val, dtype=target.dtype)
             else:
-                target4 = np.full((self.imgsz * 2, self.imgsz * 2, c), pad_val, dtype=target.dtype)
+                target4 = np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
 
             for i in range(4):
                 # Load image
@@ -360,10 +370,10 @@ class Mosaic(MixTransformBase):
         # mosaic9
         elif self.n == 9:
             hp, wp = -1, -1  # height, width previous
-            if c == 1:
+            if ch == 1:
                 target9 = np.full((self.imgsz * 3, self.imgsz * 3), pad_val, dtype=target.dtype)
             else:
-                target9 = np.full((self.imgsz * 3, self.imgsz * 3, c), pad_val, dtype=target.dtype)
+                target9 = np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
 
             for i in range(9):
                 target = target if i == 0 else mix_samples[i - 1][category]
@@ -403,13 +413,14 @@ class Mosaic(MixTransformBase):
         instances: Instances,
         mix_samples: list[dict[str, Any]],
         size0: tuple[int, int],
+        mosaic_center: tuple[int, int],
         **params: dict[str, Any],
     ) -> Instances:
         mosaic_instances = []
 
         # mosaic4
         if self.n == 4:
-            yc, xc = params["mosaic_center"]  # mosaic center x, y
+            yc, xc = mosaic_center  # mosaic center x, y
             for i in range(4):
                 if i > 0:
                     instances = mix_samples[i - 1]["instances"]
@@ -475,183 +486,168 @@ class Mosaic(MixTransformBase):
 
         return Instances.concatenate(mosaic_instances, axis=0)
 
+    def apply_to_mask(
+        self,
+        mask: np.ndarray,
+        mix_samples: list[dict[str, Any]],
+        size0: tuple[int, int],
+        mosaic_center: tuple[int, int],
+        **params: dict[str, Any],
+    ) -> np.ndarray:
+        """
+        Applies semantic segmentation transformations.
+        """
+        if self.n == 4:
+            yc, xc = mosaic_center
+            hm = wm = self.imgsz * 2
+        else:
+            hm = wm = self.imgsz * 3
+
+        mosaic_mask = np.zeros((hm, wm), dtype=mask.dtype)
+
+        if self.n == 4:  # n = 4
+            for i in range(4):
+                mask = mask if i == 0 else mix_samples[i - 1].get("mask")
+                h, w = size0 if i == 0 else mask.shape[:2]
+
+                if i == 0:  # top-left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
+                elif i == 1:  # top-right
+                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
+                    x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+                elif i == 2:  # bottom-left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+                else:  # bottom-right
+                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
+                    x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+                mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1b:y2b, x1b:x2b]
+
+            return mosaic_mask
+
+        else:  # n = 9
+            hp, wp = -1, -1
+            for i in range(9):
+                mask = mask if i == 0 else mix_samples[i - 1].get("mask")
+                h, w = size0 if i == 0 else mask.shape[:2]
+
+                if i == 0:
+                    h0, w0 = h, w
+                    c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
+                elif i == 1:
+                    c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
+                elif i == 2:
+                    c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
+                elif i == 3:
+                    c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
+                elif i == 4:
+                    c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
+                elif i == 5:
+                    c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
+                elif i == 6:
+                    c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
+                elif i == 7:
+                    c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
+                else:
+                    c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
+
+                x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
+                padw, padh = c[:2]
+                hp, wp = h, w
+
+                mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1a - padh : y2a - padh, x1a - padw : x2a - padw]
+
+            return mosaic_mask[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
+
     def apply_to_masks(
         self,
         masks: np.ndarray,
         mix_samples: list[dict[str, Any]],
         size0: tuple[int, int],
-        mask_mode: str | None = None,
-        **params: dict[str, Any],
+        mosaic_center: tuple[int, int],
+        **params,
     ) -> np.ndarray:
-        """
-        Perform mosaic based on mask_mode:
-        - mask_mode == "semantic": Treat the masks of input/mixed samples as (H, W), and output (Hm, Wm).
-        - mask_mode == "instance": Treat the masks of input/mixed samples as (N, H, W), and output (N_total, Hm, Wm).
-
-        Note:
-        - If the entire sample originally has no masks, your pipeline will not call this function, so the case of
-        masks=None is not considered here.
-        - If you want to support "the current sample has no mask, but the mixed-in one has a mask", this function can
-        handle it as well.
-        """
-
-        if mask_mode is None:
-            raise ValueError("Please provide mask mode in sample from dataset if masks is existed.")
+        mosaic_masks = []
 
         if self.n == 4:
-            yc, xc = params["mosaic_center"]
+            yc, xc = mosaic_center
             hm = wm = self.imgsz * 2
-        else:
+
+            for i in range(4):
+                curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
+                if curr_masks.size == 0:  # empty
+                    continue
+
+                h, w = size0 if i == 0 else curr_masks.shape[1:3]
+                if i == 0:  # top left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
+                elif i == 1:  # top right
+                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
+                    x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+                elif i == 2:  # bottom left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+                else:  # i == 3, bottom right
+                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
+                    x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+                for k in range(curr_masks.shape[0]):
+                    big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
+                    big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1b:y2b, x1b:x2b]
+                    mosaic_masks.append(big_mask)
+
+            if len(mosaic_masks) == 0:
+                return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
+
+            return np.stack(mosaic_masks, axis=0)
+
+        elif self.n == 9:
             hm = wm = self.imgsz * 3
+            hp, wp = -1, -1  # height, width previous
 
-        # semantic segmentation
-        if mask_mode == "semantic":
-            big_sem = np.zeros((hm, wm), dtype=masks.dtype)
+            for i in range(9):
+                curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
+                if curr_masks.size == 0:
+                    continue
 
-            if self.n == 4:  # n = 4
-                for i in range(4):
-                    mask = masks if i == 0 else mix_samples[i - 1].get("masks")
-                    if mask is None:
-                        continue
+                h, w = size0 if i == 0 else curr_masks.shape[1:3]
 
-                    assert mask.ndim == 2, f"Unexpected mask shape {mask.shape} for mode {mask_mode}"
-                    h, w = size0 if i == 0 else mask.shape[:2]
+                if i == 0:  # center
+                    h0, w0 = h, w
+                    c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
+                elif i == 1:  # top
+                    c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
+                elif i == 2:  # top right
+                    c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
+                elif i == 3:  # right
+                    c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
+                elif i == 4:  # bottom right
+                    c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
+                elif i == 5:  # bottom
+                    c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
+                elif i == 6:  # bottom left
+                    c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
+                elif i == 7:  # left
+                    c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
+                else:  # i == 8, top left
+                    c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
 
-                    if i == 0:  # top-left
-                        x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
-                        x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
-                    elif i == 1:  # top-right
-                        x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
-                        x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-                    elif i == 2:  # bottom-left
-                        x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
-                        x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-                    else:  # bottom-right
-                        x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
-                        x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+                x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
+                padw, padh = c[:2]
+                hp, wp = h, w  # record
 
-                    big_sem[y1a:y2a, x1a:x2a] = mask[y1b:y2b, x1b:x2b]
+                for k in range(curr_masks.shape[0]):
+                    big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
+                    big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1a - padh : y2a - padh, x1a - padw : x2a - padw]
+                    mosaic_masks.append(big_mask)
 
-                return big_sem
+            if len(mosaic_masks) == 0:
+                return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
 
-            else:  # n = 9
-                hp, wp = -1, -1
-                for i in range(9):
-                    mask = masks if i == 0 else mix_samples[i - 1].get("masks")
-                    if mask is None:
-                        continue
-
-                    assert mask.ndim == 2, f"Unexpected mask shape {mask.shape} for mode {mask_mode}"
-                    h, w = size0 if i == 0 else mask.shape[:2]
-
-                    if i == 0:
-                        h0, w0 = h, w
-                        c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
-                    elif i == 1:
-                        c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-                    elif i == 2:
-                        c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-                    elif i == 3:
-                        c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-                    elif i == 4:
-                        c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-                    elif i == 5:
-                        c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-                    elif i == 6:
-                        c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-                    elif i == 7:
-                        c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-                    else:
-                        c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-                    x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
-                    padw, padh = c[:2]
-                    hp, wp = h, w
-
-                    big_sem[y1a:y2a, x1a:x2a] = mask[y1a - padh : y2a - padh, x1a - padw : x2a - padw]
-
-                return big_sem[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
-
-        # instance segmentation
-        else:
-            mosaic_masks = []
-
-            if self.n == 4:
-                for i in range(4):
-                    curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
-                    if curr_masks is None:
-                        continue
-
-                    assert curr_masks.ndim == 3, f"Unexpected mask shape {curr_masks.shape} for mode {mask_mode}"
-                    h, w = size0 if i == 0 else curr_masks.shape[1:3]
-
-                    if i == 0:  # top left
-                        x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
-                        x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
-                    elif i == 1:  # top right
-                        x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
-                        x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-                    elif i == 2:  # bottom left
-                        x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
-                        x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-                    else:  # i == 3, bottom right
-                        x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
-                        x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
-                    for k in range(curr_masks.shape[0]):
-                        big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
-                        big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1b:y2b, x1b:x2b]
-                        mosaic_masks.append(big_mask)
-
-                if len(mosaic_masks) == 0:
-                    return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
-                return np.stack(mosaic_masks, axis=0)
-
-            elif self.n == 9:
-                hp, wp = -1, -1  # height, width previous
-
-                for i in range(9):
-                    curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
-                    if curr_masks is None:
-                        continue
-
-                    assert curr_masks.ndim == 3, f"Unexpected mask shape {curr_masks.shape} for mode {mask_mode}"
-                    h, w = size0 if i == 0 else curr_masks.shape[1:3]
-
-                    if i == 0:  # center
-                        h0, w0 = h, w
-                        c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
-                    elif i == 1:  # top
-                        c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-                    elif i == 2:  # top right
-                        c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-                    elif i == 3:  # right
-                        c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-                    elif i == 4:  # bottom right
-                        c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-                    elif i == 5:  # bottom
-                        c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-                    elif i == 6:  # bottom left
-                        c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-                    elif i == 7:  # left
-                        c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-                    else:  # i == 8, top left
-                        c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-                    x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
-                    padw, padh = c[:2]
-                    hp, wp = h, w  # record
-
-                    for k in range(curr_masks.shape[0]):
-                        big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
-                        big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1a - padh : y2a - padh, x1a - padw : x2a - padw]
-                        mosaic_masks.append(big_mask)
-
-                if len(mosaic_masks) == 0:
-                    return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
-                return np.stack(mosaic_masks, axis=0)[
-                    :, -self.border[0] : self.border[0], -self.border[1] : self.border[1]
-                ]
+            return np.stack(mosaic_masks, axis=0)[:, -self.border[0] : self.border[0], -self.border[1] : self.border[1]]
 
     def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
         """
@@ -672,7 +668,7 @@ class Mosaic(MixTransformBase):
             good = sample["instances"].remove_zero_area_boxes()
             sample["cls"] = sample["cls"][good]
         else:
-            raise KeyError("Instances and cls must appear as a pair in the sample simultaneously for YOLO task.")
+            raise KeyError("Instances and cls must appear in the sample simultaneously for Yolo task.")
 
         if params.get("mask_mode") == "instance" and "masks" in sample and sample["masks"] is not None:
             sample["masks"] = sample["masks"][good]
@@ -741,6 +737,9 @@ class MixUp(MixTransformBase):
     def apply_to_instances(self, instances: Instances, mix_samples: dict[str, Any], **params) -> Instances:
         return Instances.concatenate([instances, mix_samples[0]["instances"]], axis=0)
 
+    def apply_to_mask(self, mask, mix_samples, **params):
+        return super().apply_to_mask(mask, mix_samples, **params)
+
     def apply_to_masks(self, masks: np.ndarray, mix_samples: dict[str, Any], **params) -> np.ndarray:
         return super().apply_to_masks(masks, mix_samples, **params)
 
@@ -762,19 +761,16 @@ class CutMix(MixTransformBase):
         p (float): Probability of applying CutMix augmentation.
         beta (float): Beta distribution parameter for sampling the mixing ratio.
         num_areas (int): Number of areas to try to cut and mix.
-
-    Methods:
-        _mix_transform: Apply CutMix augmentation to the input labels.
-        _rand_bbox: Generate random bounding box coordinates for the cut region.
-
-    Examples:
-        >>> from ultralytics.data.augment import CutMix
-        >>> dataset = YourDataset(...)  # Your image dataset
-        >>> cutmix = CutMix(dataset, p=0.5)
-        >>> augmented_labels = cutmix(original_labels)
     """
 
-    def __init__(self, dataset, pre_transform=None, p: float = 0.0, beta: float = 1.0, num_areas: int = 3) -> None:
+    def __init__(
+        self,
+        dataset: Dataset,
+        pre_transform: TransformBase | Compose = None,
+        p: float = 0.0,
+        beta: float = 1.0,
+        num_areas: int = 3,
+    ) -> None:
         """Initialize the CutMix augmentation object.
 
         Args:
@@ -787,6 +783,15 @@ class CutMix(MixTransformBase):
         super().__init__(dataset=dataset, pre_transform=pre_transform, p=p)
         self.beta = beta
         self.num_areas = num_areas
+
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        h, w = size0 = self.get_target_size(sample)
+        cut_areas = np.asarray([self._rand_bbox(w, h) for _ in range(self.num_areas)], dtype=np.float32)
+
+        return {"size0": size0, "cut_areas": cut_areas}
+
+    def get_indexes(self):
+        return random.randint(0, len(self.dataset) - 1)
 
     def _rand_bbox(self, width: int, height: int) -> tuple[int, int, int, int]:
         """Generate random bounding box coordinates for the cut region.
@@ -817,6 +822,15 @@ class CutMix(MixTransformBase):
 
         return x1, y1, x2, y2
 
+    def apply_to_target(self, target, category, mix_samples, **params):
+        return super().apply_to_target(target, category, mix_samples, **params)
+
+    def apply_to_instances(self, instances, mix_samples, **params):
+        return super().apply_to_instances(instances, mix_samples, **params)
+
+    def apply_to_masks(self, masks, mix_samples, **params):
+        return super().apply_to_masks(masks, mix_samples, **params)
+
     def _mix_transform(self, labels: dict[str, Any]) -> dict[str, Any]:
         """Apply CutMix augmentation to the input labels.
 
@@ -825,10 +839,6 @@ class CutMix(MixTransformBase):
 
         Returns:
             (dict[str, Any]): A dictionary containing the mixed image and adjusted labels.
-
-        Examples:
-            >>> cutter = CutMix(dataset)
-            >>> mixed_labels = cutter._mix_transform(labels)
         """
         # Get a random second image
         h, w = labels["img"].shape[:2]
@@ -1154,71 +1164,39 @@ class RandomPerspective(TransformBase):
 
         return new_instances
 
-    def apply_to_masks(
+    def apply_to_mask(
         self,
-        masks: np.ndarray,
+        mask: np.ndarray,
         transform_matrix: np.ndarray,
         border: tuple[int, int],
         dsize: tuple[int, int],
-        mask_mode: str,
-        **params,
+        **params: dict[str, Any],
     ) -> np.ndarray:
         """
-        Apply perspective/affine transform to instance masks.
+        Apply perspective/affine transform to semantic masks.
         """
-        if masks is None:
-            return masks
-
-        if mask_mode is None:
-            raise ValueError("Please provide mask mode in sample from dataset if masks is existed.")
-
         changed = (border[0] != 0) or (border[1] != 0) or (transform_matrix != np.eye(3)).any()
-        if not changed:
-            return masks
+        if not changed or mask.size == 0:
+            return mask
 
-        if mask_mode == "semantic":  # (H, W)
-            if self.perspective:
-                masks = cv2.warpPerspective(
-                    masks,
-                    transform_matrix,
-                    dsize=dsize,
-                    borderValue=0,
-                    flags=cv2.INTER_NEAREST,
-                )
-            else:  # affine
-                masks = cv2.warpAffine(
-                    masks,
-                    transform_matrix[:2],
-                    dsize=dsize,
-                    borderValue=0,
-                    flags=cv2.INTER_NEAREST,
-                )
+        if self.perspective:
+            mask = cv2.warpPerspective(
+                mask,
+                transform_matrix,
+                dsize=dsize,
+                borderValue=0,
+                flags=cv2.INTER_NEAREST,
+            )
+        else:  # affine
+            mask = cv2.warpAffine(
+                mask,
+                transform_matrix[:2],
+                dsize=dsize,
+                borderValue=0,
+                flags=cv2.INTER_NEAREST,
+            )
 
-            return masks
-        else:  # (N, H, W)
-            out_masks = []
-            N, _, _ = masks.shape
-            for i in range(N):
-                m = masks[i]
-                if self.perspective:
-                    m2 = cv2.warpPerspective(
-                        m,
-                        transform_matrix,
-                        dsize=dsize,
-                        borderValue=0,
-                        flags=cv2.INTER_NEAREST,
-                    )
-                else:
-                    m2 = cv2.warpAffine(
-                        m,
-                        transform_matrix[:2],
-                        dsize=dsize,
-                        borderValue=0,
-                        flags=cv2.INTER_NEAREST,
-                    )
-                out_masks.append(m2)
-
-            return np.stack(out_masks, axis=0)  # (N, newH, newW)
+        return mask
 
     def _apply_bboxes(self, bboxes: np.ndarray, M: np.ndarray) -> np.ndarray:
         """
@@ -1279,25 +1257,24 @@ class RandomPerspective(TransformBase):
         """
         sample["resized_shape"] = (dsize[1], dsize[0])
 
-        if "instances" in sample:
-            if "cls" in sample:
-                origin_sample = params["origin_sample"]
-                origin_instances = origin_sample["instances"]
-                new_instances = sample["instances"]
-                scale = params["scale"]
+        if "instances" in sample and "cls" in sample:
+            origin_sample = params["origin_sample"]
+            origin_instances = origin_sample["instances"]
+            new_instances = sample["instances"]
+            scale = params["scale"]
 
-                # Filter instances
-                origin_instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
-                # Make the bboxes have the same scale with new_bboxes
-                keep = self.box_candidates(
-                    box1=origin_instances.bboxes.T,
-                    box2=new_instances.bboxes.T,
-                    area_thr=0.01 if len(new_instances.segments) else 0.10,
-                )
-                sample["instances"] = new_instances[keep]
-                sample["cls"] = sample["cls"][keep]
-            else:
-                raise KeyError("Instances and cls must appear as a pair in the sample simultaneously for YOLO task.")
+            # Filter instances
+            origin_instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
+            # Make the bboxes have the same scale with new_bboxes
+            keep = self.box_candidates(
+                box1=origin_instances.bboxes.T,
+                box2=new_instances.bboxes.T,
+                area_thr=0.01 if len(new_instances.segments) else 0.10,
+            )
+            sample["instances"] = new_instances[keep]
+            sample["cls"] = sample["cls"][keep]
+        else:
+            raise KeyError("Instances and cls must appear in the sample simultaneously for Yolo task.")
 
         return sample
 
@@ -1444,14 +1421,14 @@ class RandomFlip(TransformBase):
                 instances.keypoints = instances.keypoints[:, self.flip_idx, :]
         return instances
 
-    def apply_to_masks(self, masks: np.ndarray, **params: dict[str, Any]) -> np.ndarray | None:
-        if masks is None:
-            return masks
+    def apply_to_mask(self, mask: np.ndarray, **params: dict[str, Any]) -> np.ndarray | None:
+        if mask.size == 0:
+            return mask
 
         if self.direction == "vertical":
-            masks_flipped = np.flip(masks, axis=-2)  # flip H
+            masks_flipped = np.flip(mask, axis=-2)  # flip H
         else:
-            masks_flipped = np.flip(masks, axis=-1)  # flip W
+            masks_flipped = np.flip(mask, axis=-1)  # flip W
 
         return masks_flipped  # (N, newH, newW)
 
@@ -1512,6 +1489,7 @@ class LetterBox(TransformBase):
         # Compute padding
         ratio = r, r  # width, height ratios
         new_unpad = round(size0[1] * r), round(size0[0] * r)
+        print(new_unpad)
         dw, dh = dsize[1] - new_unpad[0], dsize[0] - new_unpad[1]  # wh padding
         if self.auto:  # minimum rectangle
             dw, dh = np.mod(dw, self.stride), np.mod(dh, self.stride)  # wh padding
@@ -1539,13 +1517,6 @@ class LetterBox(TransformBase):
             "right": right,
             "dsize": dsize,
         }
-
-        mask_mode = sample.get("mask_mode")
-        if mask_mode is not None:
-            assert mask_mode in ("semantic", "instance"), (
-                f"Invaild mask mode in sample, expect 'semantic' or 'instance', but got '{mask_mode}'."
-            )
-            sample_params["mask_mode"] = mask_mode
 
         return sample_params
 
@@ -1616,54 +1587,32 @@ class LetterBox(TransformBase):
         instances.add_padding(left, top)
         return instances
 
-    def apply_to_masks(
+    def apply_to_mask(
         self,
-        masks: np.ndarray,
+        mask: np.ndarray,
         size0: tuple[int, int],
         new_unpad: tuple[int, int],
         top: float,
         bottom: float,
         left: float,
         right: float,
-        mask_mode: str,
         **params: dict[str, Any],
     ):
         """
-        Resize & pad masks.
-        Expect masks shape: (N, H, W) or (H, W).
+        Resize & pad masks. Expect masks shape: (H, W).
         """
-        if masks is None:
-            return masks
-
-        if mask_mode is None:
-            raise ValueError("Please provide mask mode in sample from dataset if masks is existed.")
+        if mask.size == 0:
+            return mask
 
         top, bottom, left, right = int(top), int(bottom), int(left), int(right)
 
-        if mask_mode == "semantic":  # (H, W)
-            if (size0[1], size0[0]) != new_unpad:  # (w, h) vs (w, h)
-                masks = cv2.resize(masks, new_unpad, interpolation=cv2.INTER_NEAREST)
+        if (size0[1], size0[0]) != new_unpad:  # (w, h) vs (w, h)
+            mask = cv2.resize(mask, new_unpad, interpolation=cv2.INTER_NEAREST)
 
-            H, W = masks.shape[:2]
+        H, W = mask.shape[:2]
 
-            padded = np.zeros((H + top + bottom, W + left + right), dtype=masks.dtype)
-            padded[top : top + H, left : left + W] = masks
-
-        else:  # (N, H, W)
-            N, H0, W0 = masks.shape
-            if (size0[1], size0[0]) != new_unpad:
-                resized = []
-                for i in range(N):
-                    m = cv2.resize(masks[i], new_unpad, interpolation=cv2.INTER_NEAREST)
-                    resized.append(m)
-                masks = np.stack(resized, axis=0)
-                H, W = new_unpad[1], new_unpad[0]  # new_unpad = (w, h)
-            else:
-                H, W = H0, W0
-
-            # padding
-            padded = np.zeros((N, H + top + bottom, W + left + right), dtype=masks.dtype)
-            padded[:, top : top + H, left : left + W] = masks
+        padded = np.zeros((H + top + bottom, W + left + right), dtype=mask.dtype)
+        padded[top : top + H, left : left + W] = mask
 
         return padded
 
@@ -1696,8 +1645,6 @@ class Albumentations(TransformBase):
         p: float = 1.0,
         color_transforms: list[A.BasicTransform] | None = None,
         spatial_transforms: list[A.BasicTransform] | None = None,
-        kpt_format: Literal["xy", "xya"] = "xy",
-        remove_invalid_kpts: bool = False,
     ):
         """
         Initialize the Albumentations transform object for YOLO bbox formatted parameters.
@@ -1712,12 +1659,8 @@ class Albumentations(TransformBase):
             transformations.
             spatial_transforms (list[A.BasicTransform], optional): A list of classes in Albumentations used for sprtial
             transformations.
-            kpt_format ("xy", "xya"): Format of key points.
-            remove_invalid_kpts (bool): Whether to let Albumentations discard the out-of-bounds key points.
         """
         self.p = p
-        self.kpt_format = kpt_format
-        self.remove_invalid_kpts = remove_invalid_kpts
 
         self.color_compose = None
         self.spatial_compose = None
@@ -1764,11 +1707,10 @@ class Albumentations(TransformBase):
         compose_kwargs = {}
         has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)
         if has_instances:
+            assert "cls" in sample, "'instances' and 'cls' must appear in the sample simultaneously for Yolo task."
             compose_kwargs["bbox_params"] = A.BboxParams(format="yolo", label_fields=["class_labels"])
             if len(sample["instances"].segments) > 0 or sample["instances"].keypoints is not None:
-                compose_kwargs["keypoint_params"] = A.KeypointParams(
-                    format=self.kpt_format, remove_invisible=self.remove_invalid_kpts
-                )
+                compose_kwargs["keypoint_params"] = A.KeypointParams(format="xy", remove_invisible=False)
 
         # create transforms
         if self.color_transforms and len(self.color_transforms) > 0:  # color transform
@@ -1799,13 +1741,13 @@ class Albumentations(TransformBase):
         if self.spatial_compose is None:
             return sample
 
-        H, W = params["size0"]
+        h0, w0 = params["size0"]
         inputs = {}
 
         if "img" in sample:  # image is the main img in Albumentations
             inputs["image"] = sample["img"]
         else:
-            inputs["image"] = np.zeros((H, W, 3), dtype=np.uint8)
+            inputs["image"] = np.zeros((h0, w0, 3), dtype=np.uint8)  # pseudo image
         if "ir" in sample:
             inputs["ir"] = sample["ir"]
         if "depth" in sample:
@@ -1818,7 +1760,7 @@ class Albumentations(TransformBase):
             if N := len(cls):
                 inst: Instances = sample["instances"]
                 inst.convert_bbox("xywh")
-                inst.normalize(W, H)
+                inst.normalize(w0, h0)
                 inputs["bboxes"] = inst.bboxes
                 inputs["class_labels"] = sample["cls"]
 
@@ -1970,22 +1912,6 @@ class Format:
             mask_overlap (bool): If True, allows mask overlap.
             batch_idx (bool): If True, keeps batch indexes.
             bgr (float): Probability of returning BGR images instead of RGB.
-
-        Attributes:
-            bbox_format (str): Format for bounding boxes.
-            normalize (bool): Whether bounding boxes are normalized.
-            return_mask (bool): Whether to return instance masks.
-            return_keypoint (bool): Whether to return keypoints.
-            return_obb (bool): Whether to return oriented bounding boxes.
-            mask_ratio (int): Downsample ratio for masks.
-            mask_overlap (bool): Whether masks can overlap.
-            batch_idx (bool): Whether to keep batch indexes.
-            bgr (float): The probability to return BGR images.
-
-        Examples:
-            >>> format = Format(bbox_format="xyxy", return_mask=True, return_keypoint=False)
-            >>> print(format.bbox_format)
-            xyxy
         """
         self.bbox_format = bbox_format
         self.normalize = normalize

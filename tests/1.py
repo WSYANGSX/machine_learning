@@ -21,7 +21,7 @@ bboxes = annotations[:, 1:]
 segments = np.zeros((0, 1000, 2), dtype=np.float32)
 
 instance = Instances(bboxes=bboxes, bbox_format="xywh", normalized=True, segments=segments)
-sample = {"img": img, "ir": ir, "cls": cls, "masks": mask, "mask_mode": "semantic", "instances": instance}
+sample = {"img": img, "ir": ir, "cls": cls, "masks": mask[None, ...], "instances": instance}
 
 
 # random_perspective = RandomPerspective(degrees=90, border=(512 // 2, 640 // 2))
@@ -33,8 +33,8 @@ sample = {"img": img, "ir": ir, "cls": cls, "masks": mask, "mask_mode": "semanti
 # random_flip = RandomFlip(p=1, direction="vertical")
 # sample = random_flip(sample)
 
-# letter_box = LetterBox(dsize=(320, 320))
-# sample = letter_box(sample)
+letter_box = LetterBox(dsize=(320, 320))
+sample = letter_box(sample)
 
 img = sample["img"]
 ir = sample["ir"]
@@ -45,7 +45,7 @@ instance.convert_bbox("xyxy")
 instance.denormalize(img.shape[1], img.shape[0])
 bboxes = instance.bboxes
 
-plot_imgs([sample["img"], sample["ir"], sample["masks"]])
+plot_imgs([sample["img"], sample["ir"], sample["masks"][0]])
 
 # print(sample)
 visualize_img_bboxes(
