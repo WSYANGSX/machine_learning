@@ -721,6 +721,8 @@ def visualize_img_bboxes(
     bboxes: np.ndarray,
     class_ids: np.ndarray | Sequence[int] | None = None,
     class_maps: Sequence[str] | Mapping[int, str] | None = None,
+    color: tuple[int, int, int] = (255, 0, 0),
+    thickness: int = 2,
     cmap: str | None = None,
 ) -> None:
     """Plot the image with bounding boxes.
@@ -730,11 +732,15 @@ def visualize_img_bboxes(
         bboxes (np.ndarray): The Bounding boxes parameters with voc format (x_min, y_min, x_max, y_max).
         class_ids (Sequence[int] | np.ndarray): The class numbers of objects in the bounding box.
         class_maps (Sequence[str] | Mapping[int, str]): The names corresponding to the class numbers of objects.
-        cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot', rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any color mapping, such as cmap='viridis r'.
+        color (tuple[int, int, int]): The color of the bboxes. Default to (255, 0, 0).
+        thickness (int): The thickness of the bboxes lines. Default to 2.
+        cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot',
+        rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any
+        color mapping, such as cmap='viridis r'.
     """
     if class_ids is None:
         for bbox in bboxes:
-            img = add_bbox(img, bbox)
+            img = add_bbox(img=img, bbox=bbox, color=color, thickness=thickness)
     else:
         if len(class_ids) != len(bboxes):
             raise ValueError("The length of bboxes and class_ids must be the same.")
@@ -742,17 +748,14 @@ def visualize_img_bboxes(
         if class_maps is not None:
             for bbox, class_id in zip(bboxes, class_ids):
                 class_name = class_maps[class_id]
-                img = add_bbox(img, bbox, class_name)
+                img = add_bbox(img=img, bbox=bbox, class_name=class_name, color=color, thickness=thickness)
         else:
             class_maps = {i: str(i) for i in class_ids}
             for bbox, class_id in zip(bboxes, class_ids):
                 class_name = class_maps[class_id]
-                img = add_bbox(img, bbox, class_name)
+                img = add_bbox(img=img, bbox=bbox, class_name=class_name, color=color, thickness=thickness)
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
     plt.imshow(img, cmap)
     plt.show()
-
-
-def

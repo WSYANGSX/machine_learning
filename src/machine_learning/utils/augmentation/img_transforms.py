@@ -11,22 +11,20 @@ import math
 import torch
 import random
 import numpy as np
+import albumentations as A
 
 from PIL import Image
 from copy import deepcopy
-from typing import Tuple
 from torch.utils.data import Dataset
 
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.instance import Instances
-from ultralytics.utils.checks import check_version
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
 from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
 from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
 
-from .core import TransformBase, Compose
+from .core import TransformInterface, Compose
 from .utils import ensure_contiguous_output
-from machine_learning.utils import colorstr
 from machine_learning.utils.logger import LOGGER
 
 
@@ -36,7 +34,7 @@ DEFAULT_CROP_FRACTION = 1.0
 
 
 # Base image augmentations classes--------------------------------------------------------------------------------------
-class ImgTransformBase(TransformBase):
+class TransformBase(TransformInterface):
     """
     Base class for image transformations interface.
 
@@ -44,7 +42,7 @@ class ImgTransformBase(TransformBase):
     compatible with classification、detection and segmentation tasks.
     """
 
-    _targets = ("img", "image", "ir", "infrared", "depth")
+    _targets = ("img", "ir", "depth")
     _annotation_targets = ("instances", "masks")
 
     def __init__(self, p: float = 1) -> None:
@@ -157,7 +155,7 @@ class ImgTransformBase(TransformBase):
         return size
 
 
-class MixTransformBase(ImgTransformBase):
+class MixTransformBase(TransformBase):
     """
     Base class for image mix transformations like MixUp, Mosaic and CopyPaste.
 
@@ -978,7 +976,7 @@ class CopyPaste(MixTransformBase):
         return sample1
 
 
-class RandomPerspective(ImgTransformBase):
+class RandomPerspective(TransformBase):
     """
     Implements random perspective and affine transformations on images and corresponding annotations.
 
@@ -1111,7 +1109,7 @@ class RandomPerspective(ImgTransformBase):
         if np.issubdtype(target.dtype, np.floating):
             border_val = 0.0
         else:
-            if category.lower() in ("img", "image", "rgb", "color"):
+            if category.lower() == "img":
                 border_val = (114,) * target.shape[2] if target.ndim == 3 else 114
             else:
                 border_val = 0
@@ -1128,11 +1126,11 @@ class RandomPerspective(ImgTransformBase):
         self,
         instances: Instances,
         transform_matrix: np.ndarray,
-        shape0: tuple[int, int],
+        size0: tuple[int, int],
         dsize: tuple[int, int],
         **params,
     ) -> Instances:
-        h0, w0 = shape0  # origin img (h,w)
+        h0, w0 = size0  # origin img (h,w)
 
         # Make sure the coord formats are right
         instances.convert_bbox(format="xyxy")
@@ -1325,7 +1323,7 @@ class RandomPerspective(ImgTransformBase):
         return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
 
-class RandomHSV(ImgTransformBase):
+class RandomHSV(TransformBase):
     """
     Randomly adjusts the Hue, Saturation, and Value (HSV) channels of an image.
 
@@ -1358,7 +1356,7 @@ class RandomHSV(ImgTransformBase):
         return {"gains": gains}
 
     def apply_to_target(self, target: np.ndarray, category: str, **params) -> np.ndarray:
-        if category not in ("img", "image"):
+        if category != "img":
             return target
         assert target.ndim == 3 and target.shape[2] == 3, (
             f"RandomHSV can only be used for RGB image, but got image with shape {target.shape}."
@@ -1388,7 +1386,7 @@ class RandomHSV(ImgTransformBase):
         return target
 
 
-class RandomFlip(ImgTransformBase):
+class RandomFlip(TransformBase):
     """
     Randomly flip images horizontally or vertically with corresponding adjustments to annotations.
 
@@ -1458,7 +1456,7 @@ class RandomFlip(ImgTransformBase):
         return masks_flipped  # (N, newH, newW)
 
 
-class LetterBox(ImgTransformBase):
+class LetterBox(TransformBase):
     """Resize image and padding for detection, instance segmentation, pose.
 
     This class resizes and pads images to a specified shape while preserving aspect ratio. It also updates corresponding
@@ -1567,7 +1565,7 @@ class LetterBox(ImgTransformBase):
         if np.issubdtype(target.dtype, np.floating):
             padding_value = 0.0
         else:
-            if category.lower() in ("img", "image", "rgb"):
+            if category.lower() == "img":
                 padding_value = (114,) * target.shape[2] if target.ndim == 3 else 114
             else:
                 padding_value = 0
@@ -1613,7 +1611,7 @@ class LetterBox(ImgTransformBase):
         **params,
     ):
         instances.convert_bbox(format="xyxy")
-        instances.denormalize(size0[::-1])
+        instances.denormalize(*size0[::-1])
         instances.scale(*ratio)
         instances.add_padding(left, top)
         return instances
@@ -1684,33 +1682,23 @@ class LetterBox(ImgTransformBase):
         return sample
 
 
-class Albumentations:
+class Albumentations(TransformBase):
     """
     Albumentations transformations for image augmentation.
 
     This class applies various image transformations using the Albumentations library. It includes operations such as
     Blur, Median Blur, conversion to grayscale, Contrast Limited Adaptive Histogram Equalization (CLAHE), random changes
     in brightness and contrast, RandomGamma, and image quality reduction through compression.
-
-    Attributes:
-        p (float): Probability of applying the transformations.
-        transform (albumentations.Compose): Composed Albumentations transforms.
-        contains_spatial (bool): Indicates if the transforms include spatial operations.
-
-    Methods:
-        __call__: Applies the Albumentations transformations to the input sample.
-
-    Examples:
-        >>> transform = Albumentations(p=0.5)
-        >>> augmented_sample = transform(sample)
-
-    Notes:
-        - The Albumentations package must be installed to use this class.
-        - If the package is not installed or an error occurs during initialization, the transform will be set to None.
-        - Spatial transforms are handled differently and require special processing for bounding boxes.
     """
 
-    def __init__(self, p=1.0):
+    def __init__(
+        self,
+        p: float = 1.0,
+        color_transforms: list[A.BasicTransform] | None = None,
+        spatial_transforms: list[A.BasicTransform] | None = None,
+        kpt_format: Literal["xy", "xya"] = "xy",
+        remove_invalid_kpts: bool = False,
+    ):
         """
         Initialize the Albumentations transform object for YOLO bbox formatted parameters.
 
@@ -1720,82 +1708,23 @@ class Albumentations:
 
         Args:
             p (float): Probability of applying the augmentations. Must be between 0 and 1.
-
-        Attributes:
-            p (float): Probability of applying the augmentations.
-            transform (albumentations.Compose): Composed Albumentations transforms.
-            contains_spatial (bool): Indicates if the transforms include spatial transformations.
-
-        Raises:
-            ImportError: If the Albumentations package is not installed.
-            Exception: For any other errors during initialization.
-
-        Examples:
-            >>> transform = Albumentations(p=0.5)
-            >>> augmented = transform(image=image, bboxes=bboxes, class_labels=classes)
-            >>> augmented_image = augmented["image"]
-            >>> augmented_bboxes = augmented["bboxes"]
-
-        Notes:
-            - Requires Albumentations version 1.0.3 or higher.
-            - Spatial transforms are handled differently to ensure bbox compatibility.
-            - Some transforms are applied with very low probability (0.01) by default.
+            color_transforms (list[A.BasicTransform], optional): A list of classes in Albumentations used for RGB color
+            transformations.
+            spatial_transforms (list[A.BasicTransform], optional): A list of classes in Albumentations used for sprtial
+            transformations.
+            kpt_format ("xy", "xya"): Format of key points.
+            remove_invalid_kpts (bool): Whether to let Albumentations discard the out-of-bounds key points.
         """
         self.p = p
-        self.transform = None
-        prefix = colorstr("albumentations: ")
+        self.kpt_format = kpt_format
+        self.remove_invalid_kpts = remove_invalid_kpts
 
-        try:
-            import albumentations as A
+        self.color_compose = None
+        self.spatial_compose = None
 
-            check_version(A.__version__, "1.0.3", hard=True)  # version requirement
-
-            # List of possible spatial transforms
-            spatial_transforms = {
-                "Affine",
-                "BBoxSafeRandomCrop",
-                "CenterCrop",
-                "CoarseDropout",
-                "Crop",
-                "CropAndPad",
-                "CropNonEmptyMaskIfExists",
-                "D4",
-                "ElasticTransform",
-                "Flip",
-                "GridDistortion",
-                "GridDropout",
-                "HorizontalFlip",
-                "Lambda",
-                "LongestMaxSize",
-                "MaskDropout",
-                "MixUp",
-                "Morphological",
-                "NoOp",
-                "OpticalDistortion",
-                "PadIfNeeded",
-                "Perspective",
-                "PiecewiseAffine",
-                "PixelDropout",
-                "RandomCrop",
-                "RandomCropFromBorders",
-                "RandomGridShuffle",
-                "RandomResizedCrop",
-                "RandomRotate90",
-                "RandomScale",
-                "RandomSizedBBoxSafeCrop",
-                "RandomSizedCrop",
-                "Resize",
-                "Rotate",
-                "SafeRotate",
-                "ShiftScaleRotate",
-                "SmallestMaxSize",
-                "Transpose",
-                "VerticalFlip",
-                "XYMasking",
-            }  # from https://albumentations.ai/docs/getting_started/transforms_and_targets/#spatial-level-transforms
-
-            # Transforms
-            T = [
+        # color transforms, only to RGB
+        if color_transforms is None:
+            self.color_transforms = [
                 A.Blur(p=0.01),
                 A.MedianBlur(p=0.01),
                 A.ToGray(p=0.01),
@@ -1804,73 +1733,181 @@ class Albumentations:
                 A.RandomGamma(p=0.0),
                 A.ImageCompression(quality_range=(75, 100), p=0.5),
             ]
+        else:
+            self.color_transforms = color_transforms
 
-            # Compose transforms
-            self.contains_spatial = any(transform.__class__.__name__ in spatial_transforms for transform in T)
-            self.transform = (
-                A.Compose(T, bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"]))
-                if self.contains_spatial
-                else A.Compose(T)
+        # spatial_transforms
+        self.spatial_transforms = spatial_transforms or []
+
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        sample_params = {}
+        sample_params["size0"] = self.get_target_size(sample)
+
+        # additional targets for spatial transform
+        additional_targets = {}
+        if "ir" in sample:
+            additional_targets["ir"] = "image"
+        if "depth" in sample:
+            additional_targets["depth"] = "image"
+
+        has_masks = "masks" in sample and sample["masks"] is not None
+        sample_params["has_masks"] = has_masks
+        if has_masks:
+            mask_mode = sample.get("mask_mode")
+            if mask_mode is not None:
+                assert mask_mode in ("semantic", "instance"), (
+                    f"Invaild mask mode in sample, expect 'semantic' or 'instance', but got '{mask_mode}'."
+                )
+                sample_params["mask_mode"] = sample["mask_mode"]
+
+        # bboxes / segments / keypoints
+        compose_kwargs = {}
+        has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)
+        if has_instances:
+            compose_kwargs["bbox_params"] = A.BboxParams(format="yolo", label_fields=["class_labels"])
+            if len(sample["instances"].segments) > 0 or sample["instances"].keypoints is not None:
+                compose_kwargs["keypoint_params"] = A.KeypointParams(
+                    format=self.kpt_format, remove_invisible=self.remove_invalid_kpts
+                )
+
+        # create transforms
+        if self.color_transforms and len(self.color_transforms) > 0:  # color transform
+            self.color_compose = A.Compose(self.color_transforms)
+            if hasattr(self.color_compose, "set_random_seed"):
+                self.color_compose.set_random_seed(random.randint(0, 2**31 - 1))
+
+        if self.spatial_transforms and len(self.spatial_transforms) > 0:  # spatial transform
+            self.spatial_compose = A.Compose(
+                self.spatial_transforms, additional_targets=additional_targets, **compose_kwargs
             )
-            if hasattr(self.transform, "set_random_seed"):
-                # Required for deterministic transforms in albumentations>=1.4.21
-                self.transform.set_random_seed(torch.initial_seed())
-            LOGGER.info(prefix + ", ".join(f"{x}".replace("always_apply=False, ", "") for x in T if x.p))
-        except ImportError:  # package not installed, skip
-            pass
-        except Exception as e:
-            LOGGER.info(f"{prefix}{e}")
+            if hasattr(self.spatial_compose, "set_random_seed"):
+                self.spatial_compose.set_random_seed(random.randint(0, 2**31 - 1))
 
-    def __call__(self, sample):
-        """
-        Applies Albumentations transformations to input sample.
+        sample_params["additional_targets"] = additional_targets
+        sample_params["has_instances"] = has_instances
 
-        This method applies a series of image augmentations using the Albumentations library. It can perform both
-        spatial and non-spatial transformations on the input image and its corresponding annotations.
+        return sample_params
 
-        Args:
-            sample (Dict): A dictionary containing image data and annotations. Expected keys are:
-                - 'img': numpy.ndarray representing the image
-                - 'cls': numpy.ndarray of class labels
-                - 'instances': object containing bounding boxes and other instance information
+    def apply_with_params(self, sample, params):
+        # ---------- only RGB ----------
+        if "img" in sample and self.color_compose is not None:
+            img = sample["img"]
+            if img is not None and img.ndim == 3 and img.shape[2] == 3:
+                sample["img"] = self.color_compose(image=img)["image"]
 
-        Returns:
-            (Dict): The input dictionary with augmented image and updated annotations.
-
-        Examples:
-            >>> transform = Albumentations(p=0.5)
-            >>> sample = {
-            ...     "img": np.random.rand(640, 640, 3),
-            ...     "cls": np.array([0, 1]),
-            ...     "instances": Instances(bboxes=np.array([[0, 0, 1, 1], [0.5, 0.5, 0.8, 0.8]])),
-            ... }
-            >>> augmented = transform(sample)
-            >>> assert augmented["img"].shape == (640, 640, 3)
-
-        Notes:
-            - The method applies transformations with probability self.p.
-            - Spatial transforms update bounding boxes, while non-spatial transforms only modify the image.
-            - Requires the Albumentations library to be installed.
-        """
-        if self.transform is None or random.random() > self.p:
+        # ---------- spatial transform ----------
+        if self.spatial_compose is None:
             return sample
 
-        if self.contains_spatial:
-            cls = sample["cls"]
-            if len(cls):
-                im = sample["img"]
-                sample["instances"].convert_bbox("xywh")
-                sample["instances"].normalize(*im.shape[:2][::-1])
-                bboxes = sample["instances"].bboxes
-                # TODO: add supports of segments and keypoints
-                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
-                if len(new["class_labels"]) > 0:  # skip update if no bbox in new im
-                    sample["img"] = new["image"]
-                    sample["cls"] = np.array(new["class_labels"])
-                    bboxes = np.array(new["bboxes"], dtype=np.float32)
-                sample["instances"].update(bboxes=bboxes)
+        H, W = params["size0"]
+        inputs = {}
+
+        if "img" in sample:  # image is the main img in Albumentations
+            inputs["image"] = sample["img"]
         else:
-            sample["img"] = self.transform(image=sample["img"])["image"]  # transformed
+            inputs["image"] = np.zeros((H, W, 3), dtype=np.uint8)
+        if "ir" in sample:
+            inputs["ir"] = sample["ir"]
+        if "depth" in sample:
+            inputs["depth"] = sample["depth"]
+
+        # bboxes & cls
+        has_instances = params.get("has_instances", False)
+        if has_instances:
+            cls = sample["cls"]  # not empty
+            if N := len(cls):
+                inst: Instances = sample["instances"]
+                inst.convert_bbox("xywh")
+                inst.normalize(W, H)
+                inputs["bboxes"] = inst.bboxes
+                inputs["class_labels"] = sample["cls"]
+
+            points = None
+            # segments (N, 1000, 2)
+            has_segments = inst.segments is not None and len(inst.segments) > 0
+            if has_segments:
+                inst.convert_bbox("xyxy")
+                inst.denormalize(W, H)
+                segs = inst.segments
+                if self.kpt_format == "xya":
+                    points = np.concatenate(segs, axis=0).hstack(
+                        np.zeros((segs.shape[0] * segs.shape[1], 1))
+                    )  # (N*1000, 3)
+                else:
+                    points = np.concatenate(segs, axis=0).rehape(-1, 2)  # (N*1000, 2)
+                len_segs = len(segs)
+
+            # keypoints (N, nkpt, 3) (share keypoints pipleline)
+            has_keypoints = inst.keypoints is not None
+            if has_keypoints:
+                kpts = inst.keypoints.reshape(-1, 3)
+                if self.kpt_format == "xy":
+                    vis = kpts[..., [2]]
+                    kpts = kpts[..., :2].reshape(-1, 2)
+                points = np.concatenate([points, kpts], axis=0) if points is not None else kpts
+
+            if points is not None:
+                inputs["keypoints"] = points
+
+        # masks
+        if params["has_masks"]:
+            masks = sample["masks"]
+            if masks.ndim == 3:  # instances (N, H, W)
+                inputs["masks"] = masks
+            else:  # sectimatic (H, W)
+                inputs["mask"] = masks
+
+        out = self.spatial_compose(**inputs)
+
+        if "img" in sample:
+            sample["img"] = out["image"]
+        if "ir" in sample:
+            sample["ir"] = out["ir"]
+        if "depth" in sample:
+            sample["depth"] = out["depth"]
+
+        NH, NW = self.get_target_size(sample)
+
+        if has_instances and "bboxes" in out:
+            new_bboxes = np.array(out["bboxes"], dtype=np.float32)
+            new_cls = np.array(out["class_labels"])
+            new_instances = Instances(bboxes=new_bboxes, bbox_format="xywh", normalized=True)
+            new_instances.convert_bbox("xyxy")
+            new_instances.denormalize(NW, NH)
+            sample["cls"] = new_cls
+
+            if "keypoints" in out:
+                points = out["keypoints"]
+
+                segs_out = None
+                kpts_out = None
+
+                if has_segments:
+                    segs_out = points[:len_segs, ...]
+                    if has_keypoints:
+                        kpts_out = points[len_segs:, ...]
+                else:
+                    kpts_out = points
+
+                if self.kpt_format == "xya":
+                    segs_out = list(segs[..., :2].reshape(N, -1, 2)) if segs_out is not None else None
+                    kpts_out = kpts.reshape(N, -1, 3) if kpts_out is not None else None
+                if self.kpt_format == "xy":
+                    segs_out = list(segs.reshape(N, -1, 2)) if segs_out is not None else None
+                    kpts_out = np.concatenate([kpts, vis], axis=-1).reshape(N, -1, 3) if kpts_out is not None else None
+
+                if segs_out is not None:
+                    new_instances.segments = segs_out
+                if kpts_out is not None:
+                    new_instances.keypoints = kpts_out
+
+            new_instances.convert_bbox("xywh")
+            new_instances.normalize(NW, NH)
+
+        if "mask" in out:
+            sample["masks"] = out["mask"]
+        if "masks" in out:
+            sample["masks"] = out["masks"]
 
         return sample
 
@@ -2088,143 +2125,6 @@ class Format:
             masks = polygons2masks((h, w), segments, color=1, downsample_ratio=self.mask_ratio)
 
         return masks, instances, cls
-
-
-class RandomLoadText:
-    """
-    Randomly samples positive and negative texts and updates class indices accordingly.
-
-    This class is responsible for sampling texts from a given set of class texts, including both positive
-    (present in the image) and negative (not present in the image) samples. It updates the class indices
-    to reflect the sampled texts and can optionally pad the text list to a fixed length.
-
-    Attributes:
-        prompt_format (str): Format string for text prompts.
-        neg_samples (Tuple[int, int]): Range for randomly sampling negative texts.
-        max_samples (int): Maximum number of different text samples in one image.
-        padding (bool): Whether to pad texts to max_samples.
-        padding_value (str): The text used for padding when padding is True.
-
-    Methods:
-        __call__: Processes the input sample and returns updated classes and texts.
-
-    Examples:
-        >>> loader = RandomLoadText(prompt_format="Object: {}", neg_samples=(5, 10), max_samples=20)
-        >>> sample = {"cls": [0, 1, 2], "texts": [["cat"], ["dog"], ["bird"]], "instances": [...]}
-        >>> updated_sample = loader(sample)
-        >>> print(updated_sample["texts"])
-        ['Object: cat', 'Object: dog', 'Object: bird', 'Object: elephant', 'Object: car']
-    """
-
-    def __init__(
-        self,
-        prompt_format: str = "{}",
-        neg_samples: Tuple[int, int] = (80, 80),
-        max_samples: int = 80,
-        padding: bool = False,
-        padding_value: str = "",
-    ) -> None:
-        """
-        Initializes the RandomLoadText class for randomly sampling positive and negative texts.
-
-        This class is designed to randomly sample positive texts and negative texts, and update the class
-        indices accordingly to the number of samples. It can be used for text-based object detection tasks.
-
-        Args:
-            prompt_format (str): Format string for the prompt. Default is '{}'. The format string should
-                contain a single pair of curly braces {} where the text will be inserted.
-            neg_samples (Tuple[int, int]): A range to randomly sample negative texts. The first integer
-                specifies the minimum number of negative samples, and the second integer specifies the
-                maximum. Default is (80, 80).
-            max_samples (int): The maximum number of different text samples in one image. Default is 80.
-            padding (bool): Whether to pad texts to max_samples. If True, the number of texts will always
-                be equal to max_samples. Default is False.
-            padding_value (str): The padding text to use when padding is True. Default is an empty string.
-
-        Attributes:
-            prompt_format (str): The format string for the prompt.
-            neg_samples (Tuple[int, int]): The range for sampling negative texts.
-            max_samples (int): The maximum number of text samples.
-            padding (bool): Whether padding is enabled.
-            padding_value (str): The value used for padding.
-
-        Examples:
-            >>> random_load_text = RandomLoadText(prompt_format="Object: {}", neg_samples=(50, 100), max_samples=120)
-            >>> random_load_text.prompt_format
-            'Object: {}'
-            >>> random_load_text.neg_samples
-            (50, 100)
-            >>> random_load_text.max_samples
-            120
-        """
-        self.prompt_format = prompt_format
-        self.neg_samples = neg_samples
-        self.max_samples = max_samples
-        self.padding = padding
-        self.padding_value = padding_value
-
-    def __call__(self, sample: dict[str, Any]) -> dict[str, Any]:
-        """
-        Randomly samples positive and negative texts and updates class indices accordingly.
-
-        This method samples positive texts based on the existing class labels in the image, and randomly
-        selects negative texts from the remaining classes. It then updates the class indices to match the
-        new sampled text order.
-
-        Args:
-            sample (Dict): A dictionary containing image labels and metadata. Must include 'texts' and 'cls' keys.
-
-        Returns:
-            (Dict): Updated sample dictionary with new 'cls' and 'texts' entries.
-
-        Examples:
-            >>> loader = RandomLoadText(prompt_format="A photo of {}", neg_samples=(5, 10), max_samples=20)
-            >>> sample = {"cls": np.array([[0], [1], [2]]), "texts": [["dog"], ["cat"], ["bird"]]}
-            >>> updated_sample = loader(sample)
-        """
-        assert "texts" in sample, "No texts found in labels."
-        class_texts = sample["texts"]
-        num_classes = len(class_texts)
-        cls = np.asarray(sample.pop("cls"), dtype=int)
-        pos_labels = np.unique(cls).tolist()
-
-        if len(pos_labels) > self.max_samples:
-            pos_labels = random.sample(pos_labels, k=self.max_samples)
-
-        neg_samples = min(min(num_classes, self.max_samples) - len(pos_labels), random.randint(*self.neg_samples))
-        neg_labels = [i for i in range(num_classes) if i not in pos_labels]
-        neg_labels = random.sample(neg_labels, k=neg_samples)
-
-        sampled_labels = pos_labels + neg_labels
-        random.shuffle(sampled_labels)
-
-        label2ids = {label: i for i, label in enumerate(sampled_labels)}
-        valid_idx = np.zeros(len(sample["instances"]), dtype=bool)
-        new_cls = []
-        for i, label in enumerate(cls.squeeze(-1).tolist()):
-            if label not in label2ids:
-                continue
-            valid_idx[i] = True
-            new_cls.append([label2ids[label]])
-        sample["instances"] = sample["instances"][valid_idx]
-        sample["cls"] = np.array(new_cls)
-
-        # Randomly select one prompt when there's more than one prompts
-        texts = []
-        for label in sampled_labels:
-            prompts = class_texts[label]
-            assert len(prompts) > 0
-            prompt = self.prompt_format.format(prompts[random.randrange(len(prompts))])
-            texts.append(prompt)
-
-        if self.padding:
-            valid_labels = len(pos_labels) + len(neg_labels)
-            num_padding = self.max_samples - valid_labels
-            if num_padding > 0:
-                texts += [self.padding_value] * num_padding
-
-        sample["texts"] = texts
-        return sample
 
 
 # Yolov8 augmentations -------------------------------------------------------------------------------------------------

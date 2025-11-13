@@ -1,4 +1,4 @@
-from .core import TransformBase, Compose
+from .core import TransformInterface, Compose
 
 
-__all__ = ["TransformBase", "Compose"]
+__all__ = ["TransformInterface", "Compose"]

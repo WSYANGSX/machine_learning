@@ -4,7 +4,7 @@ import random
 from abc import ABC, abstractmethod
 
 
-class TransformBase(ABC):
+class TransformInterface(ABC):
     """
     Base class for all transforms in augmentation.
 
@@ -118,12 +118,12 @@ class Compose:
         >>> compose.insert(0, RandomFlip())
     """
 
-    def __init__(self, transforms: list[TransformBase], p: float = 1):
+    def __init__(self, transforms: list[TransformInterface], p: float = 1):
         """
         Initializes the Compose object with a list of transforms.
 
         Args:
-            transforms (List[TransformBase]): A list of callable transform objects to be applied sequentially.
+            transforms (List[TransformInterface]): A list of callable transform objects to be applied sequentially.
             p (float): The probability of applying all the transforms.
 
         Examples:
@@ -155,12 +155,12 @@ class Compose:
                 sample = t(sample)
         return sample
 
-    def append(self, transform: TransformBase):
+    def append(self, transform: TransformInterface):
         """
         Appends a new transform to the existing list of transforms.
 
         Args:
-            transform (TransformBase): The transformation to be added to the composition.
+            transform (TransformInterface): The transformation to be added to the composition.
 
         Examples:
             >>> compose = Compose([RandomFlip(), RandomPerspective()])
@@ -168,13 +168,13 @@ class Compose:
         """
         self.transforms.append(transform)
 
-    def insert(self, index: int, transform: TransformBase):
+    def insert(self, index: int, transform: TransformInterface):
         """
         Inserts a new transform at a specified index in the existing list of transforms.
 
         Args:
             index (int): The index at which to insert the new transform.
-            transform (TransformBase): The transform object to be inserted.
+            transform (TransformInterface): The transform object to be inserted.
 
         Examples:
             >>> compose = Compose([Transform1(), Transform2()])
@@ -234,7 +234,7 @@ class Compose:
             assert i < len(self.transforms), f"list index {i} out of range {len(self.transforms)}."
             self.transforms[i] = v
 
-    def tolist(self) -> list[TransformBase]:
+    def tolist(self) -> list[TransformInterface]:
         """
         Converts the list of transforms to a standard Python list.
 
