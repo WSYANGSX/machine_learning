@@ -1693,22 +1693,17 @@ class Albumentations(TransformBase):
         if "depth" in sample:
             additional_targets["depth"] = "image"
 
+        has_mask = "mask" in sample and sample["mask"] is not None
         has_masks = "masks" in sample and sample["masks"] is not None
+        sample_params["has_mask"] = has_mask
         sample_params["has_masks"] = has_masks
-        if has_masks:
-            mask_mode = sample.get("mask_mode")
-            if mask_mode is not None:
-                assert mask_mode in ("semantic", "instance"), (
-                    f"Invaild mask mode in sample, expect 'semantic' or 'instance', but got '{mask_mode}'."
-                )
-                sample_params["mask_mode"] = sample["mask_mode"]
 
         # bboxes / segments / keypoints
         compose_kwargs = {}
-        has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)
+        has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)  # bboxes is not None
         if has_instances:
             assert "cls" in sample, "'instances' and 'cls' must appear in the sample simultaneously for Yolo task."
-            compose_kwargs["bbox_params"] = A.BboxParams(format="yolo", label_fields=["class_labels"])
+            compose_kwargs["bbox_params"] = A.BboxParams(format="pascal_voc", label_fields=["class_labels"])
             if len(sample["instances"].segments) > 0 or sample["instances"].keypoints is not None:
                 compose_kwargs["keypoint_params"] = A.KeypointParams(format="xy", remove_invisible=False)
 
@@ -1730,7 +1725,7 @@ class Albumentations(TransformBase):
 
         return sample_params
 
-    def apply_with_params(self, sample, params):
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         # ---------- only RGB ----------
         if "img" in sample and self.color_compose is not None:
             img = sample["img"]
@@ -1757,47 +1752,36 @@ class Albumentations(TransformBase):
         has_instances = params.get("has_instances", False)
         if has_instances:
             cls = sample["cls"]  # not empty
-            if N := len(cls):
+            if len(cls):
                 inst: Instances = sample["instances"]
-                inst.convert_bbox("xywh")
-                inst.normalize(w0, h0)
-                inputs["bboxes"] = inst.bboxes
-                inputs["class_labels"] = sample["cls"]
-
-            points = None
-            # segments (N, 1000, 2)
-            has_segments = inst.segments is not None and len(inst.segments) > 0
-            if has_segments:
                 inst.convert_bbox("xyxy")
-                inst.denormalize(W, H)
-                segs = inst.segments
-                if self.kpt_format == "xya":
-                    points = np.concatenate(segs, axis=0).hstack(
-                        np.zeros((segs.shape[0] * segs.shape[1], 1))
-                    )  # (N*1000, 3)
-                else:
-                    points = np.concatenate(segs, axis=0).rehape(-1, 2)  # (N*1000, 2)
-                len_segs = len(segs)
+                inst.denormalize(w0, h0)  # [xmin, ymin, xmax, ymax]
+                inputs["bboxes"] = inst.bboxes
+                inputs["class_labels"] = cls.reshape(
+                    -1,
+                )
 
-            # keypoints (N, nkpt, 3) (share keypoints pipleline)
-            has_keypoints = inst.keypoints is not None
-            if has_keypoints:
-                kpts = inst.keypoints.reshape(-1, 3)
-                if self.kpt_format == "xy":
+                # segments (N, 1000, 2)
+                has_segments = inst.segments is not None and len(inst.segments) > 0
+                if has_segments:
+                    segs = inst.segments.reshape(-1, 2)
+                    inputs["keypoints"] = segs
+
+                # keypoints (N, nkpt, 3) (share keypoints pipleline)
+                has_keypoints = inst.keypoints is not None
+                if has_keypoints:
+                    kpts = inst.keypoints.reshape(-1, 3)
                     vis = kpts[..., [2]]
-                    kpts = kpts[..., :2].reshape(-1, 2)
-                points = np.concatenate([points, kpts], axis=0) if points is not None else kpts
+                    kpts = kpts[..., :2]
+                    inputs["keypoints"] = kpts
 
-            if points is not None:
-                inputs["keypoints"] = points
+        # mask
+        if params["has_mask"]:
+            inputs["mask"] = sample["mask"]  # semantic (H, W)
 
         # masks
         if params["has_masks"]:
-            masks = sample["masks"]
-            if masks.ndim == 3:  # instances (N, H, W)
-                inputs["masks"] = masks
-            else:  # sectimatic (H, W)
-                inputs["mask"] = masks
+            inputs["masks"] = sample["masks"]  # instances (N, H, W)
 
         out = self.spatial_compose(**inputs)
 
@@ -1808,46 +1792,40 @@ class Albumentations(TransformBase):
         if "depth" in sample:
             sample["depth"] = out["depth"]
 
-        NH, NW = self.get_target_size(sample)
+        h, w = next([sample[key].shape[:2] for key in self._targets])
 
-        if has_instances and "bboxes" in out:
-            new_bboxes = np.array(out["bboxes"], dtype=np.float32)
-            new_cls = np.array(out["class_labels"])
-            new_instances = Instances(bboxes=new_bboxes, bbox_format="xywh", normalized=True)
-            new_instances.convert_bbox("xyxy")
-            new_instances.denormalize(NW, NH)
-            sample["cls"] = new_cls
+        if has_instances:
+            new_segs = sample["instances"].segments  # origin segments data
+            new_kpts = sample["instances"].keypoints  # origin keypoints data
+            if "bboxes" in out:
+                new_bboxes = out["bboxes"]
+                new_cls = out["class_labels"].reshape(-1, 1)
+                sample["cls"] = new_cls
 
             if "keypoints" in out:
-                points = out["keypoints"]
-
-                segs_out = None
-                kpts_out = None
-
                 if has_segments:
-                    segs_out = points[:len_segs, ...]
-                    if has_keypoints:
-                        kpts_out = points[len_segs:, ...]
-                else:
-                    kpts_out = points
+                    len_segs = len(new_segs)
+                    new_segs = out["keypoints"].reshape(len_segs, -1, 2)
+                    new_bboxes = np.stack([segment2box(xy, w, h) for xy in segs], 0)
+                    new_segs[..., 0] = new_segs[..., 0].clip(new_bboxes[:, 0:1], new_bboxes[:, 2:3])
+                    new_segs[..., 1] = new_segs[..., 1].clip(new_bboxes[:, 1:2], new_bboxes[:, 3:4])
 
-                if self.kpt_format == "xya":
-                    segs_out = list(segs[..., :2].reshape(N, -1, 2)) if segs_out is not None else None
-                    kpts_out = kpts.reshape(N, -1, 3) if kpts_out is not None else None
-                if self.kpt_format == "xy":
-                    segs_out = list(segs.reshape(N, -1, 2)) if segs_out is not None else None
-                    kpts_out = np.concatenate([kpts, vis], axis=-1).reshape(N, -1, 3) if kpts_out is not None else None
+                if has_keypoints:
+                    len_kpts = len(new_kpts)
+                    new_kpts = out["keypoints"]
+                    out_mask = (new_kpts[:, 0] < 0) | (new_kpts[:, 1] < 0) | (new_kpts[:, 0] > w) | (new_kpts[:, 1] > h)
+                    vis[out_mask] = 0
+                    new_kpts = np.concatenate([new_kpts, vis], axis=-1).reshape(len_kpts, -1, 3)
 
-                if segs_out is not None:
-                    new_instances.segments = segs_out
-                if kpts_out is not None:
-                    new_instances.keypoints = kpts_out
-
-            new_instances.convert_bbox("xywh")
-            new_instances.normalize(NW, NH)
+            new_instances = Instances(
+                bboxes=new_bboxes, segments=new_segs, keypoints=new_kpts, bbox_format="xyxy", normalized=False
+            )
+            new_instances.clip(w, h)
+            sample["instances"] = new_instances
 
         if "mask" in out:
-            sample["masks"] = out["mask"]
+            sample["mask"] = out["mask"]
+
         if "masks" in out:
             sample["masks"] = out["masks"]
 
