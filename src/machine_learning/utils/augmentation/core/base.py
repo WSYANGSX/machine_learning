@@ -93,6 +93,10 @@ class TransformInterface(ABC):
         """Returns base init args - p"""
         return {"p": self.p}
 
+    def get_target_size(self, sample: dict[str, Any]) -> tuple[int, int]:
+        """Get the target size (h, w) of targets in a sample."""
+        raise NotImplementedError
+
 
 class Compose:
     """

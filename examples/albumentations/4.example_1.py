@@ -14,9 +14,18 @@ if __name__ == "__main__":
 
     np.set_printoptions(threshold=np.inf)
 
-    img_path = "./data/coco-2017/images/train/000000000072.jpg"
+    img_path = "/home/yangxf/WorkSpace/machine_learning/examples/albumentations/1.jpg"
     image = cv2.imread(img_path, cv2.IMREAD_COLOR_RGB)
+    plot_imgs([image])
+    h, w = image.shape[:2]
+    print(h, w)
+    masks = np.zeros((0, h, w), dtype=np.uint8)
 
+    transform = A.RandomCrop(320, 320)
+    res = transform(image=image, masks=masks)
+    plot_imgs([res["image"]])
+    print(res["image"].shape)
+    print(res["masks"].shape)
     # labels = np.loadtxt("./data/coco-2017/labels/train/000000000072.txt").reshape(-1, 5)
     # bboxes = labels[:, 1:5]
     # bboxes_voc = yolo2voc(bboxes, image.shape[1], image.shape[0])

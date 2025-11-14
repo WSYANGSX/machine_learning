@@ -74,6 +74,9 @@ class TransformBase(TransformInterface):
         )
         return targets
 
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        return {"size0": self.get_target_size(sample)}
+
     def apply_to_target(self, target: np.ndarray, category: str, **params: dict[str, Any]) -> np.ndarray:
         """
         Applies transformations to a target in self._targets.
@@ -118,11 +121,16 @@ class TransformBase(TransformInterface):
         """
         Applies instances masks transformations.
 
-        All mask inputs are required to be  (N, H, W) for instances egmentation.
+        All mask inputs are required to be (N, H, W) for instances egmentation.
         Args:
             masks (np.ndarray): The masks used for instances egmentation tasks with shape (N, H, W).
             params (dict[str, Any]): Additional parameters for the transformation.
         """
+        if masks.size == 0:
+            fake_mask = np.zeros(params["size0"], dtype=masks.dtype)
+            fake_mask = self.apply_to_mask(fake_mask, **params)
+            return np.zeros((0, *fake_mask.shape[:2]), dtype=masks.dtype)
+
         return np.stack([self.apply_to_mask(mask, **params) for mask in masks])
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -135,13 +143,9 @@ class TransformBase(TransformInterface):
 
                 if key in self._targets:
                     extend_params = {"category": key, **params}
-                    res[key] = ensure_contiguous_output(
-                        target_function(ensure_contiguous_output(val), **extend_params),
-                    )
+                    res[key] = ensure_contiguous_output(target_function(ensure_contiguous_output(val), **extend_params))
                 else:
-                    res[key] = ensure_contiguous_output(
-                        target_function(ensure_contiguous_output(val), **params),
-                    )
+                    res[key] = ensure_contiguous_output(target_function(ensure_contiguous_output(val), **params))
             else:
                 res[key] = val
 
@@ -161,7 +165,7 @@ class TransformBase(TransformInterface):
                 None,
             )
             if size is None:
-                raise ValueError("No valid target found in the sample to infer size.")
+                raise ValueError("No valid target found in the sample to infer data size.")
         return size
 
 
@@ -302,9 +306,6 @@ class Mosaic(MixTransformBase):
         xc = int(random.uniform(-self.border[1], 2 * self.imgsz + self.border[1]))
         params.update({"mosaic_center": (yc, xc)})
         return params
-
-    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        return {"size0": self.get_target_size(sample)}
 
     def get_indexes(self):
         """
@@ -1040,7 +1041,8 @@ class RandomPerspective(TransformBase):
         self.pre_transform = pre_transform
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        size0 = self.get_target_size(sample)
+        sample_params = super().get_params_on_sample(sample, params)
+        size0 = sample_params["size0"]
 
         # border
         border = sample.pop("mosaic_border", self.border)
@@ -1078,21 +1080,15 @@ class RandomPerspective(TransformBase):
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
 
-        sample_params = {
-            "transform_matrix": M,
-            "scale": s,
-            "border": border,
-            "size0": size0,
-            "dsize": dsize,
-            "origin_sample": sample,
-        }
-
-        mask_mode = sample.get("mask_mode")
-        if mask_mode is not None:
-            assert mask_mode in ("semantic", "instance"), (
-                f"Invaild mask mode in sample, expect 'semantic' or 'instance', but got '{mask_mode}'."
-            )
-            sample_params["mask_mode"] = mask_mode
+        sample_params.update(
+            {
+                "transform_matrix": M,
+                "scale": s,
+                "border": border,
+                "dsize": dsize,
+                "origin_sample": sample,
+            }
+        )
 
         return sample_params
 
@@ -1396,10 +1392,6 @@ class RandomFlip(TransformBase):
         self.direction = direction
         self.flip_idx = flip_idx
 
-    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]):
-        size0 = self.get_target_size(sample)
-        return {"size0": size0}
-
     def apply_to_target(self, target: np.ndarray, **params: dict[str, Any]) -> np.ndarray:
         if self.direction == "vertical":
             return np.flipud(target)
@@ -1475,7 +1467,8 @@ class LetterBox(TransformBase):
         self.interpolation = interpolation
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        size0 = self.get_target_size(sample)
+        sample_params = super().get_params_on_sample(sample, params)
+        size0 = sample_params["size0"]
 
         dsize = sample.pop("rect_shape", self.dsize)
         if isinstance(dsize, int):
@@ -1489,7 +1482,6 @@ class LetterBox(TransformBase):
         # Compute padding
         ratio = r, r  # width, height ratios
         new_unpad = round(size0[1] * r), round(size0[0] * r)
-        print(new_unpad)
         dw, dh = dsize[1] - new_unpad[0], dsize[0] - new_unpad[1]  # wh padding
         if self.auto:  # minimum rectangle
             dw, dh = np.mod(dw, self.stride), np.mod(dh, self.stride)  # wh padding
@@ -1505,19 +1497,20 @@ class LetterBox(TransformBase):
         top, bottom = round(dh - 0.1) if self.center else 0, round(dh + 0.1)
         left, right = round(dw - 0.1) if self.center else 0, round(dw + 0.1)
 
-        sample_params = {
-            "size0": size0,
-            "new_unpad": new_unpad,
-            "dw": dw,
-            "dh": dh,
-            "ratio": ratio,
-            "top": top,
-            "bottom": bottom,
-            "left": left,
-            "right": right,
-            "dsize": dsize,
-        }
-
+        sample_params.update(
+            {
+                "new_unpad": new_unpad,
+                "dw": dw,
+                "dh": dh,
+                "ratio": ratio,
+                "top": top,
+                "bottom": bottom,
+                "left": left,
+                "right": right,
+                "dsize": dsize,
+            }
+        )
+        print(sample_params)
         return sample_params
 
     def apply_to_target(
@@ -1660,7 +1653,7 @@ class Albumentations(TransformBase):
             spatial_transforms (list[A.BasicTransform], optional): A list of classes in Albumentations used for sprtial
             transformations.
         """
-        self.p = p
+        super().__init__(p=p)
 
         self.color_compose = None
         self.spatial_compose = None
@@ -1683,8 +1676,7 @@ class Albumentations(TransformBase):
         self.spatial_transforms = spatial_transforms or []
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = {}
-        sample_params["size0"] = self.get_target_size(sample)
+        sample_params = super().get_params_on_sample(sample, params)
 
         # additional targets for spatial transform
         additional_targets = {}
@@ -1692,19 +1684,25 @@ class Albumentations(TransformBase):
             additional_targets["ir"] = "image"
         if "depth" in sample:
             additional_targets["depth"] = "image"
+        sample_params["additional_targets"] = additional_targets
 
-        has_mask = "mask" in sample and sample["mask"] is not None
-        has_masks = "masks" in sample and sample["masks"] is not None
+        # mask & masks
+        has_mask = "mask" in sample  # np.ndarray
+        has_masks = "masks" in sample  # np.ndarray or np.empty
         sample_params["has_mask"] = has_mask
         sample_params["has_masks"] = has_masks
 
         # bboxes / segments / keypoints
         compose_kwargs = {}
-        has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)  # bboxes is not None
+        has_instances = ("instances" in sample) and (len(sample["instances"]) > 0)  # bboxes is not empty
+        sample_params["has_instances"] = has_instances
         if has_instances:
-            assert "cls" in sample, "'instances' and 'cls' must appear in the sample simultaneously for Yolo task."
+            assert "cls" in sample and len(sample["cls"]) == len(sample["instances"]), (
+                "'instances' and 'cls' must appear in the sample simultaneously and have same length for Yolo task."
+            )
             compose_kwargs["bbox_params"] = A.BboxParams(format="pascal_voc", label_fields=["class_labels"])
-            if len(sample["instances"].segments) > 0 or sample["instances"].keypoints is not None:
+            has_segments = sample["instances"].segments is not None and len(sample["instances"].segments) > 0
+            if has_segments or sample["instances"].keypoints is not None:
                 compose_kwargs["keypoint_params"] = A.KeypointParams(format="xy", remove_invisible=False)
 
         # create transforms
@@ -1720,13 +1718,10 @@ class Albumentations(TransformBase):
             if hasattr(self.spatial_compose, "set_random_seed"):
                 self.spatial_compose.set_random_seed(random.randint(0, 2**31 - 1))
 
-        sample_params["additional_targets"] = additional_targets
-        sample_params["has_instances"] = has_instances
-
         return sample_params
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        # ---------- only RGB ----------
+        # ----------- color transform -----------
         if "img" in sample and self.color_compose is not None:
             img = sample["img"]
             if img is not None and img.ndim == 3 and img.shape[2] == 3:
@@ -1744,36 +1739,33 @@ class Albumentations(TransformBase):
         else:
             inputs["image"] = np.zeros((h0, w0, 3), dtype=np.uint8)  # pseudo image
         if "ir" in sample:
-            inputs["ir"] = sample["ir"]
+            inputs["ir"] = sample["ir"][..., None]  # Albumentations requires images to be 3-dimensional.
         if "depth" in sample:
-            inputs["depth"] = sample["depth"]
+            inputs["depth"] = sample["depth"][..., None]  # Albumentations requires images to be 3-dimensional.
 
         # bboxes & cls
         has_instances = params.get("has_instances", False)
         if has_instances:
-            cls = sample["cls"]  # not empty
-            if len(cls):
-                inst: Instances = sample["instances"]
-                inst.convert_bbox("xyxy")
-                inst.denormalize(w0, h0)  # [xmin, ymin, xmax, ymax]
-                inputs["bboxes"] = inst.bboxes
-                inputs["class_labels"] = cls.reshape(
-                    -1,
-                )
+            cls: np.ndarray = sample["cls"]  # not empty
+            instances: Instances = sample["instances"]
+            instances.convert_bbox("xyxy")
+            instances.denormalize(w0, h0)  # [xmin, ymin, xmax, ymax]
+            inputs["bboxes"] = instances.bboxes
+            inputs["class_labels"] = cls.squeeze()
 
-                # segments (N, 1000, 2)
-                has_segments = inst.segments is not None and len(inst.segments) > 0
-                if has_segments:
-                    segs = inst.segments.reshape(-1, 2)
-                    inputs["keypoints"] = segs
+            # segments (N, 1000, 2)
+            has_segments = sample["instances"].segments is not None and len(instances.segments) > 0
+            if has_segments:
+                segs = deepcopy(instances.segments).reshape(-1, 2)
+                inputs["keypoints"] = segs
 
-                # keypoints (N, nkpt, 3) (share keypoints pipleline)
-                has_keypoints = inst.keypoints is not None
-                if has_keypoints:
-                    kpts = inst.keypoints.reshape(-1, 3)
-                    vis = kpts[..., [2]]
-                    kpts = kpts[..., :2]
-                    inputs["keypoints"] = kpts
+            # keypoints (N, nkpt, 3) (share keypoints pipleline)
+            has_keypoints = instances.keypoints is not None
+            if has_keypoints:
+                kpts = deepcopy(instances.keypoints).reshape(-1, 3)
+                vis = kpts[..., [2]]
+                kpts = kpts[..., :2]
+                inputs["keypoints"] = kpts
 
         # mask
         if params["has_mask"]:
@@ -1781,18 +1773,18 @@ class Albumentations(TransformBase):
 
         # masks
         if params["has_masks"]:
-            inputs["masks"] = sample["masks"]  # instances (N, H, W)
+            inputs["masks"] = sample["masks"]  # instances (N, H, W) or (0, H, W)
 
         out = self.spatial_compose(**inputs)
 
         if "img" in sample:
             sample["img"] = out["image"]
         if "ir" in sample:
-            sample["ir"] = out["ir"]
+            sample["ir"] = out["ir"].squeeze()
         if "depth" in sample:
-            sample["depth"] = out["depth"]
+            sample["depth"] = out["depth"].squeeze()
 
-        h, w = next([sample[key].shape[:2] for key in self._targets])
+        h, w = next(iter([sample[key].shape[:2] for key in self._targets if key in sample]))
 
         if has_instances:
             new_segs = sample["instances"].segments  # origin segments data
@@ -1803,19 +1795,21 @@ class Albumentations(TransformBase):
                 sample["cls"] = new_cls
 
             if "keypoints" in out:
-                if has_segments:
-                    len_segs = len(new_segs)
-                    new_segs = out["keypoints"].reshape(len_segs, -1, 2)
-                    new_bboxes = np.stack([segment2box(xy, w, h) for xy in segs], 0)
-                    new_segs[..., 0] = new_segs[..., 0].clip(new_bboxes[:, 0:1], new_bboxes[:, 2:3])
-                    new_segs[..., 1] = new_segs[..., 1].clip(new_bboxes[:, 1:2], new_bboxes[:, 3:4])
+                kps_out = out["keypoints"]
 
-                if has_keypoints:
-                    len_kpts = len(new_kpts)
-                    new_kpts = out["keypoints"]
+                if has_segments:
+                    n, _ = new_segs.shape[:2]  # N, M
+                    segs = kps_out.reshape(n, -1, 2)
+                    segs[..., 0] = segs[..., 0].clip(0, w)
+                    segs[..., 1] = segs[..., 1].clip(0, h)
+                    new_segs = segs
+
+                elif has_keypoints:
+                    n = len(new_kpts)
+                    kpts = kps_out
                     out_mask = (new_kpts[:, 0] < 0) | (new_kpts[:, 1] < 0) | (new_kpts[:, 0] > w) | (new_kpts[:, 1] > h)
                     vis[out_mask] = 0
-                    new_kpts = np.concatenate([new_kpts, vis], axis=-1).reshape(len_kpts, -1, 3)
+                    new_kpts = np.concatenate([new_kpts, vis], axis=-1).reshape(n, -1, 3)
 
             new_instances = Instances(
                 bboxes=new_bboxes, segments=new_segs, keypoints=new_kpts, bbox_format="xyxy", normalized=False
@@ -1827,7 +1821,11 @@ class Albumentations(TransformBase):
             sample["mask"] = out["mask"]
 
         if "masks" in out:
-            sample["masks"] = out["masks"]
+            masks: np.ndarray = sample["masks"]
+            if masks.size == 0:  # empty
+                sample["masks"] = np.zeros((0, h, w), masks.dtype)
+            else:
+                sample["masks"] = out["masks"]
 
         return sample
 
@@ -1848,18 +1846,6 @@ class Format:
         mask_overlap (bool): Whether to overlap masks.
         batch_idx (bool): Whether to keep batch indexes.
         bgr (float): The probability to return BGR images.
-
-    Methods:
-        __call__: Formats sample dictionary with image, classes, bounding boxes, and optionally masks and keypoints.
-        _format_img: Converts image from Numpy array to PyTorch tensor.
-        _format_segments: Converts polygon points to bitmap masks.
-
-    Examples:
-        >>> formatter = Format(bbox_format="xywh", normalize=True, return_mask=True)
-        >>> formatted_sample = formatter(sample)
-        >>> img = formatted_sample["img"]
-        >>> bboxes = formatted_sample["bboxes"]
-        >>> masks = formatted_sample["masks"]
     """
 
     def __init__(
@@ -1914,21 +1900,6 @@ class Format:
                 - 'img': The input image as a numpy array.
                 - 'cls': Class for instances.
                 - 'instances': An Instances object containing bounding boxes, segments, and keypoints.
-
-        Returns:
-            (Dict): A dictionary with formatted data, including:
-                - 'img': Formatted image tensor.
-                - 'cls': Class label's tensor.
-                - 'bboxes': Bounding boxes tensor in the specified format.
-                - 'masks': Instance masks tensor (if return_mask is True).
-                - 'keypoints': Keypoints tensor (if return_keypoint is True).
-                - 'batch_idx': Batch index tensor (if batch_idx is True).
-
-        Examples:
-            >>> formatter = Format(bbox_format="xywh", normalize=True, return_mask=True)
-            >>> sample = {"img": np.random.rand(640, 640, 3), "cls": np.array([0, 1]), "instances": Instances(...)}
-            >>> formatted_sample = formatter(sample)
-            >>> print(formatted_sample.keys())
         """
         img = sample.pop("img")
         h, w = img.shape[:2]

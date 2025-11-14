@@ -115,6 +115,7 @@ def imgs_np2tensor(imgs: np.ndarray, bs: bool | None = None) -> torch.Tensor:
 
 def plot_imgs(
     imgs: list[np.ndarray],
+    titles: list[str] | None = None,
     cmap: str | None = "rgb",
     backend: Literal["pyplot", "opencv", "pillow"] = "pyplot",
 ) -> None:
@@ -129,11 +130,11 @@ def plot_imgs(
     processed_images = [color_maps(img, cmap) for img in imgs]
 
     if backend == "opencv":
-        _plot_with_opencv(processed_images)
+        _plot_with_opencv(processed_images, titles)
     elif backend == "pillow":
-        _plot_with_pillow(processed_images)
+        _plot_with_pillow(processed_images, titles)
     else:
-        _plot_with_pyplot(processed_images)
+        _plot_with_pyplot(processed_images, titles)
 
 
 def color_maps(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
@@ -228,17 +229,17 @@ def color_maps(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
     return img
 
 
-def _plot_with_opencv(imgs: list[np.ndarray]) -> None:
+def _plot_with_opencv(imgs: list[np.ndarray], titles: list[str] | None = None) -> None:
     for i, img in enumerate(imgs):
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        window_name = f"Image: {i + 1}"
+        window_name = titles[i] if titles is not None else f"Image: {i + 1}"
         cv2.imshow(window_name, img)
 
     cv2.waitKey(0)
     cv2.destroyWindow(window_name)
 
 
-def _plot_with_pillow(imgs: list[np.ndarray]) -> None:
+def _plot_with_pillow(imgs: list[np.ndarray], titles: list[str] | None = None) -> None:
     from PIL import Image
 
     for i, img in enumerate(imgs):
@@ -251,10 +252,10 @@ def _plot_with_pillow(imgs: list[np.ndarray]) -> None:
         else:
             img = Image.fromarray(img, mode="RGB")
 
-        img.show(title=f"Image: {i + 1}")
+        img.show(title=titles[i] if titles is not None else f"Image: {i + 1}")
 
 
-def _plot_with_pyplot(imgs: list[np.ndarray]) -> None:
+def _plot_with_pyplot(imgs: list[np.ndarray], titles: list[str] | None = None) -> None:
     for i, img in enumerate(imgs):
         _ = plt.figure(i + 1, figsize=(6, 6))
 
@@ -264,7 +265,7 @@ def _plot_with_pyplot(imgs: list[np.ndarray]) -> None:
             plt.imshow(img)
 
         plt.axis("off")
-        plt.title(f"Image: {i + 1}")
+        plt.title(titles[i] if titles is not None else f"Image: {i + 1}")
         plt.tight_layout()
 
     plt.show()
