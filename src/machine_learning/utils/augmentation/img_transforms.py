@@ -1086,7 +1086,7 @@ class RandomPerspective(TransformBase):
                 "scale": s,
                 "border": border,
                 "dsize": dsize,
-                "origin_sample": sample,
+                "origin_sample": deepcopy(sample),
             }
         )
 

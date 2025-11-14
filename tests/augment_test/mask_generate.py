@@ -23,7 +23,7 @@ segments = segments.reshape(-1, 2000)
 np.save("segments", segments)
 
 mask = polygon2mask(imgsz, segments, 255)
-# cv2.imwrite("mask.jpg", mask)
+cv2.imwrite("mask.jpg", mask)
 
 
 # 比较两个mask
