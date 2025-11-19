@@ -1,4 +1,5 @@
 import cv2
+import torch
 import numpy as np
 import albumentations as A
 
@@ -9,13 +10,13 @@ from machine_learning.utils.augmentation.img_transforms import (
     RandomFlip,
     LetterBox,
     Albumentations,
+    Format,
 )
-from machine_learning.utils.img import plot_imgs
+from machine_learning.utils.image import plot_imgs, img_tensor2np
 from machine_learning.utils.detection import visualize_img_bboxes
 from ultralytics.utils.instance import Instances
 from ultralytics.data.utils import polygon2mask
 
-np.set_printoptions(threshold=np.inf)
 
 img = Image.open("/home/yangxf/WorkSpace/machine_learning/tests/augment_test/FLIR_00233_RGB.jpg")
 img = np.array(img)
@@ -46,7 +47,7 @@ segments[..., 1] /= img.shape[0]
 empty_seg = np.zeros((0, 1000, 2))
 
 instances = Instances(bboxes=bboxes, bbox_format="xywh", normalized=True, segments=segments)
-sample = {"img": img, "ir": ir, "cls": cls, "instances": instances}
+sample = {"img": img, "ir": ir, "cls": cls, "instances": instances, "mask": mask}
 
 
 random_perspective = RandomPerspective(degrees=45, border=(512 // 2, 640 // 2))
@@ -68,28 +69,62 @@ sample = random_perspective(sample)
 # )
 # sample = albumentations(sample)
 
-img = sample["img"]
-ir = sample["ir"]
-cls = sample["cls"]
-instance: Instances = sample["instances"]
-instance.convert_bbox("xyxy")
-instance.denormalize(img.shape[1], img.shape[0])
-bboxes = instance.bboxes
-segments = instance.segments
+format = Format(
+    bbox_format="xyxy",
+    normalize=False,
+    return_mask=True,
+    mask_mode="semantic",
+    mask_overlap=False,
+    return_keypoint=False,
+    kpt_shape=(17, 3),
+    return_obb=False,
+)
+sample = format(sample)
 
-mask2 = np.zeros(img.shape[:2], dtype=np.uint8)
-for segment in segments:
-    # 将点转换为整数坐标
-    pts = segment.reshape(-1, 2).astype(np.int32)
-    cv2.fillPoly(mask2, [pts], color=255)
+# img = sample["img"]
+# ir = sample["ir"]
+# cls = sample["cls"]
+# instance: Instances = sample["instances"]
+# instance.convert_bbox("xyxy")
+# instance.denormalize(img.shape[1], img.shape[0])
+# bboxes = instance.bboxes
+# segments = instance.segments
 
-plot_imgs([sample["img"], sample["ir"], origin_mask, mask2])
+# mask2 = np.zeros(img.shape[:2], dtype=np.uint8)
+# for segment in segments:
+#     # 将点转换为整数坐标
+#     pts = segment.reshape(-1, 2).astype(np.int32)
+#     cv2.fillPoly(mask2, [pts], color=255)
 
-# print(sample)
+# plot_imgs([sample["img"], sample["ir"], origin_mask, mask2])
+
+# # print(sample)
+# visualize_img_bboxes(
+#     sample["img"],
+#     bboxes,
+#     cls.reshape(-1),
+#     color=(0, 0, 255),
+#     thickness=1,
+# )
+
+
+# format
+print("img:", sample["img"])
+plot_imgs([img_tensor2np(sample["img"])])
+plot_imgs([img_tensor2np(sample["ir"])])
+print("ir:", sample["ir"])
+print("cls:", sample["cls"])
+print("bboxes:", sample["bboxes"])
+print("mask:", sample["mask"])
+plot_imgs([img_tensor2np(sample["mask"])])
+
+print(img_tensor2np(sample["img"]).shape)
+print(sample["bboxes"].numpy().shape)
+print(sample["cls"].reshape(-1).numpy().shape)
 visualize_img_bboxes(
-    sample["img"],
-    bboxes,
-    cls.reshape(-1),
+    img_tensor2np(sample["img"]),
+    sample["bboxes"].numpy(),
+    sample["cls"].reshape(-1).numpy(),
     color=(0, 0, 255),
     thickness=1,
 )

@@ -1,5 +1,5 @@
 import numpy as np
 
-a = np.zeros((5, 4, 3))
-b = np.zeros((0, 7, 8))
-print(np.stack([a, b]))
+masks = np.zeros((1, 4, 5))
+b = np.zeros((0, masks.shape[1], masks.shape[2]), dtype=masks.dtype)
+print(b)

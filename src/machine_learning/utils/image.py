@@ -8,109 +8,85 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def imgs_tensor2np(imgs: torch.Tensor, bs: bool | None = None) -> np.ndarray:
-    """Convert tensor format images to numpy arrays and adjust the format.
+def img_tensor2np(img: torch.Tensor) -> np.ndarray:
+    """Convert tensor format image to numpy arrays and adjust the format.
 
     Args:
-        imgs (torch.Tensor): Input tensor of shape (B, C, H, W) or (C, H, W) or (B, H, W) or (H, W)
-        bs (bool | None): Whether the input tensor include a batch (multiple images). Default to None.
+        img (torch.Tensor): Input tensor of shape (C, H, W) or (H, W).
 
     Returns:
-        Numpy array with shape (B, H, W, C) or (H, W, C) or (H, W) with values in range [0, 255] and dtype uint8.
+        Numpy array with shape (H, W, C) or (H, W) with values in range [0, 255] and dtype uint8.
     """
     # Input validation
-    if not isinstance(imgs, torch.Tensor):
-        raise TypeError(f"Expected torch.Tensor, got {type(imgs)}.")
+    if not isinstance(img, torch.Tensor):
+        raise TypeError(f"Expected torch.Tensor, got {type(img)}.")
 
     # Convert to numpy
-    imgs = imgs.detach().cpu().numpy()
+    img = img.detach().cpu().numpy()
 
-    # Determine if input has batch dimension
-    if bs is None:
-        # Auto-detect: if 4D or 3D with first dim > 4 (unlikely to be channels)
-        bs = imgs.ndim == 4 or (imgs.ndim == 3 and imgs.shape[0] > 4)
-
-    # Channel-first to channel-last conversion
-    if imgs.ndim == 4:
-        # (B, C, H, W) -> (B, H, W, C)
-        imgs = imgs.transpose(0, 2, 3, 1)
-    elif imgs.ndim == 3:
-        if bs:
-            # Batch of grayscale images: (B, H, W) -> (B, H, W, 1)
-            imgs = imgs[..., np.newaxis]
-        else:
-            # Single image: (C, H, W) -> (H, W, C)
-            imgs = imgs.transpose(1, 2, 0)
-    elif imgs.ndim == 2:
+    if img.ndim == 3:
+        # (C, H, W) -> (H, W, C)
+        img = img.transpose(1, 2, 0)
+        if img.shape[2] == 1:
+            # Single channel: (H, W, 1) -> (H, W)
+            img = img[:, :, 0]
+    elif img.ndim == 2:
         # Single grayscale image: (H, W) -> keep as is
         pass
     else:
-        raise ValueError(f"Unsupported tensor shape: {imgs.shape}.")
+        raise ValueError(f"Unsupported tensor shape: {img.shape}.")
 
     # Normalize and convert to uint8
-    if np.issubdtype(imgs.dtype, np.floating):
-        if np.min(imgs) >= 0 and np.max(imgs) <= 1:
-            imgs = (imgs * 255).astype(np.uint8)
+    if np.issubdtype(img.dtype, np.floating):
+        if np.min(img) >= 0 and np.max(img) <= 1:
+            img = (img * 255).astype(np.uint8)
         else:
-            imgs = np.clip(imgs, 0, 255).astype(np.uint8)
+            img = np.clip(img, 0, 255).astype(np.uint8)
     else:
-        imgs = np.clip(imgs, 0, 255).astype(np.uint8)
+        img = np.clip(img, 0, 255).astype(np.uint8)
 
-    return imgs
+    return np.ascontiguousarray(img)
 
 
-def imgs_np2tensor(imgs: np.ndarray, bs: bool | None = None) -> torch.Tensor:
+def img_np2tensor(img: np.ndarray) -> torch.Tensor:
     """Convert numpy array images to tensor format and adjust the format.
 
     Args:
-        imgs (np.ndarray): Input array of shape (B, H, W, C) or (B, H, W) or (H, W, C) or (H, W)
-        bs (bool | None): Whether the input tensor include a batch (multiple images). Default to None.
+        img (np.ndarray): Input array of shape (H, W, C) or (H, W)
 
     Returns:
-        torch.Tensor: Tensor with shape (B, C, H, W) or (C, H, W) or (H, W) with values normalized to [0, 1] and dtype float32.
+        torch.Tensor: Tensor with shape (C, H, W) with values normalized to [0, 1] and dtype float32.
     """
     # Input validation
-    if not isinstance(imgs, np.ndarray):
-        raise TypeError(f"Expected np.ndarray, got {type(imgs)}.")
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"Expected np.ndarray, got {type(img)}.")
 
     # Make a copy to avoid modifying the original array
-    imgs = imgs.copy()
-
-    # Determine if output should have batch dimension
-    if bs is None:
-        # Auto-detect: if 4D or 3D with first dim > 4 (unlikely to be height)
-        bs = imgs.ndim == 4 or (imgs.ndim == 3 and imgs.shape[0] > 4)
+    img = img.copy()
 
     # Process value range and convert to float32
-    if np.issubdtype(imgs.dtype, np.integer):
+    if np.issubdtype(img.dtype, np.integer):
         # Integer types [0, 255] -> normalized float [0, 1]
-        imgs = imgs.astype(np.float32) / 255.0
-    elif np.issubdtype(imgs.dtype, np.floating):
-        if np.min(imgs) < 0 or np.max(imgs) > 1:
+        img = img.astype(np.float32) / 255.0
+    elif np.issubdtype(img.dtype, np.floating):
+        if np.min(img) < 0 or np.max(img) > 1:
             # Normalize to [0, 1] if not already normalized
-            imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
-        imgs = imgs.astype(np.float32)
+            img = (img - np.min(img)) / (np.max(img) - np.min(img))
+        img = img.astype(np.float32)
 
     # Channel-last to channel-first conversion
-    if imgs.ndim == 4:
-        # (B, H, W, C) -> (B, C, H, W)
-        imgs = imgs.transpose(0, 3, 1, 2)
-    elif imgs.ndim == 3:
-        if bs:
-            # batch images: (B, H, W) -> (B, 1, H, W)
-            imgs = np.expand_dims(imgs, axis=1)
-        else:
-            # Single image: (H, W, C) -> (C, H, W)
-            imgs = imgs.transpose(2, 0, 1)
-    elif imgs.ndim == 2:
+    if img.ndim == 3:  # (H, W, C)
+        # Single image: (H, W, C) -> (C, H, W)
+        img = img.transpose(2, 0, 1)
+    elif img.ndim == 2:
         # Single grayscale image: (H, W) -> (1, H, W)
-        imgs = np.expand_dims(imgs, axis=0)
+        img = np.expand_dims(img, axis=0)
 
     else:
-        raise ValueError(f"Unsupported array shape: {imgs.shape}.")
+        raise ValueError(f"Unsupported array shape: {img.shape}.")
 
     # Convert to torch tensor
-    return torch.from_numpy(imgs)
+    return torch.from_numpy(img).contiguous()
 
 
 def plot_imgs(
@@ -212,8 +188,6 @@ def color_maps(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
                     # Viridis mapping is used by default
                     img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
 
-                # Make sure the output is in RGB format (OpenCV defaults to BGR)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             else:
                 # Multi-channel images, color mapping cannot be applied
                 raise ValueError(f"The color mapping '{cmap}' can only be applied to single-channel images.")
@@ -222,16 +196,11 @@ def color_maps(img: np.ndarray, cmap: str | None = "rgb") -> np.ndarray:
         if reverse:
             img = 255 - img
 
-    # (H, W) -> (H, W, 1)
-    if img.ndim == 2:
-        img = np.expand_dims(img, axis=-1)
-
     return img
 
 
 def _plot_with_opencv(imgs: list[np.ndarray], titles: list[str] | None = None) -> None:
     for i, img in enumerate(imgs):
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         window_name = titles[i] if titles is not None else f"Image: {i + 1}"
         cv2.imshow(window_name, img)
 

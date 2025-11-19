@@ -297,7 +297,7 @@ class YoloDataset(DatasetBase):
                     kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                     keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
             lb = lb[:, :5]
-            return im_file, lb, shape, segments, keypoints
+            return im_file, b, shape, segments, keypoints
 
         except Exception as e:
             self.num_corrupt += 1

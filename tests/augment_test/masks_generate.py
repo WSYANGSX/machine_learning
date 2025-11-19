@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from ultralytics.data.utils import polygons2masks
-from machine_learning.utils.img import plot_imgs
+from machine_learning.utils.image import plot_imgs
 from ultralytics.utils.ops import resample_segments
 
 img = cv2.imread("/home/yangxf/WorkSpace/machine_learning/tests/augment_test/FLIR_00233_RGB.jpg", cv2.IMREAD_COLOR_RGB)

@@ -13,7 +13,7 @@ class TransformInterface(ABC):
     """
 
     _targets: tuple[str]  # targets that this transform can work on
-    _annotation_targets: tuple[str]  # annotation targets that need to be update with targets
+    _annotations: tuple[str]  # annotation targets that need to be update with targets
 
     def __init__(self, p: float = 1):
         self._p = p
@@ -57,8 +57,8 @@ class TransformInterface(ABC):
         """Set _available_keys."""
         if hasattr(self, "_targets") and len(self._targets) > 0:
             self._available_keys.update(self._targets)
-        if hasattr(self, "_annotation_targets") and len(self._annotation_targets) > 0:
-            self._available_keys.update(self._annotation_targets)
+        if hasattr(self, "_annotations") and len(self._annotations) > 0:
+            self._available_keys.update(self._annotations)
 
         self._available_keys.update(self.targets.keys())
         self._key2func = {key: self.targets[key] for key in self._available_keys if key in self.targets}
@@ -85,6 +85,7 @@ class TransformInterface(ABC):
         params.update(params_dependent_on_data)
         self._params = params
 
+        sample = self._sort_sample_keys(sample)  # for process_params pass correctly
         if random.random() < self.p:
             return self.apply_with_params(sample, params)
         return sample
@@ -96,6 +97,21 @@ class TransformInterface(ABC):
     def get_target_size(self, sample: dict[str, Any]) -> tuple[int, int]:
         """Get the target size (h, w) of targets in a sample."""
         raise NotImplementedError
+
+    def _sort_sample_keys(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """Sort sample keys to ensure data targets are processed before annotations."""
+        sorted_sample = {}
+        for key in self._targets:
+            if key in sample:
+                sorted_sample[key] = sample[key]
+        for key in self._annotations:
+            if key in sample:
+                sorted_sample[key] = sample[key]
+        for key in sample:
+            if key not in sorted_sample:
+                sorted_sample[key] = sample[key]
+
+        return sorted_sample
 
 
 class Compose:

@@ -17,6 +17,7 @@ from PIL import Image
 from copy import deepcopy
 from torch.utils.data import Dataset
 
+
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
@@ -24,7 +25,7 @@ from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
 from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
 
 from .core import TransformInterface, Compose
-from .utils import ensure_contiguous_output
+from .utils import ensure_contiguous_output, masks_to_overlap
 from machine_learning.utils.logger import LOGGER
 
 
@@ -43,7 +44,7 @@ class TransformBase(TransformInterface):
     """
 
     _targets = ("img", "ir", "depth")
-    _annotation_targets = ("instances", "mask", "masks")
+    _annotations = ("instances", "mask", "masks")
 
     def __init__(self, p: float = 1) -> None:
         """
@@ -305,6 +306,7 @@ class Mosaic(MixTransformBase):
         yc = int(random.uniform(-self.border[0], 2 * self.imgsz + self.border[0]))
         xc = int(random.uniform(-self.border[1], 2 * self.imgsz + self.border[1]))
         params.update({"mosaic_center": (yc, xc)})
+        params["areas"] = None  # to record the area of each image in the mosaic
         return params
 
     def get_indexes(self):
@@ -345,6 +347,7 @@ class Mosaic(MixTransformBase):
             else:
                 target4 = np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
 
+            areas = []
             for i in range(4):
                 # Load image
                 target = target if i == 0 else mix_samples[i - 1][category]
@@ -365,6 +368,10 @@ class Mosaic(MixTransformBase):
                     x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
 
                 target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+                areas.append((y2a - y1a) * (x2a - x1a))
+
+            if params["areas"] is None:
+                params["areas"] = areas
 
             return target4
 
@@ -376,9 +383,18 @@ class Mosaic(MixTransformBase):
             else:
                 target9 = np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
 
+            areas = []
+            crop_x1, crop_y1, crop_x2, crop_y2 = (
+                -self.border[1],
+                -self.border[0],
+                self.imgsz * 3 + self.border[1],
+                self.imgsz * 3 + self.border[0],
+            )
+
             for i in range(9):
                 target = target if i == 0 else mix_samples[i - 1][category]
                 h, w = size0 if i == 0 else target.shape[:2]
+
                 # Place img in img9
                 if i == 0:  # center
                     h0, w0 = h, w
@@ -400,11 +416,21 @@ class Mosaic(MixTransformBase):
                 elif i == 8:  # top left
                     c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
 
-                padw, padh = c[:2]
-                x1, y1, x2, y2 = (max(x, 0) for x in c)
-                hp, wp = h, w  # Record the current image size for the next use
+                # c = (x1a, y1a, x2a, y2a)
+                x1a, y1a, x2a, y2a = c
 
+                # Intersect with the cropping window
+                ix1, iy1, ix2, iy2 = max(x1a, crop_x1), max(y1a, crop_y1), min(x2a, crop_x2), min(y2a, crop_y2)
+                iw, ih = max(ix2 - ix1, 0), max(iy2 - iy1, 0)
+                areas.append(iw * ih)
+
+                padw, padh = c[:2]
+                x1, y1, x2, y2 = max(c[0], 0), max(c[1], 0), min(c[2], self.imgsz * 3), min(c[3], self.imgsz * 3)
+                hp, wp = h, w  # Record the current image size for the next use
                 target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :]
+
+            if params["areas"] is None:
+                params["areas"] = areas
 
             # Labels assuming imgsz*2 mosaic size
             return target9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
@@ -659,7 +685,7 @@ class Mosaic(MixTransformBase):
         sample["mosaic_border"] = self.border
 
         # clip and clean
-        if "instances" in sample and "cls" in sample:
+        if "instances" in sample and "cls" in sample:  # yolo task
             cls = [sample["cls"]]
             for ms in mix_samples:
                 cls.append(ms["cls"])
@@ -668,11 +694,37 @@ class Mosaic(MixTransformBase):
             sample["instances"].clip(imgsz, imgsz)
             good = sample["instances"].remove_zero_area_boxes()
             sample["cls"] = sample["cls"][good]
-        else:
-            raise KeyError("Instances and cls must appear in the sample simultaneously for Yolo task.")
 
-        if params.get("mask_mode") == "instance" and "masks" in sample and sample["masks"] is not None:
-            sample["masks"] = sample["masks"][good]
+            if "masks" in sample:
+                sample["masks"] = sample["masks"][good]
+
+        elif "masks" in sample and "cls" in sample and "instances" not in sample:  # instance segment task
+            # update cls
+            cls = [sample["cls"]]
+            for ms in mix_samples:
+                cls.append(ms["cls"])
+            sample["cls"] = np.concatenate(cls, 0)
+            # update masks
+            masks: np.ndarray = sample["masks"]
+            if masks.size > 0:
+                indices = masks.sum(axis=(1, 2)) > 0
+                sample["masks"] = masks[indices]
+                sample["cls"] = sample["cls"][indices]
+
+        elif "instances" not in sample and "masks" not in sample and "cls" in sample:  # classify task
+            # classification task with soft labels (Mixup/CutMix-style)
+            # cls is expected to be one-hot or probability vector
+            if params.get("areas", None) is None:
+                # Revert to simple average weights
+                num = 1 + len(mix_samples)
+                weights = np.full(num, 1.0 / num, dtype=np.float32)
+            else:
+                areas = np.array(params["areas"], dtype=np.float32)
+                weights = areas / areas.sum()
+            cls = sample["cls"] * weights[0]
+            for i, ms in enumerate(mix_samples):
+                cls += ms["cls"] * weights[i + 1]
+            sample["cls"] = cls
 
         return sample
 
@@ -696,6 +748,7 @@ class MixUp(MixTransformBase):
         self,
         dataset: Dataset,
         p: float = 0.0,
+        alpha: float = 32.0,
         pre_transform: TransformBase | Compose = None,
     ) -> None:
         """
@@ -710,46 +763,44 @@ class MixUp(MixTransformBase):
             p (float): Probability of applying MixUp augmentation to an image. Must be in the range [0, 1].
         """
         super().__init__(dataset=dataset, p=p, pre_transform=pre_transform)
-
-    def get_indexes(self):
-        """
-        Get a random index from the dataset.
-
-        This method returns a single random index from the dataset, which is used to select an image for MixUp
-        augmentation.
-
-        Returns:
-            (int): A random integer index within the range of the dataset length.
-        """
-        return random.randint(0, len(self.dataset) - 1)
+        self.alpha = alpha
 
     def get_params(self):
-        params = super.get_params()
-        ratio = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
-        params.update({"ratio": ratio})
+        params = super().get_params()
+        if self.alpha <= 0:
+            ratio = 1.0  # no mixup
+        else:
+            ratio = np.random.beta(self.alpha, self.alpha)  # mixup ratio, alpha=beta=32.0
+        params["ratio"] = ratio
         return params
 
-    def apply_to_image(
-        self, image: np.ndarray, mix_samples: dict[str, Any], image_category: str | None = None, **params
-    ) -> np.ndarray:
+    def apply_to_target(self, target: np.ndarray, category: str, mix_samples: dict[str, Any], **params) -> np.ndarray:
         ratio = params["ratio"]
-        return (image * ratio + mix_samples[0][image_category] * (1 - ratio)).astype(np.uint8)
+        if category == "img":
+            return (target * ratio + mix_samples[0][category] * (1 - ratio)).astype(np.uint8)
+        else:
+            return target
 
-    def apply_to_instances(self, instances: Instances, mix_samples: dict[str, Any], **params) -> Instances:
+    def apply_to_instances(
+        self, instances: Instances, mix_samples: dict[str, Any], **params: dict[str, Any]
+    ) -> Instances:
         return Instances.concatenate([instances, mix_samples[0]["instances"]], axis=0)
 
-    def apply_to_mask(self, mask, mix_samples, **params):
-        return super().apply_to_mask(mask, mix_samples, **params)
-
-    def apply_to_masks(self, masks: np.ndarray, mix_samples: dict[str, Any], **params) -> np.ndarray:
-        return super().apply_to_masks(masks, mix_samples, **params)
-
-    def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
+    def update_sample(
+        self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> dict[str, Any]:
         sample["cls"] = np.concatenate([sample["cls"], mix_samples[0]["cls"]], 0)
         return sample
 
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        mix_sample = params["mix_samples"][0]
 
-# TODO
+        if sample["size0"] != self.get_target_size(mix_sample):
+            return sample  # skip mixup if sizes are different
+        else:
+            return super().apply_with_params(sample, params)
+
+
 class CutMix(MixTransformBase):
     """Apply CutMix augmentation to image datasets as described in the paper https://arxiv.org/abs/1905.04899.
 
@@ -785,94 +836,229 @@ class CutMix(MixTransformBase):
         self.beta = beta
         self.num_areas = num_areas
 
+    def get_params(self):
+        params = super().get_params()
+        params["process_params"] = {}
+        return params
+
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        """
+        Generates target size0 and random bounding box coordinates for CutMix augmentation.
+        """
+
+        def _rand_bbox(width: int, height: int) -> tuple[int, int, int, int]:
+            """Generate random bounding box coordinates for the cut region.
+
+            Args:
+                width (int): Width of the image.
+                height (int): Height of the image.
+            """
+            # Sample mixing ratio from Beta distribution
+            lam = np.random.beta(self.beta, self.beta)
+
+            cut_ratio = np.sqrt(1.0 - lam)
+            cut_w = int(width * cut_ratio)
+            cut_h = int(height * cut_ratio)
+
+            # Random center
+            cx = np.random.randint(width)
+            cy = np.random.randint(height)
+
+            # Bounding box coordinates
+            x1 = np.clip(cx - cut_w // 2, 0, width)
+            y1 = np.clip(cy - cut_h // 2, 0, height)
+            x2 = np.clip(cx + cut_w // 2, 0, width)
+            y2 = np.clip(cy + cut_h // 2, 0, height)
+
+            return x1, y1, x2, y2
+
         h, w = size0 = self.get_target_size(sample)
-        cut_areas = np.asarray([self._rand_bbox(w, h) for _ in range(self.num_areas)], dtype=np.float32)
+        length = len(sample["instances"].segments) if "instances" in sample else None
+        cut_areas = np.asarray([_rand_bbox(w, h) for _ in range(self.num_areas)], dtype=np.float32)
 
-        return {"size0": size0, "cut_areas": cut_areas}
+        valid_idxs = np.arange(self.num_areas)
+        if "instances" in sample:
+            # Ensure at least one area has no significant overlap with existing boxes
+            ioa = bbox_ioa(cut_areas, sample["instances"].bboxes)  # (self.num_areas, num_boxes)
+            valid_idxs = np.nonzero(ioa.sum(axis=1) <= 0)[0]
 
-    def get_indexes(self):
-        return random.randint(0, len(self.dataset) - 1)
+        return {"size0": size0, "cut_areas": cut_areas, "length": length, "valid_idxs": valid_idxs}
 
-    def _rand_bbox(self, width: int, height: int) -> tuple[int, int, int, int]:
-        """Generate random bounding box coordinates for the cut region.
+    def apply_to_target(
+        self, target: np.ndarray, category: str, mix_samples: dict[str, Any], **params: dict[str, Any]
+    ) -> np.ndarray:
+        if len(params["valid_idxs"]) == 0:
+            return target
 
-        Args:
-            width (int): Width of the image.
-            height (int): Height of the image.
+        area = params["cut_areas"][np.random.choice(params["valid_idxs"])]
+        params["process_params"]["area"] = area
+        sample2 = mix_samples[0]
+        target2 = sample2[category]
+        x1, y1, x2, y2 = area.astype(np.int32)
 
-        Returns:
-            (tuple[int]): (x1, y1, x2, y2) coordinates of the bounding box.
-        """
-        # Sample mixing ratio from Beta distribution
-        lam = np.random.beta(self.beta, self.beta)
+        if "instances" not in sample2:  # no bboxes limit
+            # classification task、 mask/masks segment task
+            patch = target2[y1:y2, x1:x2]
+            target[y1:y2, x1:x2] = patch
+            return target
 
-        cut_ratio = np.sqrt(1.0 - lam)
-        cut_w = int(width * cut_ratio)
-        cut_h = int(height * cut_ratio)
+        else:  # bboxes limit
+            # yolo task
+            ioa2 = bbox_ioa(np.array(area)[None], sample2["instances"].bboxes).squeeze(0)
+            indexes2 = np.nonzero(ioa2 >= (0.01 if params["length"] else 0.1))[0]
+            params["process_params"]["indexes2"] = indexes2
+            if len(indexes2) == 0:
+                return target
+            target[y1:y2, x1:x2] = target2[y1:y2, x1:x2]
+            return target
 
-        # Random center
-        cx = np.random.randint(width)
-        cy = np.random.randint(height)
+    def apply_to_instances(
+        self, instances: Instances, mix_samples: dict[str, Any], **params: dict[str, Any]
+    ) -> Instances:
+        if len(params["valid_idxs"]) == 0:
+            return instances
 
-        # Bounding box coordinates
-        x1 = np.clip(cx - cut_w // 2, 0, width)
-        y1 = np.clip(cy - cut_h // 2, 0, height)
-        x2 = np.clip(cx + cut_w // 2, 0, width)
-        y2 = np.clip(cy + cut_h // 2, 0, height)
+        sample2 = mix_samples[0]
+        area = params["process_params"]["area"]
 
-        return x1, y1, x2, y2
-
-    def apply_to_target(self, target, category, mix_samples, **params):
-        return super().apply_to_target(target, category, mix_samples, **params)
-
-    def apply_to_instances(self, instances, mix_samples, **params):
-        return super().apply_to_instances(instances, mix_samples, **params)
-
-    def apply_to_masks(self, masks, mix_samples, **params):
-        return super().apply_to_masks(masks, mix_samples, **params)
-
-    def _mix_transform(self, labels: dict[str, Any]) -> dict[str, Any]:
-        """Apply CutMix augmentation to the input labels.
-
-        Args:
-            labels (dict[str, Any]): A dictionary containing the original image and label information.
-
-        Returns:
-            (dict[str, Any]): A dictionary containing the mixed image and adjusted labels.
-        """
-        # Get a random second image
-        h, w = labels["img"].shape[:2]
-
-        cut_areas = np.asarray([self._rand_bbox(w, h) for _ in range(self.num_areas)], dtype=np.float32)
-        ioa1 = bbox_ioa(cut_areas, labels["instances"].bboxes)  # (self.num_areas, num_boxes)
-        idx = np.nonzero(ioa1.sum(axis=1) <= 0)[0]
-        if len(idx) == 0:
-            return labels
-
-        labels2 = labels.pop("mix_labels")[0]
-        area = cut_areas[np.random.choice(idx)]  # randomly select one
-        ioa2 = bbox_ioa(area[None], labels2["instances"].bboxes).squeeze(0)
-        indexes2 = np.nonzero(ioa2 >= (0.01 if len(labels["instances"].segments) else 0.1))[0]
+        indexes2 = params["process_params"]["indexes2"]
         if len(indexes2) == 0:
-            return labels
+            return instances
 
-        instances2 = labels2["instances"][indexes2]
+        instances2 = sample2["instances"][indexes2]
         instances2.convert_bbox("xyxy")
+        h, w = params["size0"]
         instances2.denormalize(w, h)
 
-        # Apply CutMix
-        x1, y1, x2, y2 = area.astype(np.int32)
-        labels["img"][y1:y2, x1:x2] = labels2["img"][y1:y2, x1:x2]
-
         # Restrain instances2 to the random bounding border
+        x1, y1, x2, y2 = area.astype(np.int32)
         instances2.add_padding(-x1, -y1)
         instances2.clip(x2 - x1, y2 - y1)
         instances2.add_padding(x1, y1)
 
-        labels["cls"] = np.concatenate([labels["cls"], labels2["cls"][indexes2]], axis=0)
-        labels["instances"] = Instances.concatenate([labels["instances"], instances2], axis=0)
-        return labels
+        return Instances.concatenate([instances, instances2], axis=0)
+
+    def apply_to_mask(self, mask: np.ndarray, mix_samples: dict[str, Any], **params: dict[str, Any]) -> np.ndarray:
+        """
+        Applies CutMix augmentation to semantic segmentation masks.
+        """
+        if len(params["valid_idxs"]) == 0:
+            return mask
+
+        area = params["process_params"]["area"]
+        sample2 = mix_samples[0]
+        mask2 = sample2["mask"]
+        x1, y1, x2, y2 = area.astype(np.int32)
+
+        if "instances" not in sample2:  # no bboxes limit
+            # classification task、 mask/masks segment task
+            patch = mask2[y1:y2, x1:x2]
+            mask[y1:y2, x1:x2] = patch
+            return mask
+
+        else:  # bboxes limit
+            # yolo task
+            indexes2 = params["process_params"]["indexes2"]
+            if len(indexes2) == 0:
+                return mask
+            mask[y1:y2, x1:x2] = mask2[y1:y2, x1:x2]
+            return mask
+
+    def apply_to_masks(self, masks: np.ndarray, mix_samples: dict[str, Any], **params: dict[str, Any]) -> np.ndarray:
+        """
+        Applies CutMix augmentation to instance masks, masks shape: (N, H, W)
+        """
+        if len(params["valid_idxs"]) == 0:
+            return masks
+
+        sample2 = mix_samples[0]
+        masks2 = sample2["masks"]
+        area = params["process_params"]["area"]
+        x1, y1, x2, y2 = area.astype(np.int32)
+
+        if masks2.size == 0:  # no instances in masks2
+            return masks
+
+        if "instances" not in sample2:  # no bboxes limit
+            # classification task、 mask/masks segment task
+            inside2 = masks2[:, y1:y2, x1:x2].sum(axis=(1, 2)) > 0
+            sel2 = masks2[inside2]
+            sel2[:, :y1, :x1], sel2[:, y2:, x2:] = 0, 0  # clear outside the patch
+            masks[:, y1:y2, x1:x2] = 0  # clear the patch area
+            inside1 = masks.sum(axis=(1, 2)) > 0
+            sel1 = masks[inside1]
+
+            params["process_params"]["inside1"] = inside1
+            params["process_params"]["inside2"] = inside2
+            combined = np.concatenate([sel1, sel2], axis=0)
+
+        else:
+            # yolo task
+            indexes2 = params["process_params"]["indexes2"]
+            if len(indexes2) == 0:
+                return masks
+
+            # Which masks have pixels within the patch
+            masks2 = masks2[indexes2]
+            inside2 = masks2[:, y1:y2, x1:x2].sum(axis=(1, 2)) > 0
+            sel2 = masks2[inside2]
+            sel2[:, :y1, :x1], sel2[:, y2:, x2:] = 0, 0  # clear outside the patch
+            masks[:, y1:y2, x1:x2] = 0  # clear the patch area
+            inside1 = masks.sum(axis=(1, 2)) > 0
+            sel1 = masks[inside1]
+
+            params["process_params"]["inside1"] = inside1
+            params["process_params"]["inside2"] = inside2
+            combined = np.concatenate([sel1, sel2], axis=0)
+
+        return combined
+
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        mix_sample = params["mix_samples"][0]
+        if params["size0"] != self.get_target_size(mix_sample):
+            return sample  # skip mixup if sizes are different
+        else:
+            return super().apply_with_params(sample, params)
+
+    def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
+        """
+        Adjusts the annotations based on the area of the CutMix patch.
+        """
+        h, w = params["size0"]
+        area = params["process_params"]["area"]
+
+        # yolo task
+        if "instances" in sample and "cls" in sample:
+            indexes2 = params["process_params"]["indexes2"]
+
+            if "masks" in sample:
+                inside1 = params["process_params"].get("inside1", None)
+                inside2 = params["process_params"].get("inside2", None)
+
+                cls1_new = sample["cls"][inside1] if inside1 is not None else sample["cls"]
+                cls2_new = mix_samples[0]["cls"][indexes2][inside2] if inside2 is not None else None
+                sample["cls"] = np.concatenate([cls1_new, cls2_new], axis=0) if cls2_new is not None else cls1_new
+
+            else:
+                sample["cls"] = np.concatenate([sample["cls"], mix_samples[0]["cls"][indexes2]], axis=0)
+
+        if "instances" not in sample and "cls" in sample:
+            if "masks" in sample:
+                inside1 = params["process_params"].get("inside1", None)
+                inside2 = params["process_params"].get("inside2", None)
+
+                cls1_new = sample["cls"][inside1] if inside1 is not None else sample["cls"]
+                cls2_new = mix_samples[0]["cls"][inside2] if inside2 is not None else None
+                sample["cls"] = np.concatenate([cls1_new, cls2_new], axis=0) if cls2_new is not None else cls1_new
+
+            else:  # classification
+                patch_area = float((area[2] - area[0]) * (area[3] - area[1]))
+                alpha = patch_area / float(w * h)
+                # Expect cls to be one-hot or probability vectors
+                sample["cls"] = sample["cls"] * (1.0 - alpha) + mix_samples[0]["cls"] * alpha
+                return sample
+
+        return sample
 
 
 # TODO
@@ -1256,6 +1442,8 @@ class RandomPerspective(TransformBase):
         if "instances" in sample and "cls" in sample:
             origin_sample = params["origin_sample"]
             origin_instances = origin_sample["instances"]
+            origin_instances.convert_bbox(format="xyxy")
+            origin_instances.denormalize(*params["size0"][::-1])
             new_instances = sample["instances"]
             scale = params["scale"]
 
@@ -1269,8 +1457,9 @@ class RandomPerspective(TransformBase):
             )
             sample["instances"] = new_instances[keep]
             sample["cls"] = sample["cls"][keep]
-        else:
-            raise KeyError("Instances and cls must appear in the sample simultaneously for Yolo task.")
+
+            if "masks" in sample:
+                sample["masks"] = sample["masks"][keep]
 
         return sample
 
@@ -1510,7 +1699,6 @@ class LetterBox(TransformBase):
                 "dsize": dsize,
             }
         )
-        print(sample_params)
         return sample_params
 
     def apply_to_target(
@@ -1620,7 +1808,9 @@ class LetterBox(TransformBase):
         """
         if sample.get("ratio_pad"):
             sample["ratio_pad"] = (sample["ratio_pad"], (left, top))  # for evaluation
+
         sample["resized_shape"] = dsize
+
         return sample
 
 
@@ -1830,7 +2020,7 @@ class Albumentations(TransformBase):
         return sample
 
 
-class Format:
+class Format(TransformBase):
     """
     A class for formatting image annotations for object detection, instance segmentation, and pose estimation tasks.
 
@@ -1850,15 +2040,17 @@ class Format:
 
     def __init__(
         self,
-        bbox_format="xywh",
-        normalize=True,
-        return_mask=False,
-        return_keypoint=False,
-        return_obb=False,
-        mask_ratio=4,
-        mask_overlap=True,
-        batch_idx=True,
-        bgr=0.0,
+        bbox_format: str = "xywh",
+        normalize: bool = True,
+        return_mask: bool = False,
+        mask_mode: Literal["semantic", "instance"] | None = None,
+        mask_overlap: bool | None = None,
+        return_keypoint: bool = False,
+        kpt_shape: tuple[int, int] | None = None,
+        return_obb: bool = False,
+        mask_ratio: int = 4,
+        batch_idx: bool = True,
+        bgr: float = 0.0,
     ):
         """
         Initializes the Format class with given parameters for image and instance annotation formatting.
@@ -1877,129 +2069,164 @@ class Format:
             batch_idx (bool): If True, keeps batch indexes.
             bgr (float): Probability of returning BGR images instead of RGB.
         """
+        super().__init__()
         self.bbox_format = bbox_format
         self.normalize = normalize
         self.return_mask = return_mask  # set False when training detection only
+        self.mask_mode = mask_mode
         self.return_keypoint = return_keypoint
         self.return_obb = return_obb
         self.mask_ratio = mask_ratio
         self.mask_overlap = mask_overlap
         self.batch_idx = batch_idx  # keep the batch indexes
         self.bgr = bgr
+        self.kpt_shape = kpt_shape
 
-    def __call__(self, sample):
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        sample_params = super().get_params_on_sample(sample, params)
+        sample_params["original_sample"] = sample
+        sample_params["update_sample"] = {}
+        return sample_params
+
+    def apply_to_target(self, target: np.ndarray, **params: dict[str, Any]) -> torch.Tensor:
         """
-        Formats image annotations for object detection, instance segmentation, and pose estimation tasks.
-
-        This method standardizes the image and instance annotations to be used by the `collate_fn` in PyTorch
-        DataLoader. It processes the input sample dictionary, converting annotations to the specified format and
-        applying normalization if required.
-
-        Args:
-            sample (Dict): A dictionary containing image and annotation data with the following keys:
-                - 'img': The input image as a numpy array.
-                - 'cls': Class for instances.
-                - 'instances': An Instances object containing bounding boxes, segments, and keypoints.
+        Formats a target image from a Numpy array to a PyTorch tensor.
         """
-        img = sample.pop("img")
-        h, w = img.shape[:2]
-        cls = sample.pop("cls")
-        instances = sample.pop("instances")
+        if len(target.shape) < 3:
+            target = np.expand_dims(target, -1)
+        target = target.transpose(2, 0, 1)
+        target = np.ascontiguousarray(target[::-1] if random.uniform(0, 1) > self.bgr else target)
+        target = torch.from_numpy(target.copy())
+        return target
+
+    def apply_to_instances(self, instances: Instances, size0: tuple[int, int], **params: dict[str, Any]) -> Instances:
+        """
+        Formats instance annotations for object detection, instance segmentation, and pose estimation tasks.
+        """
+        h, w = size0
+        original_sample = params["original_sample"]
+        update_sample = params["update_sample"]
+        cls = original_sample["cls"]
         instances.convert_bbox(format=self.bbox_format)
         instances.denormalize(w, h)
-        nl = len(instances)
 
+        nl = len(instances)  # bboxes/segments number
         if self.return_mask:
-            if nl:
-                masks, instances, cls = self._format_segments(instances, cls, w, h)
-                masks = torch.from_numpy(masks)
-            else:
-                masks = torch.zeros(
-                    1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
-                )
-            sample["masks"] = masks
-        sample["img"] = self._format_img(img)
-        sample["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl)
-        sample["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
-        if self.return_keypoint:
-            sample["keypoints"] = torch.from_numpy(instances.keypoints)
-            if self.normalize:
-                sample["keypoints"][..., 0] /= w
-                sample["keypoints"][..., 1] /= h
-        if self.return_obb:
-            sample["bboxes"] = (
-                xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
-            )
-        # NOTE: need to normalize obb in xywhr format for width-height consistency
-        if self.normalize:
-            sample["bboxes"][:, [0, 2]] /= w
-            sample["bboxes"][:, [1, 3]] /= h
-        # Then we can use collate_fn
-        if self.batch_idx:
-            sample["batch_idx"] = torch.zeros(nl)
-        return sample
+            # return semantic mask
+            if self.mask_mode == "semantic" and "mask" not in original_sample:
+                mask, instances, cls = self._segments2masks(instances, cls, w, h)
+                original_sample["cls"] = cls
+                update_sample["mask"] = torch.from_numpy(mask)
 
-    def _format_img(self, img):
-        """
-        Formats an image for YOLO from a Numpy array to a PyTorch tensor.
+            # return instance masks
+            if self.mask_mode == "instance" and "masks" not in original_sample:
+                if nl:
+                    masks, instances, cls = self._segments2masks(instances, cls, w, h)
+                    original_sample["cls"] = cls
+                else:
+                    masks = torch.zeros(1 if self.mask_overlap else nl, h // self.mask_ratio, w // self.mask_ratio)
+                update_sample["masks"] = torch.from_numpy(masks)
 
-        This function performs the following operations:
-        1. Ensures the image has 3 dimensions (adds a channel dimension if needed).
-        2. Transposes the image from HWC to CHW format.
-        3. Optionally flips the color channels from RGB to BGR.
-        4. Converts the image to a contiguous array.
-        5. Converts the Numpy array to a PyTorch tensor.
+            elif self.mask_mode == "instance" and "masks" in original_sample:
+                masks = original_sample["masks"]
+                if self.mask_overlap:
+                    if masks.ndim != 3:  # multi_mask
+                        raise ValueError(f"The dimension of masks must be 3, but got {masks.ndim}.")
+                    masks, sorted_idx = masks_to_overlap(masks)
+                    original_sample["cls"] = cls[sorted_idx]
+                    instances = instances[sorted_idx]
+                    update_sample["masks"] = torch.from_numpy(masks)
 
-        Args:
-            img (np.ndarray): Input image as a Numpy array with shape (H, W, C) or (H, W).
+        return instances
 
-        Returns:
-            (torch.Tensor): Formatted image as a PyTorch tensor with shape (C, H, W).
-
-        Examples:
-            >>> import numpy as np
-            >>> img = np.random.rand(100, 100, 3)
-            >>> formatted_img = self._format_img(img)
-            >>> print(formatted_img.shape)
-            torch.Size([3, 100, 100])
-        """
-        if len(img.shape) < 3:
-            img = np.expand_dims(img, -1)
-        img = img.transpose(2, 0, 1)
-        img = np.ascontiguousarray(img[::-1] if random.uniform(0, 1) > self.bgr else img)
-        img = torch.from_numpy(img)
-        return img
-
-    def _format_segments(self, instances, cls, w, h):
+    def _segments2masks(
+        self, instances: Instances, cls: np.ndarray, w: int, h: int
+    ) -> tuple[np.ndarray, Instances, np.ndarray]:
         """
         Converts polygon segments to bitmap masks.
-
-        Args:
-            instances (Instances): Object containing segment information.
-            cls (numpy.ndarray): Class labels for each instance.
-            w (int): Width of the image.
-            h (int): Height of the image.
-
-        Returns:
-            masks (numpy.ndarray): Bitmap masks with shape (N, H, W) or (1, H, W) if mask_overlap is True.
-            instances (Instances): Updated instances object with sorted segments if mask_overlap is True.
-            cls (numpy.ndarray): Updated class labels, sorted if mask_overlap is True.
-
-        Notes:
-            - If self.mask_overlap is True, masks are overlapped and sorted by area.
-            - If self.mask_overlap is False, each mask is represented separately.
-            - Masks are downsampled according to self.mask_ratio.
         """
         segments = instances.segments
-        if self.mask_overlap:
-            masks, sorted_idx = polygons2masks_overlap((h, w), segments, downsample_ratio=self.mask_ratio)
-            masks = masks[None]  # (640, 640) -> (1, 640, 640)
-            instances = instances[sorted_idx]
-            cls = cls[sorted_idx]
-        else:
-            masks = polygons2masks((h, w), segments, color=1, downsample_ratio=self.mask_ratio)
 
-        return masks, instances, cls
+        if self.mask_mode == "semantic":
+            # Convert to semantic masks
+            seg_masks = polygons2masks(
+                (h, w), segments, color=1, downsample_ratio=1
+            )  # segments [N, 1000, 2], seg_masks [N, H, W]
+            semantic_mask = np.zeros((h, w), dtype=np.uint8)
+            for i in range(len(segments)):
+                semantic_mask[seg_masks[i] == 1] = cls[i] + 1  # background=0
+            if self.mask_ratio > 1:
+                semantic_mask = cv2.resize(
+                    semantic_mask,
+                    (w // self.mask_ratio, h // self.mask_ratio),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+            return semantic_mask, instances, cls
+
+        elif self.mask_mode == "instance":
+            # Convert to instance masks
+            if self.mask_overlap:
+                masks, sorted_idx = polygons2masks_overlap((h, w), segments, downsample_ratio=self.mask_ratio)
+                masks = masks[None]  # (640, 640) -> (1, 640, 640)
+                instances = instances[sorted_idx]
+                cls = cls[sorted_idx]
+            else:
+                masks = polygons2masks((h, w), segments, color=1, downsample_ratio=self.mask_ratio)
+
+            return masks, instances, cls
+
+    def apply_to_mask(self, mask: np.ndarray, **params: dict[str, Any]) -> torch.Tensor:
+        return torch.from_numpy(mask)
+
+    def apply_to_masks(self, masks: np.ndarray, **params: dict[str, Any]) -> torch.Tensor:
+        return torch.from_numpy(masks)
+
+    def update_sample(self, sample: dict[str, Any], size0: tuple[int, int], **params: dict[str, Any]) -> dict[str, Any]:
+        h, w = size0
+        sample.update(params["update_sample"])
+
+        if "instances" in sample and "cls" in sample:  # yolo task
+            cls = sample.pop("cls")
+            sample["cls"] = torch.from_numpy(cls)
+            instances = sample.pop("instances")
+            nl = len(instances)  # bboxes number
+            sample["bboxes"] = torch.from_numpy(instances.bboxes)
+            if self.return_keypoint:
+                sample["keypoints"] = (
+                    torch.from_numpy(instances.keypoints)
+                    if instances.keypoints is not None
+                    else torch.zeros((0, self.kpt_shape[0], self.kpt_shape[1]))
+                )
+                if self.normalize:
+                    sample["keypoints"][..., 0] /= w
+                    sample["keypoints"][..., 1] /= h
+            if self.return_obb:
+                sample["bboxes"] = (
+                    xyxyxyxy2xywhr(torch.from_numpy(instances.segments))
+                    if len(instances.segments)
+                    else torch.zeros((0, 5))
+                )
+            # NOTE: need to normalize obb in xywhr format for width-height consistency
+            if self.normalize:
+                sample["bboxes"][:, [0, 2]] /= w
+                sample["bboxes"][:, [1, 3]] /= h
+
+        elif "instances" not in sample and "cls" in sample:
+            if "masks" not in sample:  # classification task
+                nl = 1
+            else:
+                nl = len(sample["masks"])
+            sample["cls"] = torch.from_numpy(sample["cls"])
+
+        # Then we can use collate_fn
+        if self.batch_idx:
+            sample["batch_idx"] = torch.zeros(nl, dtype=torch.long)
+
+        if not self.return_mask:
+            sample.pop("mask", None)
+            sample.pop("masks", None)
+
+        return sample
 
 
 # Yolov8 augmentations -------------------------------------------------------------------------------------------------
@@ -2015,17 +2242,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         imgsz (int): The target image size for resizing.
         hyp (Namespace): A dictionary of hyperparameters controlling various aspects of the transformations.
         stretch (bool): If True, applies stretching to the image. If False, uses LetterBox resizing.
-
-    Returns:
-        (Compose): A composition of image transformations to be applied to the dataset.
-
-    Examples:
-        >>> from ultralytics.data.dataset import YOLODataset
-        >>> from ultralytics.utils import IterableSimpleNamespace
-        >>> dataset = YOLODataset(img_path="path/to/images", imgsz=640)
-        >>> hyp = IterableSimpleNamespace(mosaic=1.0, copy_paste=0.5, degrees=10.0, translate=0.2, scale=0.9)
-        >>> transforms = v8_transforms(dataset, imgsz=640, hyp=hyp)
-        >>> augmented_data = transforms(dataset[0])
     """
     mosaic = Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic)
     affine = RandomPerspective(
@@ -2068,9 +2284,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
         ]
     )  # transforms
-
-
-# Multimodal augmentations ---------------------------------------------------------------------------------------------
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

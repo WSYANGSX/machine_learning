@@ -7,7 +7,7 @@ import torchvision.transforms as T
 # from machine_learning.utils.augmentations import PadShortEdge
 # from machine_learning.utils.detection import yolo2voc
 # from machine_learning.utils.draw import visualize_img_with_bboxes
-from machine_learning.utils.img import plot_imgs, imgs_np2tensor
+from machine_learning.utils.image import plot_imgs, imgs_np2tensor
 
 if __name__ == "__main__":
     import numpy as np

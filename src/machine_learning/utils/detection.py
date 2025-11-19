@@ -676,7 +676,7 @@ def add_bbox(
     x_min, y_min, x_max, y_max = map(int, bbox)
 
     # Add bbox
-    cv2.rectangle(img_copy, (x_min, y_min), (x_max, y_max), color=color, thickness=thickness)
+    cv2.rectangle(img=img_copy, pt1=(x_min, y_min), pt2=(x_max, y_max), color=color, thickness=thickness)
 
     if class_name is not None:
         # Obtain the text size

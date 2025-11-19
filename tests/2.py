@@ -2,7 +2,7 @@ from PIL import Image
 import cv2
 import numpy as np
 import albumentations as A
-from machine_learning.utils.img import plot_imgs
+from machine_learning.utils.image import plot_imgs
 
 img = Image.open("/home/yangxf/Downloads/Flir_aligned/JPEGImages/FLIR_00002_RGB.jpg")
 img = np.array(img)

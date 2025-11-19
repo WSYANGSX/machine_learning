@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.img import plot_raw_and_recon_imgs, imgs_tensor2np
+from machine_learning.utils.image import plot_raw_and_recon_imgs, imgs_tensor2np
 
 
 class AutoEncoder(AlgorithmBase):

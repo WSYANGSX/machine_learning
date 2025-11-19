@@ -3,7 +3,7 @@ import numpy as np
 from machine_learning.utils import load_cfg
 from machine_learning.data.dataset import YoloMultiModalDataset
 from machine_learning.data.dataset.parsers import VedaiParser, FlirAlignedParser, MinistParser
-from machine_learning.utils.img import plot_imgs
+from machine_learning.utils.image import plot_imgs
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 
 data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/flir_aligned.yaml")

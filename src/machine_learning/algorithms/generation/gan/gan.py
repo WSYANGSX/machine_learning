@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import Generator, Discriminator
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.img import plot_imgs
+from machine_learning.utils.image import plot_imgs
 
 
 class GAN(AlgorithmBase):
