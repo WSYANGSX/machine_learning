@@ -18,8 +18,13 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
 from machine_learning.data.dataset.base import DatasetBase, MultiModalDatasetBase
+
+# our augment
 from machine_learning.utils.augmentation import Compose
 from machine_learning.utils.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
+
+# # ultralytics augment
+# from machine_learning.utils.ultralytics_augment import Compose, Format, Instances, LetterBox, v8_transforms
 
 from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.ops import resample_segments
@@ -197,7 +202,7 @@ class YoloDataset(DatasetBase):
         # description recall fun
         def get_stats_desc():
             return (
-                f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt."
+                f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt"
             )
 
         super().cache_labels(get_stats_desc)
@@ -297,11 +302,11 @@ class YoloDataset(DatasetBase):
                     kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                     keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
             lb = lb[:, :5]
-            return im_file, b, shape, segments, keypoints
+            return im_file, lb, shape, segments, keypoints
 
         except Exception as e:
             self.num_corrupt += 1
-            LOGGER.info(f"{im_file}: ignoring corrupt image/label: {e}")
+            LOGGER.info(f"{im_file}: ignoring corrupt: {e}")
             return None, None, None, None, None
 
     def label_format(self, label: tuple[np.ndarray | None]) -> dict[str, Any] | None:

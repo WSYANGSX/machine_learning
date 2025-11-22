@@ -4,6 +4,7 @@ Adapted from Ultralytics YOLO base dataset implementation.
 Source: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py.
 """
 
+from __future__ import annotations
 from typing import Any, Callable, Literal
 
 import cv2
@@ -46,7 +47,11 @@ class TransformBase(TransformInterface):
     _targets = ("img", "ir", "depth")
     _annotations = ("instances", "mask", "masks")
 
-    def __init__(self, p: float = 1) -> None:
+    def __init__(
+        self,
+        p: float = 1,
+        pre_transform: "TransformBase" | Compose = None,
+    ) -> None:
         """
         Initializes the ImgTransformBase object.
 
@@ -56,7 +61,7 @@ class TransformBase(TransformInterface):
         Args:
             p (float): The probability for the transform to be applied.
         """
-        super().__init__(p)
+        super().__init__(p, pre_transform=pre_transform)
 
     @property
     def targets(self) -> dict[str, Callable]:
@@ -76,7 +81,7 @@ class TransformBase(TransformInterface):
         return targets
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        return {"size0": self.get_target_size(sample)}
+        return {}
 
     def apply_to_target(self, target: np.ndarray, category: str, **params: dict[str, Any]) -> np.ndarray:
         """
@@ -194,9 +199,8 @@ class MixTransformBase(TransformBase):
             p (float): Probability of applying the mix transformation. Should be in the range [0.0, 1.0].
             pre_transform (Callable | None): Optional transform to apply before mixing.
         """
-        super().__init__(p)
+        super().__init__(p=p, pre_transform=pre_transform)
         self.dataset = dataset
-        self.pre_transform = pre_transform
 
     def get_params(self) -> dict[str, Any]:
         """
@@ -258,6 +262,18 @@ class MixTransformBase(TransformBase):
         """
         raise NotImplementedError
 
+    def __call__(self, sample):
+        """Apply the transform to the input sample."""
+        params = self.get_params()
+        params_dependent_on_data = self.get_params_on_sample(sample, params)
+        params.update(params_dependent_on_data)
+        self._params = params
+
+        sample = self._sort_sample_keys(sample)  # for process_params pass correctly
+        if random.random() < self.p:
+            return self.apply_with_params(sample, params)
+        return sample
+
 
 class Mosaic(MixTransformBase):
     """
@@ -301,6 +317,9 @@ class Mosaic(MixTransformBase):
         self.border = (-imgsz // 2, -imgsz // 2)  # width, height
         self.buffer_enabled = hasattr(self.dataset, "mosaic_buffer") and len(self.dataset.mosaic_buffer) > 0
 
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        return {"size0": self.get_target_size(sample)}
+
     def get_params(self) -> dict[str, Any]:
         params = super().get_params()
         yc = int(random.uniform(-self.border[0], 2 * self.imgsz + self.border[0]))
@@ -335,7 +354,7 @@ class Mosaic(MixTransformBase):
         **params: dict[str, Any],
     ) -> np.ndarray:
         # channel
-        ch = 1 if target.ndim == 2 else target.shape[2]
+        ch = 3 if category == "img" else 1
         # data type
         pad_val = 0.0 if target.dtype.kind == "f" else 114 if category == "img" else 0
 
@@ -367,7 +386,11 @@ class Mosaic(MixTransformBase):
                     x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
                     x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
 
-                target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+                if ch == 3 and target.ndim == 2:  # There are grayscale images.
+                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
+                else:
+                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
+
                 areas.append((y2a - y1a) * (x2a - x1a))
 
             if params["areas"] is None:
@@ -427,7 +450,11 @@ class Mosaic(MixTransformBase):
                 padw, padh = c[:2]
                 x1, y1, x2, y2 = max(c[0], 0), max(c[1], 0), min(c[2], self.imgsz * 3), min(c[3], self.imgsz * 3)
                 hp, wp = h, w  # Record the current image size for the next use
-                target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :]
+
+                if ch == 3 and target.ndim == 2:
+                    target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :, None]
+                else:
+                    target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :]
 
             if params["areas"] is None:
                 params["areas"] = areas
@@ -698,33 +725,34 @@ class Mosaic(MixTransformBase):
             if "masks" in sample:
                 sample["masks"] = sample["masks"][good]
 
-        elif "masks" in sample and "cls" in sample and "instances" not in sample:  # instance segment task
-            # update cls
-            cls = [sample["cls"]]
-            for ms in mix_samples:
-                cls.append(ms["cls"])
-            sample["cls"] = np.concatenate(cls, 0)
-            # update masks
-            masks: np.ndarray = sample["masks"]
-            if masks.size > 0:
-                indices = masks.sum(axis=(1, 2)) > 0
-                sample["masks"] = masks[indices]
-                sample["cls"] = sample["cls"][indices]
+        if "instances" not in sample and "cls" in sample:  # instance segment task
+            if "masks" in sample:
+                # update cls
+                cls = [sample["cls"]]
+                for ms in mix_samples:
+                    cls.append(ms["cls"])
+                sample["cls"] = np.concatenate(cls, 0)
+                # update masks
+                masks: np.ndarray = sample["masks"]
+                if masks.size > 0:
+                    indices = masks.sum(axis=(1, 2)) > 0
+                    sample["masks"] = masks[indices]
+                    sample["cls"] = sample["cls"][indices]
 
-        elif "instances" not in sample and "masks" not in sample and "cls" in sample:  # classify task
-            # classification task with soft labels (Mixup/CutMix-style)
-            # cls is expected to be one-hot or probability vector
-            if params.get("areas", None) is None:
-                # Revert to simple average weights
-                num = 1 + len(mix_samples)
-                weights = np.full(num, 1.0 / num, dtype=np.float32)
-            else:
-                areas = np.array(params["areas"], dtype=np.float32)
-                weights = areas / areas.sum()
-            cls = sample["cls"] * weights[0]
-            for i, ms in enumerate(mix_samples):
-                cls += ms["cls"] * weights[i + 1]
-            sample["cls"] = cls
+            else:  # classify task
+                # classification task with soft labels (Mixup/CutMix-style)
+                # cls is expected to be one-hot or probability vector
+                if params.get("areas", None) is None:
+                    # Revert to simple average weights
+                    num = 1 + len(mix_samples)
+                    weights = np.full(num, 1.0 / num, dtype=np.float32)
+                else:
+                    areas = np.array(params["areas"], dtype=np.float32)
+                    weights = areas / areas.sum()
+                cls = sample["cls"] * weights[0]
+                for i, ms in enumerate(mix_samples):
+                    cls += ms["cls"] * weights[i + 1]
+                sample["cls"] = cls
 
         return sample
 
@@ -740,8 +768,9 @@ class MixUp(MixTransformBase):
 
     Attributes:
         dataset (Any): The dataset to which MixUp augmentation will be applied.
+        p (float): Probability of applying MixUp augmentation. Must be in the range [0, 1].
+        alpha (float): Control parameters of the beta distribution.
         pre_transform (Callable | None): Optional transform to apply before MixUp.
-        p (float): Probability of applying MixUp augmentation.
     """
 
     def __init__(
@@ -759,11 +788,15 @@ class MixUp(MixTransformBase):
 
         Args:
             dataset (Any): The dataset to which MixUp augmentation will be applied.
+            p (float): Probability of applying MixUp augmentation. Must be in the range [0, 1].
+            alpha (float): Control parameters of the beta distribution.
             pre_transform (Callable | None): Optional transform to apply to images before MixUp.
-            p (float): Probability of applying MixUp augmentation to an image. Must be in the range [0, 1].
         """
         super().__init__(dataset=dataset, p=p, pre_transform=pre_transform)
         self.alpha = alpha
+
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        return {"size0": self.get_target_size(sample)}
 
     def get_params(self):
         params = super().get_params()
@@ -774,15 +807,24 @@ class MixUp(MixTransformBase):
         params["ratio"] = ratio
         return params
 
-    def apply_to_target(self, target: np.ndarray, category: str, mix_samples: dict[str, Any], **params) -> np.ndarray:
+    def apply_to_target(
+        self, target: np.ndarray, category: str, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
         ratio = params["ratio"]
+
         if category == "img":
-            return (target * ratio + mix_samples[0][category] * (1 - ratio)).astype(np.uint8)
+            target2 = mix_samples[0][category]
+            if target.ndim == 2:  # gray
+                target = np.repeat(target[..., None], 3, axis=2)
+            if target2.ndim == 2:  # gray
+                target2 = np.repeat(target2[..., None], 3, axis=2)
+            return (target * ratio + target2 * (1 - ratio)).astype(np.uint8)
+
         else:
             return target
 
     def apply_to_instances(
-        self, instances: Instances, mix_samples: dict[str, Any], **params: dict[str, Any]
+        self, instances: Instances, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
     ) -> Instances:
         return Instances.concatenate([instances, mix_samples[0]["instances"]], axis=0)
 
@@ -793,9 +835,8 @@ class MixUp(MixTransformBase):
         return sample
 
     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        mix_sample = params["mix_samples"][0]
-
-        if sample["size0"] != self.get_target_size(mix_sample):
+        sample2 = params["mix_samples"][0]
+        if params["size0"] != self.get_target_size(sample2):
             return sample  # skip mixup if sizes are different
         else:
             return super().apply_with_params(sample, params)
@@ -818,10 +859,10 @@ class CutMix(MixTransformBase):
     def __init__(
         self,
         dataset: Dataset,
-        pre_transform: TransformBase | Compose = None,
         p: float = 0.0,
         beta: float = 1.0,
         num_areas: int = 3,
+        pre_transform: TransformBase | Compose = None,
     ) -> None:
         """Initialize the CutMix augmentation object.
 
@@ -832,7 +873,7 @@ class CutMix(MixTransformBase):
             beta (float): Beta distribution parameter for sampling the mixing ratio.
             num_areas (int): Number of areas to try to cut and mix.
         """
-        super().__init__(dataset=dataset, pre_transform=pre_transform, p=p)
+        super().__init__(dataset=dataset, p=p, pre_transform=pre_transform)
         self.beta = beta
         self.num_areas = num_areas
 
@@ -885,7 +926,7 @@ class CutMix(MixTransformBase):
         return {"size0": size0, "cut_areas": cut_areas, "length": length, "valid_idxs": valid_idxs}
 
     def apply_to_target(
-        self, target: np.ndarray, category: str, mix_samples: dict[str, Any], **params: dict[str, Any]
+        self, target: np.ndarray, category: str, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
     ) -> np.ndarray:
         if len(params["valid_idxs"]) == 0:
             return target
@@ -893,13 +934,19 @@ class CutMix(MixTransformBase):
         area = params["cut_areas"][np.random.choice(params["valid_idxs"])]
         params["process_params"]["area"] = area
         sample2 = mix_samples[0]
-        target2 = sample2[category]
+        target2: np.ndarray = sample2[category]
         x1, y1, x2, y2 = area.astype(np.int32)
+
+        # img gray to 3 channels
+        if category == "img":
+            if target.ndim == 2:
+                target = np.repeat(target[..., None], 3, axis=2)
+            if target2.ndim == 2:
+                target2 = np.repeat(target2[..., None], 3, axis=2)
 
         if "instances" not in sample2:  # no bboxes limit
             # classification task、 mask/masks segment task
-            patch = target2[y1:y2, x1:x2]
-            target[y1:y2, x1:x2] = patch
+            target[y1:y2, x1:x2] = target2[y1:y2, x1:x2]
             return target
 
         else:  # bboxes limit
@@ -913,7 +960,7 @@ class CutMix(MixTransformBase):
             return target
 
     def apply_to_instances(
-        self, instances: Instances, mix_samples: dict[str, Any], **params: dict[str, Any]
+        self, instances: Instances, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
     ) -> Instances:
         if len(params["valid_idxs"]) == 0:
             return instances
@@ -938,7 +985,9 @@ class CutMix(MixTransformBase):
 
         return Instances.concatenate([instances, instances2], axis=0)
 
-    def apply_to_mask(self, mask: np.ndarray, mix_samples: dict[str, Any], **params: dict[str, Any]) -> np.ndarray:
+    def apply_to_mask(
+        self, mask: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
         """
         Applies CutMix augmentation to semantic segmentation masks.
         """
@@ -964,7 +1013,9 @@ class CutMix(MixTransformBase):
             mask[y1:y2, x1:x2] = mask2[y1:y2, x1:x2]
             return mask
 
-    def apply_to_masks(self, masks: np.ndarray, mix_samples: dict[str, Any], **params: dict[str, Any]) -> np.ndarray:
+    def apply_to_masks(
+        self, masks: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
         """
         Applies CutMix augmentation to instance masks, masks shape: (N, H, W)
         """
@@ -1063,8 +1114,7 @@ class CutMix(MixTransformBase):
 
 # TODO
 class CopyPaste(MixTransformBase):
-    """
-    CopyPaste class for applying Copy-Paste augmentation to image datasets.
+    """CopyPaste class for applying Copy-Paste augmentation to image datasets.
 
     This class implements the Copy-Paste augmentation technique as described in the paper "Simple Copy-Paste is a Strong
     Data Augmentation Method for Instance Segmentation" (https://arxiv.org/abs/2012.07177). It combines objects from
@@ -1079,69 +1129,57 @@ class CopyPaste(MixTransformBase):
     def __init__(
         self,
         dataset: Dataset = None,
-        pre_transform: TransformBase | Compose = None,
         p: float = 0.5,
-        mode: str = "flip",
+        mode: Literal["mixup", "flip"] = "flip",
+        pre_transform: TransformBase | Compose = None,
     ) -> None:
-        """Initializes CopyPaste object with dataset, pre_transform, and probability of applying MixUp."""
-        super().__init__(
-            dataset=dataset,
-            pre_transform=pre_transform,
-            p=p,
-        )
+        """Initialize CopyPaste object with dataset, pre_transform, and probability of applying MixUp."""
+        super().__init__(dataset=dataset, p=p, pre_transform=pre_transform)
         assert mode in {"flip", "mixup"}, f"Expected `mode` to be `flip` or `mixup`, but got {mode}."
         self.mode = mode
 
-    def get_indexes(self):
-        """Returns a list of random indexes from the dataset for CopyPaste augmentation."""
-        return random.randint(0, len(self.dataset) - 1)
+    def get_params(self):
+        """
+        Obtain transformation parameters independent of input to ensure consistency among different fields.
+        """
+        if self.mode == "flip":
+            return {}
 
-    def get_params_on_data(self, params, sample):
-        shape0 = self.get_shape0(sample)
-        return {"shape0": shape0}
+        else:
+            # Get index of another image
+            indexes = self.get_indexes()
+            if isinstance(indexes, int):
+                indexes = [indexes]
 
-    def apply_to_image(self, image, mix_samples, image_category=None, **params):
-        return super().apply_to_image(image, mix_samples, image_category, **params)
+            # Get images information will be used for
+            mix_samples = [self.dataset.get_sample(i) for i in indexes]
+            if self.pre_transform is not None:
+                for i, data in enumerate(mix_samples):
+                    mix_samples[i] = self.pre_transform(data)
+            assert len(mix_samples), "There are no other images for mosaic augment."
 
-    def apply_to_instances(self, instances, mix_samples, **params):
-        return super().apply_to_instances(instances, mix_samples, **params)
+            return {"mix_samples": mix_samples}
 
-    def apply_to_masks(self, masks, mix_samples, **params):
-        return super().apply_to_masks(masks, mix_samples, **params)
-
-    def _mix_transform(self, sample):
-        """Applies Copy-Paste augmentation to combine objects from another image into the current image."""
-        sample2 = sample["mix_samples"][0]
+    def _mix_transform(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]]) -> dict[str, Any]:
+        """Apply Copy-Paste augmentation to combine objects from another image into the current image."""
+        sample2 = mix_samples[0]
         return self._transform(sample, sample2)
 
-    def __call__(self, sample):
-        """Applies Copy-Paste augmentation to an image and its annotations."""
-        if len(sample["instances"].segments) == 0 or self.p == 0:
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        """Apply Copy-Paste augmentation to an image and its labels."""
+        if len(sample["instances"].segments) == 0:
             return sample
         if self.mode == "flip":
             return self._transform(sample)
+        sample = self._mix_transform(sample, params["mix_samples"])
 
-        indexes = self.get_indexes()
-        if isinstance(indexes, int):
-            indexes = [indexes]
-
-        mix_samples = [self.dataset.get_sample(i) for i in indexes]
-
-        if self.pre_transform is not None:
-            for i, data in enumerate(mix_samples):
-                mix_samples[i] = self.pre_transform(data)
-        sample["mix_samples"] = mix_samples
-
-        # Update cls and texts
-        sample = self._update_sample_text(sample)
-        # CopyPaste
-        sample = self._mix_transform(sample)
-        sample.pop("mix_samples", None)
         return sample
 
-    def _transform(self, sample1, sample2={}):
-        """Applies Copy-Paste augmentation to combine objects from another image into the current image."""
+    def _transform(self, sample1: dict[str, Any], sample2: dict[str, Any] = {}) -> dict[str, Any]:
+        """Apply Copy-Paste augmentation to combine objects from another image into the current image."""
         im = sample1["img"]
+        if "mosaic_border" not in sample1:
+            im = im.copy()  # avoid modifying original non-mosaic image
         cls = sample1["cls"]
         h, w = im.shape[:2]
         instances = sample1.pop("instances")
@@ -1164,6 +1202,8 @@ class CopyPaste(MixTransformBase):
             cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, (1, 1, 1), cv2.FILLED)
 
         result = sample2.get("img", cv2.flip(im, 1))  # augment segments
+        if result.ndim == 2:  # cv2.flip would eliminate the last dimension for grayscale images
+            result = result[..., None]
         i = im_new.astype(bool)
         im[i] = result[i]
 
@@ -1193,6 +1233,7 @@ class RandomPerspective(TransformBase):
 
     def __init__(
         self,
+        p: float = 1,
         degrees: float = 0.0,
         translate: float = 0.1,
         scale: float = 0.5,
@@ -1217,18 +1258,16 @@ class RandomPerspective(TransformBase):
             pre_transform (Callable | None): Function/transform to apply to the image before starting the random
                 transformation.
         """
-        super().__init__()
+        super().__init__(p=p, pre_transform=pre_transform)
         self.degrees = degrees
         self.translate = translate
         self.scale = scale
         self.shear = shear
         self.perspective = perspective
         self.border = border  # mosaic border
-        self.pre_transform = pre_transform
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = super().get_params_on_sample(sample, params)
-        size0 = sample_params["size0"]
+        size0 = self.get_target_size(sample=sample)
 
         # border
         border = sample.pop("mosaic_border", self.border)
@@ -1236,7 +1275,6 @@ class RandomPerspective(TransformBase):
 
         # Center
         C = np.eye(3, dtype=np.float32)
-
         C[0, 2] = -size0[1] / 2  # x translation (pixels)
         C[1, 2] = -size0[0] / 2  # y translation (pixels)
 
@@ -1266,24 +1304,30 @@ class RandomPerspective(TransformBase):
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
 
-        sample_params.update(
-            {
-                "transform_matrix": M,
-                "scale": s,
-                "border": border,
-                "dsize": dsize,
-                "origin_sample": deepcopy(sample),
-            }
-        )
+        return {
+            "size0": size0,
+            "transform_matrix": M,
+            "scale": s,
+            "border": border,
+            "dsize": dsize,
+            "origin_sample": deepcopy(sample),
+        }
 
-        return sample_params
-
-    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        if self.pre_transform and "mosaic_border" not in sample:
+    def __call__(self, sample):
+        """Apply the transform to the input sample."""
+        if self.pre_transform is not None and "mosaic_border" not in sample:
             sample = self.pre_transform(sample)
         sample.pop("ratio_pad", None)  # do not need ratio pad
 
-        return super().apply_with_params(sample, params)
+        params = self.get_params()
+        params_dependent_on_data = self.get_params_on_sample(sample, params)
+        params.update(params_dependent_on_data)
+        self._params = params
+
+        sample = self._sort_sample_keys(sample)  # for process_params pass correctly
+        if random.random() < self.p:
+            return self.apply_with_params(sample, params)
+        return sample
 
     def apply_to_target(
         self,
@@ -1581,6 +1625,9 @@ class RandomFlip(TransformBase):
         self.direction = direction
         self.flip_idx = flip_idx
 
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        return {"size0": self.get_target_size(sample)}
+
     def apply_to_target(self, target: np.ndarray, **params: dict[str, Any]) -> np.ndarray:
         if self.direction == "vertical":
             return np.flipud(target)
@@ -1866,7 +1913,7 @@ class Albumentations(TransformBase):
         self.spatial_transforms = spatial_transforms or []
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = super().get_params_on_sample(sample, params)
+        sample_params = {"size0": self.get_target_size(sample)}
 
         # additional targets for spatial transform
         additional_targets = {}
@@ -2083,10 +2130,7 @@ class Format(TransformBase):
         self.kpt_shape = kpt_shape
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = super().get_params_on_sample(sample, params)
-        sample_params["original_sample"] = sample
-        sample_params["update_sample"] = {}
-        return sample_params
+        return {"size0": self.get_target_size(sample), "original_sample": sample, "update_sample": {}}
 
     def apply_to_target(self, target: np.ndarray, **params: dict[str, Any]) -> torch.Tensor:
         """

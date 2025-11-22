@@ -224,7 +224,7 @@ class DatasetBase(Dataset):
                 else:  # label corrupt
                     self.corrupt_idx.add(i)
                 pbar.desc = (
-                    f"Caching {self.mode} labels ({b / gb:.5f}GB)" + desc_func() if desc_func is not None else ""
+                    f"Caching {self.mode} labels ({b / gb:.5f}GB) " + desc_func() if desc_func is not None else ""
                 )
             pbar.close()
 
@@ -473,7 +473,7 @@ class DatasetBase(Dataset):
         try:
             # read img file with cv2
             if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)  # bgr
+                data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)   # bgr
                 if data is None:
                     LOGGER.error(f"Failed to read image: {path}")
                     return None

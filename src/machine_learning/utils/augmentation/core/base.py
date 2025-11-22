@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Union, Any, Callable
 
 import random
@@ -15,8 +16,13 @@ class TransformInterface(ABC):
     _targets: tuple[str]  # targets that this transform can work on
     _annotations: tuple[str]  # annotation targets that need to be update with targets
 
-    def __init__(self, p: float = 1):
+    def __init__(
+        self,
+        p: float = 1,
+        pre_transform: "TransformInterface" | "Compose" | None = None,
+    ):
         self._p = p
+        self._pre_transform = pre_transform
         self._params = {}
         self._available_keys = set()
         self._key2func = {}
@@ -25,6 +31,10 @@ class TransformInterface(ABC):
     @property
     def p(self) -> float:
         return self._p
+
+    @property
+    def pre_transform(self) -> "TransformInterface" | "Compose":
+        return self._pre_transform
 
     @property
     def params(self) -> dict[str, Any]:
@@ -80,6 +90,9 @@ class TransformInterface(ABC):
 
     def __call__(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Apply the transform to the input sample."""
+        if self.pre_transform is not None:
+            sample = self.pre_transform(sample)
+
         params = self.get_params()
         params_dependent_on_data = self.get_params_on_sample(sample, params)
         params.update(params_dependent_on_data)

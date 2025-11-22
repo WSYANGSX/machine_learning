@@ -4,7 +4,12 @@ import numpy as np
 import albumentations as A
 
 from PIL import Image
-from machine_learning.utils.augmentation.img_transforms import (
+
+from machine_learning.utils.image import plot_imgs, img_tensor2np
+from machine_learning.utils.detection import visualize_img_bboxes
+from ultralytics.utils.instance import Instances
+from ultralytics.data.utils import polygon2mask
+from ultralytics.data.augment import (
     RandomPerspective,
     RandomHSV,
     RandomFlip,
@@ -12,11 +17,6 @@ from machine_learning.utils.augmentation.img_transforms import (
     Albumentations,
     Format,
 )
-from machine_learning.utils.image import plot_imgs, img_tensor2np
-from machine_learning.utils.detection import visualize_img_bboxes
-from ultralytics.utils.instance import Instances
-from ultralytics.data.utils import polygon2mask
-
 
 img = Image.open("/home/yangxf/WorkSpace/machine_learning/tests/augment_test/FLIR_00233_RGB.jpg")
 img = np.array(img)
@@ -47,10 +47,12 @@ segments[..., 1] /= img.shape[0]
 empty_seg = np.zeros((0, 1000, 2))
 
 instances = Instances(bboxes=bboxes, bbox_format="xywh", normalized=True, segments=segments)
-sample = {"img": img, "ir": ir, "cls": cls, "instances": instances, "mask": mask}
+sample = {"img": img, "cls": cls, "instances": instances}
 
+letter_box = LetterBox((640, 640))
+sample = letter_box(sample)
 
-random_perspective = RandomPerspective(degrees=45, border=(512 // 2, 640 // 2))
+random_perspective = RandomPerspective(border=(-512 // 2, -640 // 2))
 sample = random_perspective(sample)
 
 # random_hsv = RandomHSV()
@@ -59,8 +61,6 @@ sample = random_perspective(sample)
 # random_flip = RandomFlip(p=1, direction="vertical")
 # sample = random_flip(sample)
 
-# letter_box = LetterBox(dsize=(320, 320))
-# sample = letter_box(sample)
 
 # albumentations = Albumentations(
 #     spatial_transforms=[
@@ -69,16 +69,7 @@ sample = random_perspective(sample)
 # )
 # sample = albumentations(sample)
 
-format = Format(
-    bbox_format="xyxy",
-    normalize=False,
-    return_mask=True,
-    mask_mode="semantic",
-    mask_overlap=False,
-    return_keypoint=False,
-    kpt_shape=(17, 3),
-    return_obb=False,
-)
+format = Format()
 sample = format(sample)
 
 # img = sample["img"]
