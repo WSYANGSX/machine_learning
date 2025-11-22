@@ -115,16 +115,14 @@ class TransformInterface(ABC):
 
     def _sort_sample_keys(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Sort sample keys to ensure data targets are processed before annotations."""
-        sorted_sample = {}
-        for key in self._targets:
-            if key in sample:
-                sorted_sample[key] = sample[key]
-        for key in self._annotations:
-            if key in sample:
-                sorted_sample[key] = sample[key]
-        for key in sample:
-            if key not in sorted_sample:
-                sorted_sample[key] = sample[key]
+        if not getattr(self, "_targets", None) and not getattr(self, "_annotations", None):
+            return sample
+
+        tmp_sample = sample.copy()
+        ordered_keys = list(self._targets) + list(self._annotations)
+        sorted_sample = {k: tmp_sample.pop(k) for k in ordered_keys if k in sample}
+        if tmp_sample:
+            sorted_sample.update(tmp_sample)
 
         return sorted_sample
 
@@ -185,9 +183,11 @@ class Compose:
             >>> compose = Compose(transforms)
             >>> transformed_data = compose(input_data)
         """
-        if random.random() < self.p:
-            for t in self.transforms:
-                sample = t(sample)
+        if random.random() > self.p:
+            return sample
+
+        for t in self.transforms:
+            sample = t(sample)
         return sample
 
     def append(self, transform: TransformInterface):

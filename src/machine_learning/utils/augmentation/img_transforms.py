@@ -1705,8 +1705,7 @@ class LetterBox(TransformBase):
         self.interpolation = interpolation
 
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-        sample_params = super().get_params_on_sample(sample, params)
-        size0 = sample_params["size0"]
+        size0 = self.get_target_size(sample)
 
         dsize = sample.pop("rect_shape", self.dsize)
         if isinstance(dsize, int):
@@ -1735,20 +1734,18 @@ class LetterBox(TransformBase):
         top, bottom = round(dh - 0.1) if self.center else 0, round(dh + 0.1)
         left, right = round(dw - 0.1) if self.center else 0, round(dw + 0.1)
 
-        sample_params.update(
-            {
-                "new_unpad": new_unpad,
-                "dw": dw,
-                "dh": dh,
-                "ratio": ratio,
-                "top": top,
-                "bottom": bottom,
-                "left": left,
-                "right": right,
-                "dsize": dsize,
-            }
-        )
-        return sample_params
+        return {
+            "size0": size0,
+            "new_unpad": new_unpad,
+            "dw": dw,
+            "dh": dh,
+            "ratio": ratio,
+            "top": top,
+            "bottom": bottom,
+            "left": left,
+            "right": right,
+            "dsize": dsize,
+        }
 
     def apply_to_target(
         self,
@@ -2299,7 +2296,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         pre_transform=None if stretch else LetterBox(dsize=(imgsz, imgsz)),
     )
 
-    pre_transform = Compose([mosaic, affine])
+    pre_transform = Compose([affine])
     if hyp.copy_paste_mode == "flip":
         pre_transform.insert(1, CopyPaste(p=hyp.copy_paste, mode=hyp.copy_paste_mode))
     else:
