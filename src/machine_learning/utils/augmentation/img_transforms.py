@@ -264,15 +264,17 @@ class MixTransformBase(TransformBase):
 
     def __call__(self, sample):
         """Apply the transform to the input sample."""
+        if random.random() > self.p:
+            return sample
+
         params = self.get_params()
         params_dependent_on_data = self.get_params_on_sample(sample, params)
         params.update(params_dependent_on_data)
         self._params = params
 
         sample = self._sort_sample_keys(sample)  # for process_params pass correctly
-        if random.random() < self.p:
-            return self.apply_with_params(sample, params)
-        return sample
+
+        return self.apply_with_params(sample, params)
 
 
 class Mosaic(MixTransformBase):

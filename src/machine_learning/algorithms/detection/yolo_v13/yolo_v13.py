@@ -251,7 +251,6 @@ class YoloV13(AlgorithmBase):
         if hasattr(self.train_loader.dataset, "close_mosaic"):
             LOGGER.info("Closing dataloader mosaic")
             self.train_loader.dataset.close_mosaic()
-            self.train_loader.reset()
 
     @torch.no_grad()
     def validate(self):

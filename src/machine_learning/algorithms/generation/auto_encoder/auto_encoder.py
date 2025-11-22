@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from machine_learning.networks import BaseNet
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.image import plot_raw_and_recon_imgs, imgs_tensor2np
+from machine_learning.utils.image import plot_raw_and_recon_imgs, img_tensor2np
 
 
 class AutoEncoder(AlgorithmBase):
@@ -111,4 +111,4 @@ class AutoEncoder(AlgorithmBase):
         with torch.no_grad():
             recons = self.net(data)
 
-        plot_raw_and_recon_imgs(list(imgs_tensor2np(data)), list(imgs_tensor2np(recons)))
+        plot_raw_and_recon_imgs(list(img_tensor2np(d) for d in data), list(img_tensor2np(r) for r in recons))

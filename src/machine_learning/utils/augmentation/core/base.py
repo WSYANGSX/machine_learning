@@ -90,6 +90,9 @@ class TransformInterface(ABC):
 
     def __call__(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Apply the transform to the input sample."""
+        if random.random() > self.p:
+            return sample
+
         if self.pre_transform is not None:
             sample = self.pre_transform(sample)
 
@@ -99,9 +102,8 @@ class TransformInterface(ABC):
         self._params = params
 
         sample = self._sort_sample_keys(sample)  # for process_params pass correctly
-        if random.random() < self.p:
-            return self.apply_with_params(sample, params)
-        return sample
+
+        return self.apply_with_params(sample, params)
 
     def get_base_init_args(self) -> dict[str, Any]:
         """Returns base init args - p"""
