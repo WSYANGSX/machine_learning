@@ -18,13 +18,11 @@ from PIL import Image
 from copy import deepcopy
 from torch.utils.data import Dataset
 
-
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
 from ultralytics.data.utils import polygons2masks, polygons2masks_overlap
 from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
-from ultralytics.data.augment import Mosaic
 
 from .core import TransformInterface, Compose
 from .utils import ensure_contiguous_output, masks_to_overlap
@@ -278,486 +276,396 @@ class MixTransformBase(TransformBase):
         return self.apply_with_params(sample, params)
 
 
-# class Mosaic(MixTransformBase):
-#     """
-#     Mosaic augmentation for image datasets.
-
-#     This class performs mosaic augmentation by combining multiple (4 or 9) images into a single mosaic image.
-#     The augmentation is applied to a dataset with a given probability.
-
-#     Attributes:
-#         dataset: The dataset on which the mosaic augmentation is applied.
-#         imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
-#         p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
-#         n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
-#         border (Tuple[int, int]): Border size for width and height.
-#     """
-
-#     def __init__(
-#         self,
-#         dataset: Dataset,
-#         imgsz: int = 640,
-#         p: float = 1.0,
-#         n: int = 4,
-#     ):
-#         """
-#         Initializes the Mosaic augmentation object.
-
-#         This class performs mosaic augmentation by combining multiple (4 or 9) images into a single mosaic image.
-#         The augmentation is applied to a dataset with a given probability.
-
-#         Args:
-#             dataset (Any): The dataset on which the mosaic augmentation is applied.
-#             imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
-#             p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
-#             n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
-#         """
-#         assert 0 <= p <= 1.0, f"The probability should be in range [0, 1], but got {p}."
-#         assert n in {4, 9}, "Grid must be equal to 4 or 9."
-#         super().__init__(dataset=dataset, p=p)
-#         self.n = n
-#         self.imgsz = imgsz
-#         self.border = (-imgsz // 2, -imgsz // 2)  # width, height
-#         self.buffer_enabled = hasattr(self.dataset, "mosaic_buffer") and len(self.dataset.mosaic_buffer) > 0
-
-#     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-#         return {"size0": self.get_target_size(sample)}
-
-#     def get_params(self) -> dict[str, Any]:
-#         params = super().get_params()
-#         yc = int(random.uniform(-self.border[0], 2 * self.imgsz + self.border[0]))
-#         xc = int(random.uniform(-self.border[1], 2 * self.imgsz + self.border[1]))
-#         params.update({"mosaic_center": (yc, xc)})
-#         params["areas"] = None  # to record the area of each image in the mosaic
-#         return params
-
-#     def get_indexes(self):
-#         """
-#         Returns a list of random indexes from the dataset for mosaic augmentation.
-
-#         This method selects random image indexes either from a buffer or from the entire dataset, depending on
-#         the 'buffer' parameter. It is used to choose images for creating mosaic augmentations.
-#         """
-#         if self.buffer_enabled:  # select images from buffer
-#             return random.choices(list(self.dataset.mosaic_buffer), k=self.n - 1)
-#         else:  # select any images
-#             return [random.randint(0, len(self.dataset) - 1) for _ in range(self.n - 1)]
-
-#     def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-#         assert sample.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
-#         return super().apply_with_params(sample, params)
-
-#     def apply_to_target(
-#         self,
-#         target: np.ndarray,
-#         category: str,
-#         mix_samples: list[dict[str, Any]],
-#         size0: tuple[int, int],
-#         mosaic_center: tuple[int, int],
-#         **params: dict[str, Any],
-#     ) -> np.ndarray:
-#         # channel
-#         ch = 3 if category == "img" else 1
-#         # data type
-#         pad_val = 0.0 if target.dtype.kind == "f" else 114 if category == "img" else 0
-
-#         # mosaic4
-#         if self.n == 4:
-#             yc, xc = mosaic_center
-#             if ch == 1:
-#                 target4 = np.full((self.imgsz * 2, self.imgsz * 2), pad_val, dtype=target.dtype)
-#             else:
-#                 target4 = np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
-
-#             areas = []
-#             for i in range(4):
-#                 # Load image
-#                 target = target if i == 0 else mix_samples[i - 1][category]
-#                 h, w = size0 if i == 0 else target.shape[:2]
-
-#                 # Place img in img4
-#                 if i == 0:  # top left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
-#                 elif i == 1:  # top right
-#                     x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, self.imgsz * 2), yc
-#                     x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-#                 elif i == 2:  # bottom left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(self.imgsz * 2, yc + h)
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-#                 elif i == 3:  # bottom right
-#                     x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
-#                     x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
-#                 if ch == 3 and target.ndim == 2:  # There are grayscale images.
-#                     target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
-#                 else:
-#                     target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
-
-#                 areas.append((y2a - y1a) * (x2a - x1a))
-
-#             if params["areas"] is None:
-#                 params["areas"] = areas
-
-#             return target4
-
-#         # mosaic9
-#         elif self.n == 9:
-#             hp, wp = -1, -1  # height, width previous
-#             if ch == 1:
-#                 target9 = np.full((self.imgsz * 3, self.imgsz * 3), pad_val, dtype=target.dtype)
-#             else:
-#                 target9 = np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
-
-#             areas = []
-#             crop_x1, crop_y1, crop_x2, crop_y2 = (
-#                 -self.border[1],
-#                 -self.border[0],
-#                 self.imgsz * 3 + self.border[1],
-#                 self.imgsz * 3 + self.border[0],
-#             )
-
-#             for i in range(9):
-#                 target = target if i == 0 else mix_samples[i - 1][category]
-#                 h, w = size0 if i == 0 else target.shape[:2]
-
-#                 # Place img in img9
-#                 if i == 0:  # center
-#                     h0, w0 = h, w
-#                     c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h  # xmin, ymin, xmax, ymax
-#                 elif i == 1:  # top
-#                     c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-#                 elif i == 2:  # top right
-#                     c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-#                 elif i == 3:  # right
-#                     c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-#                 elif i == 4:  # bottom right
-#                     c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-#                 elif i == 5:  # bottom
-#                     c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-#                 elif i == 6:  # bottom left
-#                     c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-#                 elif i == 7:  # left
-#                     c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-#                 elif i == 8:  # top left
-#                     c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-#                 # c = (x1a, y1a, x2a, y2a)
-#                 x1a, y1a, x2a, y2a = c
-
-#                 # Intersect with the cropping window
-#                 ix1, iy1, ix2, iy2 = max(x1a, crop_x1), max(y1a, crop_y1), min(x2a, crop_x2), min(y2a, crop_y2)
-#                 iw, ih = max(ix2 - ix1, 0), max(iy2 - iy1, 0)
-#                 areas.append(iw * ih)
-
-#                 padw, padh = c[:2]
-#                 x1, y1, x2, y2 = max(c[0], 0), max(c[1], 0), min(c[2], self.imgsz * 3), min(c[3], self.imgsz * 3)
-#                 hp, wp = h, w  # Record the current image size for the next use
-
-#                 if ch == 3 and target.ndim == 2:
-#                     target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :, None]
-#                 else:
-#                     target9[y1:y2, x1:x2] = target[y1 - padh :, x1 - padw :]
-
-#             if params["areas"] is None:
-#                 params["areas"] = areas
-
-#             # Labels assuming imgsz*2 mosaic size
-#             return target9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
-
-#     def apply_to_instances(
-#         self,
-#         instances: Instances,
-#         mix_samples: list[dict[str, Any]],
-#         size0: tuple[int, int],
-#         mosaic_center: tuple[int, int],
-#         **params: dict[str, Any],
-#     ) -> Instances:
-#         mosaic_instances = []
-
-#         # mosaic4
-#         if self.n == 4:
-#             yc, xc = mosaic_center  # mosaic center x, y
-#             for i in range(4):
-#                 if i > 0:
-#                     instances = mix_samples[i - 1]["instances"]
-#                 h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
-
-#                 # Place img in img4
-#                 if i == 0:  # top left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-#                     x1b, y1b, _, _ = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
-#                 elif i == 1:  # top right
-#                     x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, self.imgsz * 2), yc
-#                     x1b, y1b, _, _ = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-#                 elif i == 2:  # bottom left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(self.imgsz * 2, yc + h)
-#                     x1b, y1b, _, _ = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-#                 elif i == 3:  # bottom right
-#                     x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
-#                     x1b, y1b, _, _ = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
-#                 padw, padh = x1a - x1b, y1a - y1b
-
-#                 instances.convert_bbox(format="xyxy")
-#                 instances.denormalize(w, h)
-#                 instances.add_padding(padw, padh)
-#                 mosaic_instances.append(instances)
-
-#         # mosaic9
-#         elif self.n == 9:
-#             hp, wp = -1, -1  # height, width previous
-#             for i in range(9):
-#                 if i > 0:
-#                     instances = mix_samples[i - 1]["instances"]
-#                 h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
-
-#                 # Place img in img9
-#                 if i == 0:  # center
-#                     h0, w0 = h, w
-#                     c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h  # xmin, ymin, xmax, ymax
-#                 elif i == 1:  # top
-#                     c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-#                 elif i == 2:  # top right
-#                     c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-#                 elif i == 3:  # right
-#                     c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-#                 elif i == 4:  # bottom right
-#                     c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-#                 elif i == 5:  # bottom
-#                     c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-#                 elif i == 6:  # bottom left
-#                     c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-#                 elif i == 7:  # left
-#                     c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-#                 elif i == 8:  # top left
-#                     c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-#                 padw, padh = c[:2]
-#                 hp, wp = h, w  # Record the current image size for the next use
-
-#                 instances.convert_bbox(format="xyxy")
-#                 instances.denormalize(w, h)
-#                 instances.add_padding(padw + self.border[0], padh + self.border[1])
-#                 mosaic_instances.append(instances)
-
-#         return Instances.concatenate(mosaic_instances, axis=0)
-
-#     def apply_to_mask(
-#         self,
-#         mask: np.ndarray,
-#         mix_samples: list[dict[str, Any]],
-#         size0: tuple[int, int],
-#         mosaic_center: tuple[int, int],
-#         **params: dict[str, Any],
-#     ) -> np.ndarray:
-#         """
-#         Applies semantic segmentation transformations.
-#         """
-#         if self.n == 4:
-#             yc, xc = mosaic_center
-#             hm = wm = self.imgsz * 2
-#         else:
-#             hm = wm = self.imgsz * 3
-
-#         mosaic_mask = np.zeros((hm, wm), dtype=mask.dtype)
-
-#         if self.n == 4:  # n = 4
-#             for i in range(4):
-#                 mask = mask if i == 0 else mix_samples[i - 1].get("mask")
-#                 h, w = size0 if i == 0 else mask.shape[:2]
-
-#                 if i == 0:  # top-left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
-#                 elif i == 1:  # top-right
-#                     x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
-#                     x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-#                 elif i == 2:  # bottom-left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-#                 else:  # bottom-right
-#                     x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
-#                     x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
-#                 mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1b:y2b, x1b:x2b]
-
-#             return mosaic_mask
-
-#         else:  # n = 9
-#             hp, wp = -1, -1
-#             for i in range(9):
-#                 mask = mask if i == 0 else mix_samples[i - 1].get("mask")
-#                 h, w = size0 if i == 0 else mask.shape[:2]
-
-#                 if i == 0:
-#                     h0, w0 = h, w
-#                     c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
-#                 elif i == 1:
-#                     c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-#                 elif i == 2:
-#                     c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-#                 elif i == 3:
-#                     c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-#                 elif i == 4:
-#                     c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-#                 elif i == 5:
-#                     c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-#                 elif i == 6:
-#                     c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-#                 elif i == 7:
-#                     c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-#                 else:
-#                     c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-#                 x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
-#                 padw, padh = c[:2]
-#                 hp, wp = h, w
-
-#                 mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1a - padh : y2a - padh, x1a - padw : x2a - padw]
-
-#             return mosaic_mask[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
-
-#     def apply_to_masks(
-#         self,
-#         masks: np.ndarray,
-#         mix_samples: list[dict[str, Any]],
-#         size0: tuple[int, int],
-#         mosaic_center: tuple[int, int],
-#         **params,
-#     ) -> np.ndarray:
-#         mosaic_masks = []
-
-#         if self.n == 4:
-#             yc, xc = mosaic_center
-#             hm = wm = self.imgsz * 2
-
-#             for i in range(4):
-#                 curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
-#                 if curr_masks.size == 0:  # empty
-#                     continue
-
-#                 h, w = size0 if i == 0 else curr_masks.shape[1:3]
-#                 if i == 0:  # top left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
-#                 elif i == 1:  # top right
-#                     x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, wm), yc
-#                     x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-#                 elif i == 2:  # bottom left
-#                     x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(hm, yc + h)
-#                     x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-#                 else:  # i == 3, bottom right
-#                     x1a, y1a, x2a, y2a = xc, yc, min(xc + w, wm), min(hm, yc + h)
-#                     x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
-#                 for k in range(curr_masks.shape[0]):
-#                     big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
-#                     big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1b:y2b, x1b:x2b]
-#                     mosaic_masks.append(big_mask)
-
-#             if len(mosaic_masks) == 0:
-#                 return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
-
-#             return np.stack(mosaic_masks, axis=0)
-
-#         elif self.n == 9:
-#             hm = wm = self.imgsz * 3
-#             hp, wp = -1, -1  # height, width previous
-
-#             for i in range(9):
-#                 curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
-#                 if curr_masks.size == 0:
-#                     continue
-
-#                 h, w = size0 if i == 0 else curr_masks.shape[1:3]
-
-#                 if i == 0:  # center
-#                     h0, w0 = h, w
-#                     c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h
-#                 elif i == 1:  # top
-#                     c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
-#                 elif i == 2:  # top right
-#                     c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
-#                 elif i == 3:  # right
-#                     c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
-#                 elif i == 4:  # bottom right
-#                     c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
-#                 elif i == 5:  # bottom
-#                     c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
-#                 elif i == 6:  # bottom left
-#                     c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
-#                 elif i == 7:  # left
-#                     c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
-#                 else:  # i == 8, top left
-#                     c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
-
-#                 x1a, y1a, x2a, y2a = (max(x, 0) for x in c)
-#                 padw, padh = c[:2]
-#                 hp, wp = h, w  # record
-
-#                 for k in range(curr_masks.shape[0]):
-#                     big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
-#                     big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1a - padh : y2a - padh, x1a - padw : x2a - padw]
-#                     mosaic_masks.append(big_mask)
-
-#             if len(mosaic_masks) == 0:
-#                 return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
-
-#             return np.stack(mosaic_masks, axis=0)[:, -self.border[0] : self.border[0], -self.border[1] : self.border[1]]
-
-#     def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
-#         """
-#         Concatenates and processes annotations in mixed samples for mosaic augmentation.
-#         """
-#         imgsz = self.imgsz * 2  # mosaic imgsz
-#         sample["resized_shape"] = (imgsz, imgsz)
-#         sample["mosaic_border"] = self.border
-
-#         # clip and clean
-#         if "instances" in sample and "cls" in sample:  # yolo task
-#             cls = [sample["cls"]]
-#             for ms in mix_samples:
-#                 cls.append(ms["cls"])
-#             # update sample
-#             sample["cls"] = np.concatenate(cls, 0)
-#             sample["instances"].clip(imgsz, imgsz)
-#             good = sample["instances"].remove_zero_area_boxes()
-#             sample["cls"] = sample["cls"][good]
-
-#             if "masks" in sample:
-#                 sample["masks"] = sample["masks"][good]
-
-#         if "instances" not in sample and "cls" in sample:  # instance segment task
-#             if "masks" in sample:
-#                 # update cls
-#                 cls = [sample["cls"]]
-#                 for ms in mix_samples:
-#                     cls.append(ms["cls"])
-#                 sample["cls"] = np.concatenate(cls, 0)
-#                 # update masks
-#                 masks: np.ndarray = sample["masks"]
-#                 if masks.size > 0:
-#                     indices = masks.sum(axis=(1, 2)) > 0
-#                     sample["masks"] = masks[indices]
-#                     sample["cls"] = sample["cls"][indices]
-
-#             else:  # classify task
-#                 # classification task with soft labels (Mixup/CutMix-style)
-#                 # cls is expected to be one-hot or probability vector
-#                 if params.get("areas", None) is None:
-#                     # Revert to simple average weights
-#                     num = 1 + len(mix_samples)
-#                     weights = np.full(num, 1.0 / num, dtype=np.float32)
-#                 else:
-#                     areas = np.array(params["areas"], dtype=np.float32)
-#                     weights = areas / areas.sum()
-#                 cls = sample["cls"] * weights[0]
-#                 for i, ms in enumerate(mix_samples):
-#                     cls += ms["cls"] * weights[i + 1]
-#                 sample["cls"] = cls
-
-#         return sample
+class Mosaic(MixTransformBase):
+    """
+    Mosaic augmentation for image datasets.
+
+    This class performs mosaic augmentation by combining multiple (4 or 9) images into a single mosaic image.
+    The augmentation is applied to a dataset with a given probability.
+
+    Attributes:
+        dataset: The dataset on which the mosaic augmentation is applied.
+        imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
+        p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
+        n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
+        border (Tuple[int, int]): Border size for width and height.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        imgsz: int = 640,
+        p: float = 1.0,
+        n: int = 4,
+    ):
+        """
+        Initializes the Mosaic augmentation object.
+
+        This class performs mosaic augmentation by combining multiple (4 or 9) images into a single mosaic image.
+        The augmentation is applied to a dataset with a given probability.
+
+        Args:
+            dataset (Any): The dataset on which the mosaic augmentation is applied.
+            imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
+            p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
+            n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
+        """
+        assert 0 <= p <= 1.0, f"The probability should be in range [0, 1], but got {p}."
+        assert n in {4, 9}, "Grid must be equal to 4 or 9."
+        super().__init__(dataset=dataset, p=p)
+        self.n = n
+        self.imgsz = imgsz
+        self.border = (-imgsz // 2, -imgsz // 2)  # width, height
+        self.buffer_enabled = hasattr(self.dataset, "mosaic_buffer") and len(self.dataset.mosaic_buffer) > 0
+
+    def get_params(self) -> dict[str, Any]:
+        params = super().get_params()
+        if self.n == 4:
+            yc = int(random.uniform(-self.border[0], 2 * self.imgsz + self.border[0]))
+            xc = int(random.uniform(-self.border[1], 2 * self.imgsz + self.border[1]))
+            params.update({"mosaic_center": (yc, xc)})
+        return params
+
+    def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        size0 = self.get_target_size(sample)
+        mix_samples = params["mix_samples"]
+
+        areas = []
+        coordinates = []
+
+        # mosaic4
+        if self.n == 4:
+            yc, xc = params["mosaic_center"]
+
+            for i in range(4):
+                # Load image
+                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+
+                # compute coordinates
+                if i == 0:  # top left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+                elif i == 1:  # top right
+                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, self.imgsz * 2), yc
+                    x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+                elif i == 2:  # bottom left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(self.imgsz * 2, yc + h)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+                elif i == 3:  # bottom right
+                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
+                    x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+                areas.append((y2a - y1a) * (x2a - x1a))
+                coordinates.append(((x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b)))
+
+        # mosaic9
+        elif self.n == 9:
+            hp, wp = -1, -1  # height, width previous
+
+            crop_x1, crop_y1, crop_x2, crop_y2 = (
+                -self.border[1],
+                -self.border[0],
+                self.imgsz * 3 + self.border[1],
+                self.imgsz * 3 + self.border[0],
+            )
+
+            for i in range(9):
+                h, w = size0 if i == 0 else mix_samples[i - 1]
+
+                # compute coordinates
+                if i == 0:  # center
+                    h0, w0 = h, w
+                    c = self.imgsz, self.imgsz, self.imgsz + w, self.imgsz + h  # xmin, ymin, xmax, ymax
+                elif i == 1:  # top
+                    c = self.imgsz, self.imgsz - h, self.imgsz + w, self.imgsz
+                elif i == 2:  # top right
+                    c = self.imgsz + wp, self.imgsz - h, self.imgsz + wp + w, self.imgsz
+                elif i == 3:  # right
+                    c = self.imgsz + w0, self.imgsz, self.imgsz + w0 + w, self.imgsz + h
+                elif i == 4:  # bottom right
+                    c = self.imgsz + w0, self.imgsz + hp, self.imgsz + w0 + w, self.imgsz + hp + h
+                elif i == 5:  # bottom
+                    c = self.imgsz + w0 - w, self.imgsz + h0, self.imgsz + w0, self.imgsz + h0 + h
+                elif i == 6:  # bottom left
+                    c = self.imgsz + w0 - wp - w, self.imgsz + h0, self.imgsz + w0 - wp, self.imgsz + h0 + h
+                elif i == 7:  # left
+                    c = self.imgsz - w, self.imgsz + h0 - h, self.imgsz, self.imgsz + h0
+                elif i == 8:  # top left
+                    c = self.imgsz - w, self.imgsz + h0 - hp - h, self.imgsz, self.imgsz + h0 - hp
+
+                # c = (x1a, y1a, x2a, y2a)
+                x1a, y1a, x2a, y2a = c
+
+                # Intersect with the cropping window
+                ix1, iy1, ix2, iy2 = max(x1a, crop_x1), max(y1a, crop_y1), min(x2a, crop_x2), min(y2a, crop_y2)
+                iw, ih = max(ix2 - ix1, 0), max(iy2 - iy1, 0)
+                areas.append(iw * ih)
+
+                padw, padh = c[:2]
+                x1, y1, x2, y2 = max(c[0], 0), max(c[1], 0), min(c[2], self.imgsz * 3), min(c[3], self.imgsz * 3)
+                coordinates.append(((x1, y1, x2, y2), (x1 - padw, y1 - padh, w, h)))
+
+                hp, wp = h, w  # Record the current image size for the next use
+
+        return {"size0": size0, "areas": areas, "coordinates": coordinates}
+
+    def get_indexes(self):
+        """
+        Returns a list of random indexes from the dataset for mosaic augmentation.
+
+        This method selects random image indexes either from a buffer or from the entire dataset, depending on
+        the 'buffer' parameter. It is used to choose images for creating mosaic augmentations.
+        """
+        if self.buffer_enabled:  # select images from buffer
+            return random.choices(list(self.dataset.mosaic_buffer), k=self.n - 1)
+        else:  # select any images
+            return [random.randint(0, len(self.dataset) - 1) for _ in range(self.n - 1)]
+
+    def apply_with_params(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        assert sample.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
+        return super().apply_with_params(sample, params)
+
+    def apply_to_target(
+        self,
+        target: np.ndarray,
+        category: str,
+        mix_samples: list[dict[str, Any]],
+        coordinates: list[tuple[tuple, tuple]],
+        **params: dict[str, Any],
+    ) -> np.ndarray:
+        # channel
+        ch = 3 if category == "img" else 1
+        # data type
+        pad_val = 0.0 if target.dtype.kind == "f" else 114 if category == "img" else 0
+
+        # mosaic4
+        if self.n == 4:
+            target4 = (
+                np.full((self.imgsz * 2, self.imgsz * 2), pad_val, dtype=target.dtype)
+                if ch == 1
+                else np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
+            )
+
+            for i in range(4):
+                # Load image
+                target = target if i == 0 else mix_samples[i - 1][category]
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                if ch == 3 and target.ndim == 2:  # There are grayscale images.
+                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
+                else:
+                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
+
+            return target4
+
+        # mosaic9
+        elif self.n == 9:
+            target9 = (
+                np.full((self.imgsz * 3, self.imgsz * 3), pad_val, dtype=target.dtype)
+                if ch == 1
+                else np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
+            )
+
+            for i in range(9):
+                target = target if i == 0 else mix_samples[i - 1][category]
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                if ch == 3 and target.ndim == 2:
+                    target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
+                else:
+                    target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
+
+            # Labels assuming imgsz*2 mosaic size
+            return target9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
+
+    def apply_to_instances(
+        self,
+        instances: Instances,
+        mix_samples: list[dict[str, Any]],
+        size0: tuple[int, int],
+        coordinates: list[tuple[tuple, tuple]],
+        **params: dict[str, Any],
+    ) -> Instances:
+        mosaic_instances = []
+
+        # mosaic4
+        if self.n == 4:
+            for i in range(4):
+                if i > 0:
+                    instances = mix_samples[i - 1]["instances"]
+                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+
+                (x1a, y1a, _, _), (x1b, y1b, _, _) = coordinates[i]
+                padw, padh = x1a - x1b, y1a - y1b
+
+                instances.convert_bbox(format="xyxy")
+                instances.denormalize(w, h)
+                instances.add_padding(padw, padh)
+                mosaic_instances.append(instances)
+
+        # mosaic9
+        elif self.n == 9:
+            for i in range(9):
+                if i > 0:
+                    instances = mix_samples[i - 1]["instances"]
+                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+
+                (x1a, y1a, _, _), (x1b, y1b, _, _) = coordinates[i]
+                padw, padh = x1a - x1b, y1a - y1b
+
+                instances.convert_bbox(format="xyxy")
+                instances.denormalize(w, h)
+                instances.add_padding(padw + self.border[0], padh + self.border[1])
+                mosaic_instances.append(instances)
+
+        return Instances.concatenate(mosaic_instances, axis=0)
+
+    def apply_to_mask(
+        self,
+        mask: np.ndarray,
+        mix_samples: list[dict[str, Any]],
+        size0: tuple[int, int],
+        coordinates: list[tuple[tuple, tuple]],
+        **params: dict[str, Any],
+    ) -> np.ndarray:
+        """
+        Applies semantic segmentation transformations.
+        """
+        if self.n == 4:
+            hm = wm = self.imgsz * 2
+        else:
+            hm = wm = self.imgsz * 3
+
+        mosaic_mask = np.zeros((hm, wm), dtype=mask.dtype)
+
+        if self.n == 4:  # n = 4
+            for i in range(4):
+                if i > 0:
+                    mask = mix_samples[i - 1].get("mask")
+                h, w = size0 if i == 0 else mask.shape[:2]
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1b:y2b, x1b:x2b]
+
+            return mosaic_mask
+
+        else:  # n = 9
+            for i in range(9):
+                if i > 0:
+                    mask = mix_samples[i - 1].get("mask")
+                h, w = size0 if i == 0 else mask.shape[:2]
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                mosaic_mask[y1a:y2a, x1a:x2a] = mask[y1b:y2b, x1b:x2b]
+
+            return mosaic_mask[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
+
+    def apply_to_masks(
+        self,
+        masks: np.ndarray,
+        mix_samples: list[dict[str, Any]],
+        size0: tuple[int, int],
+        coordinates: list[tuple[tuple, tuple]],
+        **params,
+    ) -> np.ndarray:
+        mosaic_masks = []
+
+        if self.n == 4:
+            hm = wm = self.imgsz * 2
+
+            for i in range(4):
+                curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
+                if curr_masks.size == 0:  # empty
+                    continue
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                for k in range(curr_masks.shape[0]):
+                    big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
+                    big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1b:y2b, x1b:x2b]
+                    mosaic_masks.append(big_mask)
+
+            if len(mosaic_masks) == 0:
+                return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
+
+            return np.stack(mosaic_masks, axis=0)
+
+        elif self.n == 9:
+            hm = wm = self.imgsz * 3
+
+            for i in range(9):
+                curr_masks = masks if i == 0 else mix_samples[i - 1].get("masks")
+                if curr_masks.size == 0:
+                    continue
+
+                (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
+
+                for k in range(curr_masks.shape[0]):
+                    big_mask = np.zeros((hm, wm), dtype=curr_masks.dtype)
+                    big_mask[y1a:y2a, x1a:x2a] = curr_masks[k, y1b:y2b, x1b:x2b]
+                    mosaic_masks.append(big_mask)
+
+            if len(mosaic_masks) == 0:
+                return np.zeros((0, self.imgsz * 2, self.imgsz * 2), dtype=np.uint8)
+
+            return np.stack(mosaic_masks, axis=0)[:, -self.border[0] : self.border[0], -self.border[1] : self.border[1]]
+
+    def update_sample(self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params) -> dict[str, Any]:
+        """
+        Concatenates and processes annotations in mixed samples for mosaic augmentation.
+        """
+        imgsz = self.imgsz * 2  # mosaic imgsz
+        sample["resized_shape"] = (imgsz, imgsz)
+        sample["mosaic_border"] = self.border
+
+        # clip and clean
+        if "instances" in sample and "cls" in sample:  # yolo task
+            cls = [sample["cls"]]
+            for ms in mix_samples:
+                cls.append(ms["cls"])
+            # update sample
+            sample["cls"] = np.concatenate(cls, 0)
+            sample["instances"].clip(imgsz, imgsz)
+            good = sample["instances"].remove_zero_area_boxes()
+            sample["cls"] = sample["cls"][good]
+
+            if "masks" in sample:
+                sample["masks"] = sample["masks"][good]
+
+        if "instances" not in sample and "cls" in sample:  # instance segment task
+            if "masks" in sample:
+                # update cls
+                cls = [sample["cls"]]
+                for ms in mix_samples:
+                    cls.append(ms["cls"])
+                sample["cls"] = np.concatenate(cls, 0)
+                # update masks
+                masks: np.ndarray = sample["masks"]
+                if masks.size > 0:
+                    indices = masks.sum(axis=(1, 2)) > 0
+                    sample["masks"] = masks[indices]
+                    sample["cls"] = sample["cls"][indices]
+
+            else:  # classify task
+                # classification task with soft labels (Mixup/CutMix-style)
+                # cls is expected to be one-hot or probability vector
+                if params.get("areas", None) is None:
+                    # Revert to simple average weights
+                    num = 1 + len(mix_samples)
+                    weights = np.full(num, 1.0 / num, dtype=np.float32)
+                else:
+                    areas = np.array(params["areas"], dtype=np.float32)
+                    weights = areas / areas.sum()
+                cls = sample["cls"] * weights[0]
+                for i, ms in enumerate(mix_samples):
+                    cls += ms["cls"] * weights[i + 1]
+                sample["cls"] = cls
+
+        return sample
 
 
 # TODO
