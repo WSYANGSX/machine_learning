@@ -1,3 +1,4 @@
+from tokenize import group
 from typing import Literal, Mapping, Any, Sequence
 
 import cv2
@@ -152,23 +153,16 @@ class YoloV13(AlgorithmBase):
         else:
             raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
 
+        for g in self.optimizer.param_groups:
+            g["initial_lr"] = g["lr"]
+
         self._add_optimizer("optimizer", self.optimizer)
 
     def _init_schedulers(self) -> None:
         self.sch_config = self._cfg["scheduler"]
-
         self.scheduler = None
 
-        if self.sch_config.get("sched") == "ReduceLROnPlateau":
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                mode="min",
-                factor=self.sch_config.get("factor", 0.1),
-                patience=self.sch_config.get("patience", 10),
-            )
-            self._add_scheduler("scheduler", self.scheduler)
-
-        elif self.sch_config.get("sched") == "CustomLRDecay":
+        if self.sch_config.get("sched") == "CustomLRDecay":
             self.lf = (
                 lambda x: max(1 - x / self.trainer_cfg["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
                 + self.opt_cfg["final_factor"]
@@ -380,14 +374,14 @@ class YoloV13(AlgorithmBase):
         return predictions
 
     def warmup(self, batch_inters: int, epoch: int) -> int:
-        nw = (
+        wb = (
             max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
             if self.opt_cfg["warmup_epochs"] > 0
             else -1
         )  # warmup batches
 
-        if batch_inters <= nw:
-            xi = [0, nw]  # x interp
+        if batch_inters <= wb:
+            xi = [0, wb]  # x interp
             self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
             for j, x in enumerate(self.optimizer.param_groups):
                 # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
