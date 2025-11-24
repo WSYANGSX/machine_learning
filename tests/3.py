@@ -8,7 +8,7 @@ sample = {"img": np.random.randn(32, 32, 3), "ir": np.random.randn(32, 32, 3), "
 
 t0 = time.time()
 size = next(
-    (sample[t].shape[:2] for t in _targets if t in sample and sample[t] is not None),
+    iter([sample[t].shape[:2] for t in _targets if t in sample and sample[t] is not None]),
     None,
 )
 t1 = time.time()

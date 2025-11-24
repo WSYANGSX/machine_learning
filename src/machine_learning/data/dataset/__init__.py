@@ -127,7 +127,7 @@ def build_dataloader(
     batch_size: int,
     workers: int,
     shuffle: bool | None,
-    pin_memory: bool = False,
+    pin_memory: bool = True,
     mode: str | None = "train",
 ) -> DataLoader:
     """Return an InfiniteDataLoader or DataLoader for train or val(test) set."""

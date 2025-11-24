@@ -25,7 +25,7 @@ algorithm:
 
 optimizer:
   opt: "Adam"
-  lr: 1.0e-4
+  lr: 5.0e-4
   final_factor: 0.01
   beta1: 0.937
   beta2: 0.999
