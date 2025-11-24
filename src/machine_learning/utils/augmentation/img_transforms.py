@@ -16,7 +16,6 @@ import albumentations as A
 
 from PIL import Image
 from copy import deepcopy
-from torch.utils.data import Dataset
 
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.instance import Instances
@@ -27,6 +26,7 @@ from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TO
 from .core import TransformInterface, Compose
 from .utils import ensure_contiguous_output, masks_to_overlap
 from machine_learning.utils.logger import LOGGER
+from machine_learning.data.dataset import DatasetBase
 
 
 DEFAULT_MEAN = (0.0, 0.0, 0.0)
@@ -165,10 +165,11 @@ class TransformBase(TransformInterface):
         if "resized_shape" in sample:
             size = sample["resized_shape"][:2]
         else:
-            size = next(
-                (sample[t].shape[:2] for t in self._targets if t in sample and sample[t] is not None),
-                None,
-            )
+            size = None
+            for t in self._targets:
+                if t in sample:
+                    size = sample[t].shape[:2]
+                    break
             if size is None:
                 raise ValueError("No valid target found in the sample to infer data size.")
         return size
@@ -184,7 +185,7 @@ class MixTransformBase(TransformBase):
 
     def __init__(
         self,
-        dataset: Dataset,
+        dataset: DatasetBase,
         p: float = 0.0,
         pre_transform: TransformBase | Compose = None,
     ) -> None:
@@ -272,8 +273,9 @@ class MixTransformBase(TransformBase):
         self._params = params
 
         sample = self._sort_sample_keys(sample)  # for process_params pass correctly
+        sample = self.apply_with_params(sample, params)
 
-        return self.apply_with_params(sample, params)
+        return sample
 
 
 class Mosaic(MixTransformBase):
@@ -293,7 +295,7 @@ class Mosaic(MixTransformBase):
 
     def __init__(
         self,
-        dataset: Dataset,
+        dataset: DatasetBase,
         imgsz: int = 640,
         p: float = 1.0,
         n: int = 4,
@@ -316,7 +318,7 @@ class Mosaic(MixTransformBase):
         self.n = n
         self.imgsz = imgsz
         self.border = (-imgsz // 2, -imgsz // 2)  # width, height
-        self.buffer_enabled = hasattr(self.dataset, "mosaic_buffer") and len(self.dataset.mosaic_buffer) > 0
+        self.buffer_enabled = hasattr(self.dataset, "mosaic_buffer") and self.dataset.cache != "ram"
 
     def get_params(self) -> dict[str, Any]:
         params = super().get_params()
@@ -329,6 +331,7 @@ class Mosaic(MixTransformBase):
     def get_params_on_sample(self, sample: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         size0 = self.get_target_size(sample)
         mix_samples = params["mix_samples"]
+        mix_sizes = [self.get_target_size(sample) for sample in mix_samples]
 
         areas = []
         coordinates = []
@@ -339,7 +342,7 @@ class Mosaic(MixTransformBase):
 
             for i in range(4):
                 # Load image
-                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+                h, w = size0 if i == 0 else mix_sizes[i - 1]
 
                 # compute coordinates
                 if i == 0:  # top left
@@ -370,7 +373,7 @@ class Mosaic(MixTransformBase):
             )
 
             for i in range(9):
-                h, w = size0 if i == 0 else mix_samples[i - 1]
+                h, w = size0 if i == 0 else mix_sizes[i - 1]
 
                 # compute coordinates
                 if i == 0:  # center
@@ -407,7 +410,12 @@ class Mosaic(MixTransformBase):
 
                 hp, wp = h, w  # Record the current image size for the next use
 
-        return {"size0": size0, "areas": areas, "coordinates": coordinates}
+        return {
+            "size0": size0,
+            "mix_sizes": mix_sizes,
+            "areas": areas,
+            "coordinates": coordinates,
+        }
 
     def get_indexes(self):
         """
@@ -483,8 +491,9 @@ class Mosaic(MixTransformBase):
     def apply_to_instances(
         self,
         instances: Instances,
-        mix_samples: list[dict[str, Any]],
         size0: tuple[int, int],
+        mix_samples: list[dict[str, Any]],
+        mix_sizes: list[tuple[int, int]],
         coordinates: list[tuple[tuple, tuple]],
         **params: dict[str, Any],
     ) -> Instances:
@@ -495,7 +504,7 @@ class Mosaic(MixTransformBase):
             for i in range(4):
                 if i > 0:
                     instances = mix_samples[i - 1]["instances"]
-                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+                h, w = size0 if i == 0 else mix_sizes[i - 1]
 
                 (x1a, y1a, _, _), (x1b, y1b, _, _) = coordinates[i]
                 padw, padh = x1a - x1b, y1a - y1b
@@ -510,7 +519,7 @@ class Mosaic(MixTransformBase):
             for i in range(9):
                 if i > 0:
                     instances = mix_samples[i - 1]["instances"]
-                h, w = size0 if i == 0 else self.get_target_size(mix_samples[i - 1])
+                h, w = size0 if i == 0 else mix_sizes[i - 1]
 
                 (x1a, y1a, _, _), (x1b, y1b, _, _) = coordinates[i]
                 padw, padh = x1a - x1b, y1a - y1b
@@ -526,7 +535,6 @@ class Mosaic(MixTransformBase):
         self,
         mask: np.ndarray,
         mix_samples: list[dict[str, Any]],
-        size0: tuple[int, int],
         coordinates: list[tuple[tuple, tuple]],
         **params: dict[str, Any],
     ) -> np.ndarray:
@@ -544,7 +552,6 @@ class Mosaic(MixTransformBase):
             for i in range(4):
                 if i > 0:
                     mask = mix_samples[i - 1].get("mask")
-                h, w = size0 if i == 0 else mask.shape[:2]
 
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
@@ -556,7 +563,6 @@ class Mosaic(MixTransformBase):
             for i in range(9):
                 if i > 0:
                     mask = mix_samples[i - 1].get("mask")
-                h, w = size0 if i == 0 else mask.shape[:2]
 
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
@@ -568,7 +574,6 @@ class Mosaic(MixTransformBase):
         self,
         masks: np.ndarray,
         mix_samples: list[dict[str, Any]],
-        size0: tuple[int, int],
         coordinates: list[tuple[tuple, tuple]],
         **params,
     ) -> np.ndarray:
@@ -686,7 +691,7 @@ class MixUp(MixTransformBase):
 
     def __init__(
         self,
-        dataset: Dataset,
+        dataset: DatasetBase,
         p: float = 0.0,
         alpha: float = 32.0,
         pre_transform: TransformBase | Compose = None,
@@ -769,7 +774,7 @@ class CutMix(MixTransformBase):
 
     def __init__(
         self,
-        dataset: Dataset,
+        dataset: DatasetBase,
         p: float = 0.0,
         beta: float = 1.0,
         num_areas: int = 3,
@@ -1039,7 +1044,7 @@ class CopyPaste(MixTransformBase):
 
     def __init__(
         self,
-        dataset: Dataset = None,
+        dataset: DatasetBase = None,
         p: float = 0.5,
         mode: Literal["mixup", "flip"] = "flip",
         pre_transform: TransformBase | Compose = None,
@@ -2205,7 +2210,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         pre_transform=None if stretch else LetterBox(dsize=(imgsz, imgsz)),
     )
 
-    pre_transform = Compose([affine])
+    pre_transform = Compose([mosaic, affine])
     if hyp.copy_paste_mode == "flip":
         pre_transform.insert(1, CopyPaste(p=hyp.copy_paste, mode=hyp.copy_paste_mode))
     else:

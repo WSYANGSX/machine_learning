@@ -1,3 +1,4 @@
+import time
 from machine_learning.utils import load_cfg
 from machine_learning.data.dataset import YoloDataset
 from machine_learning.data.dataset.parsers import CocoParser

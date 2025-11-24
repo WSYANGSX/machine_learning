@@ -383,6 +383,7 @@ class BaseMixTransform:
             >>> transform = BaseMixTransform(dataset, pre_transform=None, p=0.5)
             >>> result = transform({"image": img, "bboxes": boxes, "cls": classes})
         """
+
         if random.uniform(0, 1) > self.p:
             return labels
 
@@ -404,6 +405,7 @@ class BaseMixTransform:
         # Mosaic or MixUp
         labels = self._mix_transform(labels)
         labels.pop("mix_labels", None)
+
         return labels
 
     def _mix_transform(self, labels):
