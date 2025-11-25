@@ -25,7 +25,7 @@ algorithm:
 
 optimizer:
   opt: "Adam"
-  lr: 1.0e-4
+  lr: 1.0e-3
   final_factor: 0.01
   beta1: 0.937
   beta2: 0.999
@@ -65,7 +65,7 @@ data:
   mask_overlap: True # (bool) merge object masks into a single image mask during training (segment train only)
   mask_ratio: 4 # (int) mask downsample ratio (segment train only)
   nbs: 64 # (int) nominal batch size, -1 represent no
-  batch_size: 256
+  batch_size: 64
   mosaic: 1.0
   mixup: 0.2
   erasing: 0.4

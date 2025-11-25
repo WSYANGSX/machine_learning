@@ -1,4 +1,3 @@
-from tokenize import group
 from typing import Literal, Mapping, Any, Sequence
 
 import cv2
@@ -152,9 +151,6 @@ class YoloV13(AlgorithmBase):
             )
         else:
             raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
-
-        for g in self.optimizer.param_groups:
-            g["initial_lr"] = g["lr"]
 
         self._add_optimizer("optimizer", self.optimizer)
 
