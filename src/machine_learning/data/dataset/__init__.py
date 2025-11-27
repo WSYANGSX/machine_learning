@@ -53,9 +53,9 @@ def build_dataset(
     Returns:
         Dataset: The builded dataset.
     """
-    augment = cfg["augment"] if cfg.get("augment") is not None else mode == "train"
+    augment = mode == "train"
     cache = cfg.get("cache")
-    fraction = cfg.get("fraction", 1.0) if mode == "trian" else 1.0
+    fraction = cfg.get("fraction", 1.0) if mode == "train" else 1.0
 
     if type == "DatasetBase":
         return DatasetBase(

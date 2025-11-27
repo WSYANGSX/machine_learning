@@ -12,6 +12,9 @@ algorithm:
   beta: 6.0
   close_mosaic_epoch: 0.9 # the ratio of the total number of epochs
   max_det: 300
+  
+  # val
+  plot: False
 
   # loss weight
   box: 7.5 # (float) box loss gain
@@ -32,13 +35,13 @@ optimizer:
   eps: 1.0e-8
   weight_decay: 0.0005
 
-  # opt: "SGD"
+  # opt: "auto"
   # lr: 0.01
   # final_factor: 0.01
   # momentum: 0.9
   # weight_decay: 0.0005
 
-  grad_clip: 1.0
+  grad_clip: 10.0
   warmup_epochs: 3.0 # (float) warmup epochs (fractions ok)
   warmup_momentum: 0.8 # (float) warmup initial momentum
   warmup_bias_lr: 0.0 # 0.1 # (float) warmup initial bias lr
@@ -65,7 +68,7 @@ data:
   mask_overlap: True # (bool) merge object masks into a single image mask during training (segment train only)
   mask_ratio: 4 # (int) mask downsample ratio (segment train only)
   nbs: 64 # (int) nominal batch size, -1 represent no
-  batch_size: 64
+  batch_size: 128
   mosaic: 1.0
   mixup: 0.2
   erasing: 0.4

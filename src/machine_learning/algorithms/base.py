@@ -83,6 +83,7 @@ class AlgorithmBase(ABC):
         """Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the dataset_cfg and trainer_cfg are created here."""
         self._add_cfg("trainer", train_cfg)
         self._trainer_cfg = train_cfg
+        self.epochs = train_cfg.get("epochs")
 
         # init train/val datasets and dataloaders
         self._init_train_datasets(dataset)
@@ -296,7 +297,7 @@ class AlgorithmBase(ABC):
             workers=self.cfg["data"].get("workers", 8),
             shuffle=False,
             pin_memory=self.cfg["data"].get("pin_memory", False),
-            mode="train",
+            mode="val",
         )
         self._val_batches = len(self.val_loader)
 

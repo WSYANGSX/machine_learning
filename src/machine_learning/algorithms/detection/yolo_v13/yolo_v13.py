@@ -1,6 +1,7 @@
 from typing import Literal, Mapping, Any, Sequence
 
 import cv2
+import math
 import torch
 import numpy as np
 import torch.nn as nn
@@ -10,9 +11,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks import BaseNet
-from machine_learning.utils.logger import LOGGER
+from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.types.aliases import FilePath
-from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import (
     resize,
@@ -88,79 +88,42 @@ class YoloV13(AlgorithmBase):
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
         self.beta = self.cfg["algorithm"]["beta"]
+        self.nc = self.dataset_cfg["nc"]
+        self.class_names = self.dataset_cfg["class_names"]
 
         self.assigner = TaskAlignedAssigner(
             topk=self.topk, num_classes=self.dataset_cfg["nc"], alpha=self.alpha, beta=self.beta
         )
 
+    def _init_on_evaluator(self, ckpt, dataset, use_dataset):
+        super()._init_on_evaluator(ckpt, dataset, use_dataset)
+
+        self.nc = self.dataset_cfg["nc"]
+        self.class_names = self.dataset_cfg["class_names"]
+
     def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
 
-        self.optimizer = None
-
-        decay_params = []
-        no_decay_norm_params = []
-        no_decay_bias_params = []
-
-        for name, param in self.net.named_parameters():
-            # Skip the freezed parameter
-            if not param.requires_grad:
-                continue
-
-            full_name = name
-            module_name = name.rsplit(".", 1)[0] if "." in name else ""
-            module = dict(self.net.named_modules()).get(module_name, None)
-
-            if "bias" in full_name:
-                no_decay_bias_params.append(param)
-            elif module is not None and isinstance(module, NORM_LAYER_TYPES):
-                no_decay_norm_params.append(param)
-            else:
-                decay_params.append(param)
-
-        # Set the weight attenuation value
-        weight_decay = self._cfg["optimizer"].get("weight_decay", 1e-5)
-
-        # Create parameter groups
-        param_groups = [
-            {"params": decay_params, "weight_decay": weight_decay},
-            {"params": no_decay_norm_params, "weight_decay": 0.0},
-            {"params": no_decay_bias_params, "weight_decay": 0.0},
-        ]
-
-        optimizer_type = self.opt_cfg["opt"]
-        lr = self.opt_cfg["lr"]
-
-        if optimizer_type == "Adam":
-            self.optimizer = torch.optim.Adam(
-                param_groups,
-                lr=lr,
-                betas=(self.opt_cfg["beta1"], self.opt_cfg["beta2"]),
-                eps=self.opt_cfg["eps"],
-            )
-        elif optimizer_type == "SGD":
-            momentum = self.opt_cfg["momentum"]
-            nesterov = momentum > 0
-
-            self.optimizer = torch.optim.SGD(
-                param_groups,
-                lr=lr,
-                momentum=momentum,
-                weight_decay=weight_decay,  # overwritten by the parameter group
-                nesterov=nesterov,
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
+        weight_decay = self.opt_cfg.get("weight_decay", 1e-5) * self.batch_size * self.accumulate / self.nbs
+        iterations = (
+            math.ceil(len(self.train_loader.dataset) / max(self.batch_size, self.nbs)) * self.trainer_cfg["epochs"]
+        )
+        self.optimizer = self.build_optimizer(
+            name=self.opt_cfg.get("opt", "auto"),
+            lr=self.opt_cfg.get("lr", 0.001),
+            momentum=self.opt_cfg.get("momentum", 0.9),
+            decay=weight_decay,
+            iterations=iterations,
+        )
 
         self._add_optimizer("optimizer", self.optimizer)
 
     def _init_schedulers(self) -> None:
         self.sch_config = self._cfg["scheduler"]
-        self.scheduler = None
 
         if self.sch_config.get("sched") == "CustomLRDecay":
             self.lf = (
-                lambda x: max(1 - x / self.trainer_cfg["epochs"], 0) * (1.0 - self.opt_cfg["final_factor"])
+                lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.opt_cfg["final_factor"])
                 + self.opt_cfg["final_factor"]
             )  # linear
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
@@ -173,7 +136,7 @@ class YoloV13(AlgorithmBase):
         super().train_epoch(epoch, writer, log_interval)
 
         # close mosaic
-        if epoch == int(self.close_mosaic_epoch * self.trainer_cfg["epochs"]):
+        if epoch == int(self.close_mosaic_epoch * self.epochs):
             self.close_dataloader_mosaic()
 
         # log metrics
@@ -277,25 +240,24 @@ class YoloV13(AlgorithmBase):
             metrics["vloss"] = metrics["sloss"] = vloss
 
             # prepare preds
-            predictions = self.postprocess_pred(preds, imgs.size(2))
-
-            # NMS
-            preds = non_max_suppression(
-                predictions.permute(0, 2, 1),
+            detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
+            # NMS: Fewer overlapping boxes
+            detections = non_max_suppression(
+                detections.permute(0, 2, 1),
                 conf_thres=self.conf_thres_val,
                 iou_thres=self.iou_thres,
                 multi_label=True,
                 max_det=self.max_det,
                 agnostic=self.single_cls,
-            )
+            )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
 
             # prepare targets
             scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
             targets_abs = targets.clone()
             bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
-            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy
+            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
 
-            for si, pred in enumerate(preds):
+            for si, detection in enumerate(detections):
                 self.seen += 1
                 # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
                 labels = targets_abs[targets_abs[:, 0] == si, 1:]
@@ -304,30 +266,30 @@ class YoloV13(AlgorithmBase):
                 tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
                 tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
 
-                if len(pred) == 0:
+                if len(detection) == 0:
                     if len(labels):
                         stats.append(
                             (
-                                torch.zeros(0, self.niou, dtype=torch.bool),  # TP
-                                torch.Tensor(),  # confidence scores
-                                torch.Tensor(),  # pred_classes
-                                tcls.cpu(),  # ground truth classes
+                                torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
+                                torch.zeros(0, device=self.device),  # confidence scores
+                                torch.zeros(0, device=self.device),  # pred_classes
+                                tcls,  # ground truth classes
                             )
                         )
                     continue
 
                 # Prediction box format: [x1, y1, x2, y2, conf, class]
-                pred_boxes = pred[:, :4]
-                pred_scores = pred[:, 4]
-                pred_classes = pred[:, 5]
+                pred_boxes = detection[:, :4]
+                pred_scores = detection[:, 4]
+                pred_classes = detection[:, 5]
 
                 # calculate IoU
-                iou = box_iou(tbox, pred_boxes)  # shape: [n_pred, n_gt]
-                # Find the best matching real box for each prediction box
+                iou = box_iou(tbox, pred_boxes)  # shape: [n_gt, n_pred]
+                # Determine whether each prediction box is regarded as a correct detection under each IoU threshold
                 tp = match_predictions(pred_classes, tcls, iou, self.iouv)
 
                 # record statistical information
-                stats.append((tp.cpu(), pred_scores.cpu(), pred_classes.cpu(), tcls.cpu()))
+                stats.append((tp, pred_scores, pred_classes, tcls))
 
             metrics["images"] = self.seen
 
@@ -335,11 +297,11 @@ class YoloV13(AlgorithmBase):
                 # calculate mAP metrics
                 if stats:
                     tp, conf, pred_cls, target_cls = zip(*stats)
-                    tp = np.concatenate(tp, 0)
-                    conf = np.concatenate(conf, 0)
-                    pred_cls = np.concatenate(pred_cls, 0)
-                    target_cls = np.concatenate(target_cls, 0)
-                    result = compute_ap(self.dataset_cfg["class_names"], tp, conf, pred_cls, target_cls, self.iouv)
+                    tp = torch.cat(tp, 0)
+                    conf = torch.cat(conf, 0)
+                    pred_cls = torch.cat(pred_cls, 0)
+                    target_cls = torch.cat(target_cls, 0)
+                    result = compute_ap(self.class_names, tp, conf, pred_cls, target_cls, self.iouv)
 
                     metrics["mAP50"] = result["mAP_50"]
                     metrics["mAP50-95"] = result["mAP"]
@@ -351,45 +313,23 @@ class YoloV13(AlgorithmBase):
 
         return metrics
 
-    def postprocess_pred(self, preds: torch.Tensor, img_size: int) -> list[torch.Tensor]:
+    def decode_preds(self, preds: torch.Tensor, img_size: int) -> torch.Tensor:
         # decode preds
         x = []
         for pred in preds:
             bs, _, h, w = pred.shape
             pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
             x.append(pred)
-        x = torch.cat(x, 1)
+        x = torch.cat(x, 1)  # [bs， sum(h*w), nc + 4*reg_max]
         # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.dataset_cfg["nc"]), 2)
+        box, cls = x.split((self.reg_max * 4, self.nc), 2)
 
         strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
         dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
-        predictions = torch.cat((dbox, cls.sigmoid()), 2)
+        detections = torch.cat((dbox, cls.sigmoid()), 2)
 
-        return predictions
-
-    def warmup(self, batch_inters: int, epoch: int) -> int:
-        wb = (
-            max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
-            if self.opt_cfg["warmup_epochs"] > 0
-            else -1
-        )  # warmup batches
-
-        if batch_inters <= wb:
-            xi = [0, wb]  # x interp
-            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
-            for j, x in enumerate(self.optimizer.param_groups):
-                # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                x["lr"] = np.interp(
-                    batch_inters,
-                    xi,
-                    [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
-                )
-                if "momentum" in x:
-                    x["momentum"] = np.interp(
-                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
-                    )
+        return detections  # [bs, sum(h*w), 4 + nc]
 
     def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, imgs_shape: tuple[int]):
         closs = torch.zeros(1, device=self.device)
@@ -398,15 +338,13 @@ class YoloV13(AlgorithmBase):
 
         strides = torch.tensor([imgs_shape[2] // pred.size(2) for pred in preds], device=self.device)
         pred_distri, pred_scores = torch.cat(
-            [xi.view(preds[0].shape[0], self.dataset_cfg["nc"] + self.reg_max * 4, -1) for xi in preds], 2
+            [xi.view(preds[0].shape[0], self.nc + self.reg_max * 4, -1) for xi in preds], 2
         ).split(
-            (self.reg_max * 4, self.dataset_cfg["nc"]), 1
+            (self.reg_max * 4, self.nc), 1
         )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
 
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
-        if torch.isnan(pred_scores).any() or torch.isnan(pred_distri).any():
-            raise ValueError("The output of model contain Nan value!")
 
         bs = pred_scores.shape[0]
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
@@ -430,7 +368,7 @@ class YoloV13(AlgorithmBase):
             mask_gt,
         )
 
-        target_scores_sum = max(target_scores.sum(), 1)
+        target_scores_sum = target_scores.sum().clamp(min=1.0)
 
         # Cls loss
         closs = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum  # BCE
@@ -446,18 +384,11 @@ class YoloV13(AlgorithmBase):
         closs *= self.cls_weight
         dloss *= self.dfl_weight
 
-        tloss = (bloss + closs + dloss) * bs
+        loss = (bloss + closs + dloss) * bs
 
         loss_component = {"bloss": bloss.item(), "closs": closs.item(), "dloss": dloss.item()}
 
-        return tloss, loss_component
-
-    def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, xywh: bool = False):
-        """Decode predicted object bounding box coordinates from anchor points and distribution."""
-        if self.use_dfl:
-            b, a, c = pred_dist.shape  # batch, anchors, channels
-            pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
-        return dist2bbox(pred_dist, anchor_points, xywh=xywh)
+        return loss, loss_component
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor):
         """Preprocesses the target counts and matches with the input batch size to output a tensor."""
@@ -477,6 +408,13 @@ class YoloV13(AlgorithmBase):
             out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
 
         return out
+
+    def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, xywh: bool = False):
+        """Decode predicted object bounding box coordinates from anchor points and distribution."""
+        if self.use_dfl:
+            b, a, c = pred_dist.shape  # batch, anchors, channels
+            pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
+        return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
     @torch.no_grad()
     def eval(
@@ -504,27 +442,114 @@ class YoloV13(AlgorithmBase):
         # input image to model
         preds = self.net(img)
 
-        predictions = self.postprocess_pred(preds, img.size(2))
-
+        # decode preds
+        detections = self.decode_preds(preds, img.size(2))  # xywh
         # NMS
-        preds = non_max_suppression(
-            predictions.permute(0, 2, 1),
+        detections = non_max_suppression(
+            detections.permute(0, 2, 1),
             conf_thres=conf_thres if conf_thres is not None else self.conf_thres_det,
             iou_thres=iou_thres if iou_thres is not None else self.iou_thres,
             multi_label=True,
             max_det=self.max_det,
             agnostic=self.single_cls,
-        )
+        )  # xyxy
 
         # rescale to img coordiante
-        pred = preds[0]
+        detection = detections[0]
 
-        bboxes, conf, cls = pred.split((4, 1, 1), dim=1)
+        bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
         bboxes = rescale_bboxes(np.array(bboxes.cpu(), dtype=np.float32), self.image_size, w0, h0)
         cls = [int(cid) for cid in cls]
 
         # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, self.dataset_cfg["class_names"])
+        visualize_img_bboxes(img0, bboxes, cls, self.class_names)
+
+    def warmup(self, batch_inters: int, epoch: int) -> int:
+        wb = (
+            max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
+            if self.opt_cfg["warmup_epochs"] > 0
+            else -1
+        )  # warmup batches
+
+        if batch_inters <= wb:
+            xi = [0, wb]  # x interp
+            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
+            for j, x in enumerate(self.optimizer.param_groups):
+                # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                x["lr"] = np.interp(
+                    batch_inters,
+                    xi,
+                    [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
+                )
+                if "momentum" in x:
+                    x["momentum"] = np.interp(
+                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
+                    )
+
+    def build_optimizer(self, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+        """
+        Constructs an optimizer for the given model, based on the specified optimizer name, learning rate, momentum,
+        weight decay, and number of iterations.
+
+        Args:
+            model (torch.nn.Module): The model for which to build an optimizer.
+            name (str, optional): The name of the optimizer to use. If 'auto', the optimizer is selected
+                based on the number of iterations. Default: 'auto'.
+            lr (float, optional): The learning rate for the optimizer. Default: 0.001.
+            momentum (float, optional): The momentum factor for the optimizer. Default: 0.9.
+            decay (float, optional): The weight decay for the optimizer. Default: 1e-5.
+            iterations (float, optional): The number of iterations, which determines the optimizer if
+                name is 'auto'. Default: 1e5.
+
+        Returns:
+            (torch.optim.Optimizer): The constructed optimizer.
+        """
+        g = [], [], []  # optimizer parameter groups
+        bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
+        if name == "auto":
+            LOGGER.info(
+                f"{colorstr('optimizer:')} 'optimizer=auto' found, "
+                f"ignoring 'lr={self.opt_cfg['lr']}' and 'momentum={self.opt_cfg['momentum']}' and "
+                f"determining best 'optimizer', 'lr' and 'momentum' automatically... "
+            )
+            lr_fit = round(0.002 * 5 / (4 + self.dataset_cfg["nc"]), 6)  # lr0 fit equation to 6 decimal places
+            name, lr, momentum = ("SGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
+            self.opt_cfg["warmup_bias_lr"] = 0.0  # no higher than 0.01 for Adam
+
+        for module_name, module in self.net.named_modules():
+            for param_name, param in module.named_parameters(recurse=False):
+                fullname = f"{module_name}.{param_name}" if module_name else param_name
+                if "bias" in fullname:  # bias (no decay)
+                    g[2].append(param)
+                elif isinstance(module, bn):  # weight (no decay)
+                    g[1].append(param)
+                else:  # weight (with decay)
+                    g[0].append(param)
+
+        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
+        name = {x.lower(): x for x in optimizers}.get(name.lower())
+        if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
+            optimizer = getattr(torch.optim, name, torch.optim.Adam)(
+                g[2], lr=lr, betas=(momentum, 0.999), weight_decay=0.0
+            )
+        elif name == "RMSProp":
+            optimizer = torch.optim.RMSprop(g[2], lr=lr, momentum=momentum)
+        elif name == "SGD":
+            optimizer = torch.optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        else:
+            raise NotImplementedError(
+                f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
+                "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
+            )
+
+        optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
+        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
+        LOGGER.info(
+            f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
+            f"{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias(decay=0.0)"
+        )
+
+        return optimizer
 
 
 """

@@ -1,4 +1,4 @@
-from typing import Union, Sequence, Mapping
+from typing import Union, Sequence, Mapping, Any
 
 import cv2
 import math
@@ -33,22 +33,11 @@ def xyxy2xywh(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndar
     return new
 
 
-def to_abs_labels(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> Union[torch.Tensor, np.ndarray]:
-    new = deepcopy(bboxes)
-    new[:, [0, 2]] *= img_w
-    new[:, [1, 3]] *= img_h
-    return new
-
-
-def to_rel_labels(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> Union[torch.Tensor, np.ndarray]:
-    new = deepcopy(bboxes)
-    new[:, [0, 2]] /= img_w
-    new[:, [1, 3]] /= img_h
-    return new
-
-
-def yolo2voc(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> np.ndarray:
-    return to_abs_labels(xywh2xyxy(bboxes), img_w, img_h)
+def yolo2voc(bboxes: Union[torch.Tensor, np.ndarray], img_w: int, img_h: int) -> Union[torch.Tensor, np.ndarray]:
+    bboxes = xywh2xyxy(bboxes)
+    bboxes[..., [0, 2]] *= img_w
+    bboxes[..., [1, 3]] *= img_h
+    return bboxes
 
 
 def pad_to_square(
@@ -263,119 +252,6 @@ def bbox_iou(
     return iou  # IoU
 
 
-def compute_ap(
-    class_names: Sequence[str],
-    tp: torch.Tensor,  # Shape: [n_preds, n_iou_thres]
-    conf: torch.Tensor,  # Shape: [n_preds]
-    pred_cls: torch.Tensor,  # Shape: [n_preds]
-    target_cls: torch.Tensor,
-    iouv: Union[torch.Tensor, Sequence[float]],
-):
-    "Calculate the Average Precision Index (mAP)"
-
-    # Sort predictions by confidence (descending)
-    i = np.argsort(-conf)
-    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
-
-    nc = len(class_names)
-    n_iou = len(iouv)
-    ap = np.zeros((nc, n_iou))  # AP per class per IoU threshold
-
-    results = {}
-
-    # Array for the global PR curve
-    n_points = 1000  # The number of points on the PR curve
-    p_curve = np.zeros((nc, n_points))  # Precision curve
-    r_curve = np.zeros((nc, n_points))  # Recall rate curve
-
-    # Handle each category
-    for ci in range(nc):
-        # Get the prediction of the current category
-        class_mask = pred_cls == ci
-        if not class_mask.any():
-            continue  # Skip unpredicted categories
-
-        # Calculate the number of GTS in the current category
-        n_gt = (target_cls == ci).sum()
-        if n_gt == 0:
-            continue  # Skip the category without GT
-
-        # Calculate the global PR curve using the first IoU threshold (typically 0.5)
-        iou_tp = tp[class_mask, 0]  # Use the first IoU threshold
-        iou_conf = conf[class_mask]
-
-        # Sort the predictions of the current category in descending order of confidence level
-        sort_idx = np.argsort(-iou_conf)
-        iou_tp = iou_tp[sort_idx]
-        iou_conf = iou_conf[sort_idx]
-
-        # Accumulate TP/FP
-        fpc = (1 - iou_tp).cumsum()
-        tpc = iou_tp.cumsum()
-
-        # Calculate the recall rate - precision rate curve
-        recall = tpc / (n_gt + 1e-16)
-        precision = tpc / (tpc + fpc + 1e-16)
-
-        # Interpolate the PR curve at 1000 points
-        conf_points = -np.linspace(0, 1, n_points)  # From 0 to -1
-        r_curve[ci] = np.interp(conf_points, -iou_conf, recall, left=0)
-        p_curve[ci] = np.interp(conf_points, -iou_conf, precision, left=1)
-
-        # Calculate the AP for each IoU threshold
-        for iou_idx in range(n_iou):
-            # Obtain the TP under the current IoU threshold
-            iou_tp_i = tp[class_mask, iou_idx]
-            iou_conf_i = conf[class_mask]
-
-            # Sort by confidence level
-            sort_idx_i = np.argsort(-iou_conf_i)
-            iou_tp_i = iou_tp_i[sort_idx_i]
-
-            # Accumulate TP/FP
-            fpc_i = (1 - iou_tp_i).cumsum()
-            tpc_i = iou_tp_i.cumsum()
-
-            # Calculate the recall rate - precision rate curve
-            recall_i = tpc_i / (n_gt + 1e-16)
-            precision_i = tpc_i / (tpc_i + fpc_i + 1e-16)
-
-            # The AP for calculating the current IoU threshold
-            ap[ci, iou_idx] = compute_ap_single(recall_i, precision_i)
-
-    # Calculate the final indicator
-    results["mAP"] = ap.mean()  # The average of all categories and IoU thresholds
-    for iou_idx, iou_val in enumerate(iouv):
-        results[f"mAP_{iou_val * 100:.0f}"] = ap[:, iou_idx].mean()  # mAP of each IoU
-
-    # Add the AP (Average across IoU Thresholds) for each category
-    for ci, name in enumerate(class_names):
-        results[f"AP_{name}"] = ap[ci].mean() if nc > 0 else 0.0
-
-    # Add a global PR metric
-    results["precision"] = p_curve.mean(axis=0).mean()
-    results["recall"] = r_curve.mean(axis=0).mean()
-
-    return results
-
-
-def compute_ap_single(recall, precision):
-    """Compute AP from recall-precision curve."""
-    # Pad curves to start/end
-    mrec = np.concatenate(([0.0], recall, [1.0]))
-    mpre = np.concatenate(([0.0], precision, [0.0]))
-
-    # Smooth precision curve
-    for i in range(mpre.size - 1, 0, -1):
-        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
-
-    # Find recall change points
-    i = np.where(mrec[1:] != mrec[:-1])[0]
-
-    # Integrate area under curve
-    return np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-
-
 def _get_covariance_matrix(boxes: torch.Tensor) -> torch.Tensor:
     """
     Generating covariance matrix from obbs.
@@ -452,7 +328,7 @@ def nms_rotated(boxes: torch.Tensor, scores: torch.Tensor, threshold: float | No
 
 
 def non_max_suppression(
-    prediction: torch.Tensor,
+    predictions: torch.Tensor,
     conf_thres: float = 0.25,
     iou_thres: float = 0.45,
     classes: list[int] = None,
@@ -471,7 +347,7 @@ def non_max_suppression(
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
 
     Args:
-        prediction (torch.Tensor): A tensor of shape (batch_size, num_classes + 4 + num_masks, num_boxes)
+        predictions (torch.Tensor): A tensor of shape (batch_size, num_classes + 4 + num_masks, num_boxes)
             containing the predicted boxes, classes, and masks. The tensor should be in the format
             output by a model, such as YOLO.
         conf_thres (float): The confidence threshold below which boxes will be filtered out.
@@ -490,7 +366,7 @@ def non_max_suppression(
         max_time_img (float): The maximum time (seconds) for processing one image.
         max_nms (int): The maximum number of boxes into torchvision.ops.nms().
         max_wh (int): The maximum box width and height in pixels.
-        in_place (bool): If True, the input prediction tensor will be modified in place.
+        in_place (bool): If True, the input predictions tensor will be modified in place.
         rotated (bool): If Oriented Bounding Boxes (OBB) are being passed for NMS.
 
     Returns:
@@ -503,38 +379,38 @@ def non_max_suppression(
     # Checks
     assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
     assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
-    if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
-        prediction = prediction[0]  # select only inference output
+    if isinstance(predictions, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
+        predictions = predictions[0]  # select only inference output
     if classes is not None:
-        classes = torch.tensor(classes, device=prediction.device)
+        classes = torch.tensor(classes, device=predictions.device)
 
-    if prediction.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
-        output = [pred[pred[:, 4] > conf_thres][:max_det] for pred in prediction]
+    if predictions.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
+        output = [pred[pred[:, 4] > conf_thres][:max_det] for pred in predictions]
         if classes is not None:
             output = [pred[(pred[:, 5:6] == classes).any(1)] for pred in output]
         return output
 
-    bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
-    nc = nc or (prediction.shape[1] - 4)  # number of classes
-    nm = prediction.shape[1] - nc - 4  # number of masks
+    bs = predictions.shape[0]  # batch size (BCN, i.e. 1,84,6300)
+    nc = nc or (predictions.shape[1] - 4)  # number of classes
+    nm = predictions.shape[1] - nc - 4  # number of masks
     mi = 4 + nc  # mask start index
-    xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
+    xc = predictions[:, 4:mi].amax(1) > conf_thres  # candidates
 
     # Settings
     # min_wh = 2  # (pixels) minimum box width and height
     time_limit = 2.0 + max_time_img * bs  # seconds to quit after
     multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
 
-    prediction = prediction.transpose(-1, -2)  # shape(1,84,6300) to shape(1,6300,84)
+    predictions = predictions.transpose(-1, -2)  # shape(bs,no,sum(h*w)) to shape(bs,sum(h*w),no)
     if not rotated:
         if in_place:
-            prediction[..., :4] = xywh2xyxy(prediction[..., :4])  # xywh to xyxy
+            predictions[..., :4] = xywh2xyxy(predictions[..., :4])  # xywh to xyxy
         else:
-            prediction = torch.cat((xywh2xyxy(prediction[..., :4]), prediction[..., 4:]), dim=-1)  # xywh to xyxy
+            predictions = torch.cat((xywh2xyxy(predictions[..., :4]), predictions[..., 4:]), dim=-1)  # xywh to xyxy
 
     t = time.time()
-    output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
-    for xi, x in enumerate(prediction):  # image index, image inference
+    output = [torch.zeros((0, 6 + nm), device=predictions.device)] * bs
+    for xi, x in enumerate(predictions):  # image index, image inference
         # Apply constraints
         # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
@@ -580,6 +456,8 @@ def non_max_suppression(
             i = nms_rotated(boxes, scores, iou_thres)
         else:
             boxes = x[:, :4] + c  # boxes (offset by class)
+            # iou thres is a threshold used to determine which boxes should be removed.
+            # When the IoU of two boxes exceeds this threshold, the box with the lower score will be removed
             i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
         i = i[:max_det]  # limit detections
 
@@ -588,7 +466,7 @@ def non_max_suppression(
             LOGGER.warning(f"WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded")
             break  # time limit exceeded
 
-    return output
+    return output  # [(num_kept_boxes, 6 + num_masks)]*bs
 
 
 def match_predictions(
@@ -604,7 +482,7 @@ def match_predictions(
     Args:
         pred_classes (torch.Tensor): Predicted class indices of shape(N,).
         true_classes (torch.Tensor): Target class indices of shape(M,).
-        iou (torch.Tensor): An NxM tensor containing the pairwise IoU values for predictions and ground of truth.
+        iou (torch.Tensor): An MxN tensor containing the pairwise IoU values for predictions to ground of truth.
         iouv (torch.Tensor): IoU vector for mAP@0.5:0.95.
         use_scipy (bool): Whether to use scipy for matching (more precise).
 
@@ -634,10 +512,14 @@ def match_predictions(
             if matches.shape[0]:
                 if matches.shape[0] > 1:
                     matches = matches[iou[matches[:, 0], matches[:, 1]].argsort()[::-1]]
-                    matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                    matches = matches[
+                        np.unique(matches[:, 1], return_index=True)[1]
+                    ]  # Filter out the duplicate prediction boxes
                     # matches = matches[matches[:, 2].argsort()[::-1]]
-                    matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
-                correct[matches[:, 1].astype(int), i] = True
+                    matches = matches[
+                        np.unique(matches[:, 0], return_index=True)[1]
+                    ]  # Filter out the duplicate gt boxes
+                correct[matches[:, 1].astype(int), i] = True  # mark as prediction correct
     return torch.tensor(correct, dtype=torch.bool, device=pred_classes.device)
 
 
@@ -759,3 +641,126 @@ def visualize_img_bboxes(
     plt.axis("off")
     plt.imshow(img, cmap)
     plt.show()
+
+
+def compute_ap(
+    class_names: Sequence[str],
+    tp: torch.Tensor,  # [n_preds, n_iou_thres]，0/1
+    conf: torch.Tensor,  # [n_preds]
+    pred_cls: torch.Tensor,  # [n_preds]
+    target_cls: torch.Tensor,  # [n_targets]
+    iouv: Union[torch.Tensor, Sequence[float]],
+):
+    """Calculate AP / mAP (close to Ultralytics implementation)."""
+
+    def to_np(x):
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+        return x
+
+    tp = to_np(tp)
+    conf = to_np(conf)
+    pred_cls = to_np(pred_cls)
+    target_cls = to_np(target_cls)
+    iouv = to_np(np.array(iouv))
+
+    nc = len(class_names)
+    n_iou = len(iouv)
+    ap = np.zeros((nc, n_iou), dtype=np.float32)
+
+    # First, sort globally by confidence level
+    order = np.argsort(-conf)
+    tp, conf, pred_cls = tp[order], conf[order], pred_cls[order]
+
+    results = {}
+    valid_classes = []  # Classes with ground truth
+
+    eps = 1e-16
+
+    for ci in range(nc):
+        # Predictions for the current class
+        pred_mask = pred_cls == ci
+        if not pred_mask.any():
+            continue
+
+        # Number of ground truths for the current class
+        n_gt = (target_cls == ci).sum()
+        if n_gt == 0:
+            # Classes without ground truth are usually not included in the average for AP calculation
+            continue
+
+        valid_classes.append(ci)
+
+        for iou_idx in range(n_iou):
+            tp_i = tp[pred_mask, iou_idx]
+
+            fpc = (1.0 - tp_i).cumsum()
+            tpc = tp_i.cumsum()
+
+            recall_i = tpc / (n_gt + eps)
+            precision_i = tpc / (tpc + fpc + eps)
+
+            ap[ci, iou_idx] = compute_ap_single(recall_i, precision_i)
+
+    # No valid classes case
+    if len(valid_classes) == 0:
+        results["mAP"] = 0.0
+        for iou_idx, iou_val in enumerate(iouv):
+            results[f"mAP_{iou_val * 100:.0f}"] = 0.0
+        for ci, name in enumerate(class_names):
+            results[f"AP_{name}"] = 0.0
+        results["precision"] = 0.0
+        results["recall"] = 0.0
+        return results
+
+    valid_classes = np.array(valid_classes)
+
+    # Compute mAP
+    results["mAP"] = float(ap[valid_classes].mean())
+
+    for iou_idx, iou_val in enumerate(iouv):
+        results[f"mAP_{iou_val * 100:.0f}"] = float(ap[valid_classes, iou_idx].mean())
+
+    # AP for each class
+    for ci, name in enumerate(class_names):
+        if ci in valid_classes:
+            results[f"AP_{name}"] = float(ap[ci].mean())
+        else:
+            results[f"AP_{name}"] = 0.0
+
+    # Compute global Precision / Recall (F1 best point)
+    # Use the IoU=0.5 column
+    tp0 = tp[:, 0].astype(np.float32)
+
+    n_gt_all = len(target_cls)
+
+    fpc = (1.0 - tp0).cumsum()
+    tpc = tp0.cumsum()
+
+    recall_curve = tpc / (n_gt_all + eps)
+    precision_curve = tpc / (tpc + fpc + eps)
+
+    f1 = 2 * precision_curve * recall_curve / (precision_curve + recall_curve + eps)
+    best_idx = f1.argmax()
+
+    results["precision"] = float(precision_curve[best_idx])
+    results["recall"] = float(recall_curve[best_idx])
+
+    return results
+
+
+def compute_ap_single(recall: np.ndarray, precision: np.ndarray) -> float:
+    """Compute AP given recall and precision curve."""
+    mrec = np.concatenate(([0.0], recall, [1.0]))
+    mpre = np.concatenate(([0.0], precision, [0.0]))
+
+    # Precision monotonic decreasing "envelope"
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+    # Find points where recall changes
+    idx = np.where(mrec[1:] != mrec[:-1])[0]
+
+    # Calculate area under curve
+    ap = np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1])
+    return float(ap)

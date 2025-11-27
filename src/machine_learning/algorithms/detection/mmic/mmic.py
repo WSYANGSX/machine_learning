@@ -13,7 +13,7 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.layers import NORM_LAYER_TYPES
 from machine_learning.algorithms.base import AlgorithmBase
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy, compute_ap, match_predictions
+from machine_learning.utils.detection import non_max_suppression, box_iou, xywh2xyxy,  match_predictions
 
 
 class MMIC(AlgorithmBase):
