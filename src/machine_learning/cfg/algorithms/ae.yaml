@@ -21,7 +21,7 @@ net:
 
 data:
   cache: 
-  augment: True
+  augment: False
   fraction: 1.0
   nbs: -1
   batch_size: 1024

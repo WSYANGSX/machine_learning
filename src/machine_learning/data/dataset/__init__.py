@@ -53,7 +53,7 @@ def build_dataset(
     Returns:
         Dataset: The builded dataset.
     """
-    augment = mode == "train"
+    augment = False if mode != "train" else cfg.get("augment", False)
     cache = cfg.get("cache")
     fraction = cfg.get("fraction", 1.0) if mode == "train" else 1.0
 
@@ -61,6 +61,7 @@ def build_dataset(
         return DatasetBase(
             data=parsing["data"],
             labels=parsing["labels"],
+            batch_size=batch_size,
             cache=cache,
             augment=augment,
             hyp=cfg,

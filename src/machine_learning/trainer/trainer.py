@@ -17,8 +17,8 @@ class Trainer:
     def __init__(
         self,
         cfg: TrainerCfg,
-        dataset: str | Mapping[str, Any],
         algo: AlgorithmBase,
+        dataset: str | Mapping[str, Any],
     ) -> None:
         """
         The trainer of all machine learning algorithm
@@ -48,7 +48,7 @@ class Trainer:
 
         # --------------------- init writer ---------------------------
         self._init_writer()
-        self.best_loss = torch.inf
+        self.save_best = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
@@ -102,25 +102,26 @@ class Trainer:
 
             # log the val loss
             for key, val in val_metrics.items():
-                if (key == "sloss") or (not isinstance(val, (Real, Integral))):
+                if not isinstance(val, (Real, Integral)):
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
 
             # save the best model
-            # must set the best_model option to True in train_cfg and return "sloss" item in val loss dict in algo
-            if self.cfg.save_best and "sloss" in val_metrics:
-                if val_metrics["sloss"] < self.best_loss:
-                    self.best_loss = val_metrics["sloss"]
-                    self.save_checkpoint(epoch, val_metrics, self.best_loss, is_best=True)
+            # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
+            if self.cfg.save_best and "save_best" in val_metrics:
+                if val_metrics["save_best"] < self.save_best:
+                    # For the larger the better metric, set it to negative in val metrics mannually
+                    self.save_best = val_metrics["save_best"]
+                    self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
             else:
                 LOGGER.info("Saving of the best loss model skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
-                self.save_checkpoint(epoch, val_metrics, self.best_loss, is_best=False)
+                self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=False)
 
             # print epoch information
-            if epoch != self.cfg.epochs:
+            if epoch != self.epochs:
                 self.epoch_info(epoch=epoch)
             else:
                 self.epoch_info(epoch=epoch, val_metrics=val_metrics)
@@ -128,7 +129,7 @@ class Trainer:
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)
         start_epoch = state_dict["epoch"] + 1
-        self.best_loss = state_dict.get("best_loss", float("inf"))
+        self.best_loss = state_dict.get("best_loss", torch.inf)
         self.ckpt_dir = state_dict["ckpt_dir"]
 
         self.train(start_epoch)

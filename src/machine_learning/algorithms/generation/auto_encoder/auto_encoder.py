@@ -37,10 +37,8 @@ class AutoEncoder(AlgorithmBase):
         super().train_epoch(epoch, writer, log_interval)
 
         # metrics
-        metrics = {"tloss": None}
+        metrics = {"tloss": 0.0}
         self.print_metric_titles("train", metrics)
-
-        tloss = None
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
         for i, sample in pbar:
@@ -57,8 +55,7 @@ class AutoEncoder(AlgorithmBase):
             self.backward(loss)
             self.optimizer_step(batch_inters)
 
-            tloss = (tloss * i + loss.item()) / (i + 1) if tloss is not None else loss.item()
-            metrics["tloss"] = tloss
+            metrics["tloss"] = (metrics["tloss"] * i + loss.item()) / (i + 1)
 
             if i % log_interval == 0:
                 writer.add_scalar("loss/train_batch", loss.item(), batch_inters)  # batch loss
@@ -73,10 +70,8 @@ class AutoEncoder(AlgorithmBase):
         super().validate()
 
         # metrics
-        metrics = {"vloss": None, "sloss": None}
+        metrics = {"vloss": 0.0, "save_indicator": 0.0}
         self.print_metric_titles("val", metrics)
-
-        vloss = None
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, sample in pbar:
@@ -84,11 +79,9 @@ class AutoEncoder(AlgorithmBase):
             recon = self.net(data)
             loss = self.criterion(recon, data)
 
-            vloss = (vloss * i + loss.item()) / (i + 1) if vloss is not None else loss.item()
-
             # add value to val_metrics
-            metrics["vloss"] = vloss
-            metrics["sloss"] = vloss
+            metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
+            metrics["save_indicator"] = metrics["vloss"]
 
             # log
             self.pbar_log("val", pbar, **metrics)

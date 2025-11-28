@@ -11,7 +11,7 @@ def main():
         log_dir="./logs/auto_encoder/",
         ckpt_dir="./checkpoints/auto_encoder/",
     )
-    trainer = Trainer(trainer_cfg, "minist.yaml", auto_encoder)
+    trainer = Trainer(trainer_cfg, auto_encoder, "minist.yaml")
 
     # Step 3: Train the model
     trainer.train()

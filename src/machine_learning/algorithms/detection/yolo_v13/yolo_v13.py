@@ -140,17 +140,8 @@ class YoloV13(AlgorithmBase):
             self.close_dataloader_mosaic()
 
         # log metrics
-        metrics = {
-            "tloss": None,
-            "bloss": None,
-            "dloss": None,
-            "closs": None,
-            "instances": None,
-            "img_size": None,
-        }
+        metrics = {"tloss": 0.0, "bloss": 0.0, "dloss": 0.0, "closs": 0.0, "instances": 0, "img_size": None}
         self.print_metric_titles("train", metrics)
-
-        tloss = None
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
         for i, batch in pbar:
@@ -176,17 +167,13 @@ class YoloV13(AlgorithmBase):
             # Parameter optimization
             self.optimizer_step(batch_inters)
 
-            # Losses
-            tloss = (tloss * i + loss.item()) / (i + 1) if tloss is not None else loss.item()
-            bloss = lc["bloss"]
-            closs = lc["closs"]
-            dloss = lc["dloss"]
-
             # Metrics
-            metrics["tloss"] = tloss
-            metrics["bloss"] = bloss
-            metrics["closs"] = closs
-            metrics["dloss"] = dloss
+            bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
+
+            metrics["tloss"] = (metrics["tloss"] * i + loss.item()) / (i + 1)  # tloss
+            metrics["bloss"] = (metrics["bloss"] * i + bloss) / (i + 1)
+            metrics["closs"] = (metrics["closs"] * i + closs) / (i + 1)
+            metrics["dloss"] = (metrics["dloss"] * i + dloss) / (i + 1)
             metrics["img_size"] = imgs.size(2)
             metrics["instances"] = targets.size(0)
 
@@ -210,25 +197,22 @@ class YoloV13(AlgorithmBase):
         super().validate()
 
         # log metrics
+        stats = []
         metrics = {
             "class": "all",
-            "images": None,
-            "vloss": None,
-            "sloss": None,
+            "images": 0,
+            "vloss": 0.0,
+            "save_best": 0.0,
             "precision": None,
             "recall": None,
-            "mAP50": None,
-            "mAP75": None,
-            "mAP50-95": None,
+            "mAP.5": None,
+            "mAP.75": None,
+            "mAP.5-.95": None,
         }
         self.print_metric_titles("val", metrics)
 
-        vloss = None
-        stats = []
-        self.seen = 0
-
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
-        for batch_idx, batch in pbar:
+        for i, batch in pbar:
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
@@ -236,8 +220,9 @@ class YoloV13(AlgorithmBase):
 
             preds = self.net(imgs)
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
-            vloss = (vloss * batch_idx + loss.item()) / (batch_idx + 1) if vloss is not None else loss.item()
-            metrics["vloss"] = metrics["sloss"] = vloss
+
+            # metrics
+            metrics["save_best"] = metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
 
             # prepare preds
             detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
@@ -258,7 +243,7 @@ class YoloV13(AlgorithmBase):
             targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
 
             for si, detection in enumerate(detections):
-                self.seen += 1
+                metrics["images"] += 1
                 # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
                 labels = targets_abs[targets_abs[:, 0] == si, 1:]
 
@@ -291,9 +276,7 @@ class YoloV13(AlgorithmBase):
                 # record statistical information
                 stats.append((tp, pred_scores, pred_classes, tcls))
 
-            metrics["images"] = self.seen
-
-            if batch_idx == self.val_batches - 1:
+            if i == self.val_batches - 1:
                 # calculate mAP metrics
                 if stats:
                     tp, conf, pred_cls, target_cls = zip(*stats)
@@ -303,9 +286,9 @@ class YoloV13(AlgorithmBase):
                     target_cls = torch.cat(target_cls, 0)
                     result = compute_ap(self.class_names, tp, conf, pred_cls, target_cls, self.iouv)
 
-                    metrics["mAP50"] = result["mAP_50"]
-                    metrics["mAP50-95"] = result["mAP"]
-                    metrics["mAP75"] = result["mAP_75"]
+                    metrics["mAP.5"] = result["mAP_50"]
+                    metrics["mAP.75"] = result["mAP_75"]
+                    metrics["mAP.5-.95"] = result["mAP"]
                     metrics["precision"] = result["precision"]
                     metrics["recall"] = result["recall"]
 
@@ -385,7 +368,6 @@ class YoloV13(AlgorithmBase):
         dloss *= self.dfl_weight
 
         loss = (bloss + closs + dloss) * bs
-
         loss_component = {"bloss": bloss.item(), "closs": closs.item(), "dloss": dloss.item()}
 
         return loss, loss_component
