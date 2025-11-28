@@ -60,6 +60,7 @@ net:
   net_scale: "n"
 
 data:
+  fraction: 1
   pin_memory: True
   single_cls: False
   rect: False
@@ -86,4 +87,4 @@ data:
   translate: 0.1 # (float) image translation (+/- fraction)
   scale: 0.5 # (float) image scale (+/- gain)
   shear: 0.0 # (float) image shear (+/- deg)
-  fraction: 0.5
+  

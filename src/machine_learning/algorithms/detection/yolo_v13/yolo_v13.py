@@ -146,8 +146,8 @@ class YoloV13(AlgorithmBase):
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
         for i, batch in pbar:
             # Warmup
-            batch_inters = epoch * self.train_batches + i
-            self.warmup(batch_inters, epoch)
+            batches = epoch * self.train_batches + i
+            self.warmup(batches, epoch)
 
             # Load data
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
@@ -165,7 +165,7 @@ class YoloV13(AlgorithmBase):
             # Gradient backpropagation
             self.backward(loss)
             # Parameter optimization
-            self.optimizer_step(batch_inters)
+            self.optimizer_step(batches)
 
             # Metrics
             bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
@@ -178,9 +178,9 @@ class YoloV13(AlgorithmBase):
             metrics["instances"] = targets.size(0)
 
             if i % log_interval == 0:
-                writer.add_scalar("bloss/train_batch", bloss, batch_inters)
-                writer.add_scalar("closs/train_batch", closs, batch_inters)
-                writer.add_scalar("dloss/train_batch", dloss, batch_inters)
+                writer.add_scalar("bloss/train_batch", bloss, batches)
+                writer.add_scalar("closs/train_batch", closs, batches)
+                writer.add_scalar("dloss/train_batch", dloss, batches)
 
             # log
             self.pbar_log("train", pbar, epoch, **metrics)
@@ -326,8 +326,8 @@ class YoloV13(AlgorithmBase):
             (self.reg_max * 4, self.nc), 1
         )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
 
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous().clamp(-20, 20)  # [bs, h1*w1+h2*w2+h3*w3, nc]
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous().clamp(-50, 50)  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
 
         bs = pred_scores.shape[0]
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)

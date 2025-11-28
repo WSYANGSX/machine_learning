@@ -483,8 +483,8 @@ class AlgorithmBase(ABC):
         else:
             loss.backward()
 
-    def optimizer_step(self, batch_inters: int) -> None:
-        if batch_inters - self.last_opt_step >= self.accumulate:
+    def optimizer_step(self, batches: int) -> None:
+        if batches - self.last_opt_step >= self.accumulate:
             if self.scaler:
                 # unscale gradients, necessary if gradient clipping is performed after.
                 self.scaler.unscale_(self.optimizer)
@@ -497,7 +497,7 @@ class AlgorithmBase(ABC):
                 self.optimizer.step()
 
             self.optimizer.zero_grad()
-            self.last_opt_step = batch_inters
+            self.last_opt_step = batches
 
     def validate(self) -> dict[str, float]:
         """Validate after a single train epoch"""
