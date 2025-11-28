@@ -326,8 +326,8 @@ class YoloV13(AlgorithmBase):
             (self.reg_max * 4, self.nc), 1
         )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
 
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous().clamp(-20, 20)  # [bs, h1*w1+h2*w2+h3*w3, nc]
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous().clamp(-50, 50)  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
 
         bs = pred_scores.shape[0]
         anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
