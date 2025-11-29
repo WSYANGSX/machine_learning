@@ -11,7 +11,7 @@ from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, MFD
 from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
 
 
-# class NblityNet(BaseNet):
+# class MMICNet(BaseNet):
 #     def __init__(
 #         self,
 #         img_shape: Sequence[int],
