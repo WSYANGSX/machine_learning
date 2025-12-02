@@ -20,7 +20,7 @@ from machine_learning.utils.detection import (
     box_iou,
     xywh2xyxy,
     match_predictions,
-    compute_ap,
+    ap_per_class,
     pad_to_square,
     visualize_img_bboxes,
     rescale_bboxes,
@@ -61,6 +61,7 @@ class YoloV13(AlgorithmBase):
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
         self.max_det = self.cfg["algorithm"]["max_det"]
         self.single_cls = self.cfg["data"]["single_cls"]
+        self.plot = self.cfg["algorithm"].get("plot", False)
 
         # threshold
         self.iou_thres = self.cfg["algorithm"]["iou_thres"]
@@ -98,7 +99,7 @@ class YoloV13(AlgorithmBase):
     def _init_on_evaluator(self, ckpt, dataset, use_dataset):
         super()._init_on_evaluator(ckpt, dataset, use_dataset)
 
-        self.nc = self.dataset_cfg["nc"]
+        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = self.dataset_cfg["class_names"]
 
     def _init_optimizers(self) -> None:
@@ -203,6 +204,7 @@ class YoloV13(AlgorithmBase):
             "images": 0,
             "vloss": 0.0,
             "save_best": 0.0,
+            "labels": 0,
             "precision": None,
             "recall": None,
             "mAP.5": None,
@@ -278,19 +280,25 @@ class YoloV13(AlgorithmBase):
 
             if i == self.val_batches - 1:
                 # calculate mAP metrics
-                if stats:
-                    tp, conf, pred_cls, target_cls = zip(*stats)
-                    tp = torch.cat(tp, 0)
-                    conf = torch.cat(conf, 0)
-                    pred_cls = torch.cat(pred_cls, 0)
-                    target_cls = torch.cat(target_cls, 0)
-                    result = compute_ap(self.class_names, tp, conf, pred_cls, target_cls, self.iouv)
+                stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
 
-                    metrics["mAP.5"] = result["mAP_50"]
-                    metrics["mAP.75"] = result["mAP_75"]
-                    metrics["mAP.5-.95"] = result["mAP"]
-                    metrics["precision"] = result["precision"]
-                    metrics["recall"] = result["recall"]
+                if len(stats) and stats[0].any():
+                    p, r, ap, f1, ap_class = ap_per_class(
+                        *stats, plot=self.plot, save_dir=self.trainer_cfg["log_dir"], names=self.class_names
+                    )
+                    ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
+                    mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
+                    nt = np.bincount(stats[3].astype(np.int64), minlength=self.nc)  # number of targets per class
+                    metrics["mAP.5"] = map50
+                    metrics["mAP.75"] = map75
+                    metrics["mAP.5-.95"] = map
+                    metrics["precision"] = mp
+                    metrics["recall"] = mr
+
+                else:
+                    nt = np.zeros(1, dtype=np.uint8)
+
+                metrics["labels"] = nt.sum()
 
             self.pbar_log("val", pbar, **metrics)
 

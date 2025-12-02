@@ -12,7 +12,7 @@ from machine_learning.utils.augmentation.img_transforms import (
     Albumentations,
     Format,
 )
-from machine_learning.utils.image import plot_imgs, img_tensor2np
+from machine_learning.utils.plots import plot_imgs, img_tensor2np
 from machine_learning.utils.detection import visualize_img_bboxes
 from ultralytics.utils.instance import Instances
 from ultralytics.data.utils import polygon2mask

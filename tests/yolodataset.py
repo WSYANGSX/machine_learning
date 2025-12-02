@@ -1,7 +1,7 @@
 from machine_learning.utils import load_cfg
 from machine_learning.dataset import YoloDataset
 from machine_learning.dataset.parsers import CocoParser
-from machine_learning.utils.image import plot_imgs
+from machine_learning.utils.plots import plot_imgs
 
 data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/coco-2017.yaml")
 parser = CocoParser(data_cfg)
