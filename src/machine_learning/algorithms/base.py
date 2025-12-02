@@ -485,12 +485,12 @@ class AlgorithmBase(ABC):
 
     def optimizer_step(self, batches: int) -> None:
         if batches - self.last_opt_step >= self.accumulate:
-            if self.scaler:
+            if self.scaler is not None:
                 # unscale gradients, necessary if gradient clipping is performed after.
                 self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
 
-            if self.scaler:
+            if self.scaler is not None:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:

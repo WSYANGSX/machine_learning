@@ -25,6 +25,7 @@ from machine_learning.utils.detection import (
     visualize_img_bboxes,
     rescale_bboxes,
 )
+from machine_learning.utils.debug import check_nan_params
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
@@ -288,7 +289,9 @@ class YoloV13(AlgorithmBase):
                     )
                     ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
                     mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
-                    nt = np.bincount(stats[3].astype(np.int64), minlength=self.nc)  # number of targets per class
+                    nt = np.bincount(
+                        stats[3].cpu().numpy().astype(np.int64), minlength=self.nc
+                    )  # number of targets per class
                     metrics["mAP.5"] = map50
                     metrics["mAP.75"] = map75
                     metrics["mAP.5-.95"] = map

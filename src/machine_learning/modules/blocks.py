@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from mamba_ssm.modules.mamba2 import Mamba2
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH
 
@@ -249,28 +250,6 @@ class MMFullPAD_Tunnel(nn.Module):
     def forward(self, x):
         out = x[0] + self.gate1 * x[1] + self.gate2 * x[2] + self.gate3 * x[3]
         return out
-
-
-class DFL(nn.Module):
-    """
-    Integral module of Distribution Focal Loss (DFL).
-
-    Proposed in Generalized Focal Loss https://ieeexplore.ieee.org/document/9792391
-    """
-
-    def __init__(self, c1=16):
-        """Initialize a convolutional layer with a given number of input channels."""
-        super().__init__()
-        self.conv = nn.Conv2d(c1, 1, 1, bias=False).requires_grad_(False)
-        x = torch.arange(c1, dtype=torch.float)
-        self.conv.weight.data[:] = nn.Parameter(x.view(1, c1, 1, 1))
-        self.c1 = c1
-
-    def forward(self, x):
-        """Applies a transformer layer on input tensor 'x' and returns a tensor."""
-        b, _, a = x.shape  # batch, channels, anchors
-        return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
-        # return self.conv(x.view(b, self.c1, 4, a).softmax(1)).view(b, 4, a)
 
 
 class MFD(nn.Module):

@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 
 
+def check_nan_params(model, tag=""):
+    for name, p in model.named_parameters():
+        if p.requires_grad and not torch.isfinite(p).all():
+            print(f"[{tag}] NaN/Inf in param: {name}")
+            raise SystemExit
+
+
 def attach_nan_forward_hooks(model: nn.Module, print_first_only: bool = True):
     """
     Register forward hooks for all sub-modules of the model. Once NaN/Inf appears in the output of a certain layer,
