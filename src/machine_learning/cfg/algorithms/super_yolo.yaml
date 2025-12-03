@@ -1,6 +1,6 @@
 algorithm:
   # common
-  name: "mmic"
+  name: "super_yolo"
   task: "detect"
   imgsz: 640
 

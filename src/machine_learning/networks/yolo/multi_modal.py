@@ -365,3 +365,60 @@ class MMICNet(BaseNet):
     def _initialize_weights(self):
         super()._initialize_weights()
         self.head.Head.bias_init()
+
+
+class SuperYoloNet(BaseNet):
+    def __init__(
+        self,
+        img_shape: Sequence[int],
+        thermal_shape: Sequence[int],
+        nc: int = 1,
+        *args,
+        **kwargs,
+    ):
+        """SuperYolo multimodal object detection network.
+
+        Args:
+            img_shape (Sequence[int]): the shape of input rgb image.
+            thermal_shape (Sequence[int]): the shape of input thermal image.
+            num_classes (int): number of classes.
+        """
+        super().__init__(img_shape, thermal_shape, nc, *args, **kwargs)
+
+
+class COMONet(BaseNet):
+    def __init__(
+        self,
+        img_shape: Sequence[int],
+        thermal_shape: Sequence[int],
+        nc: int = 1,
+        *args,
+        **kwargs,
+    ):
+        """COMO multimodal object detection network.
+
+        Args:
+            img_shape (Sequence[int]): the shape of input rgb image.
+            thermal_shape (Sequence[int]): the shape of input thermal image.
+            num_classes (int): number of classes.
+        """
+        super().__init__(img_shape, thermal_shape, nc, *args, **kwargs)
+
+
+class HyperMambaNet(BaseNet):
+    def __init__(
+        self,
+        img_shape: Sequence[int],
+        thermal_shape: Sequence[int],
+        nc: int = 1,
+        *args,
+        **kwargs,
+    ):
+        """HyperMamba multimodal object detection network.
+
+        Args:
+            img_shape (Sequence[int]): the shape of input rgb image.
+            thermal_shape (Sequence[int]): the shape of input thermal image.
+            num_classes (int): number of classes.
+        """
+        super().__init__(img_shape, thermal_shape, nc, *args, **kwargs)

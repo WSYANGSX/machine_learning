@@ -28,24 +28,22 @@ from machine_learning.utils.detection import (
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloV13(AlgorithmBase):
+class MultimodalDetection(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        net: BaseNet | None = None,
-        name: str | None = "yolo_v13",
+        net: BaseNet,
+        name: str | None = "multimodal",
         device: Literal["cuda", "cpu", "auto"] = "auto",
-        amp: bool = True,
+        amp: bool = False,
     ) -> None:
         """
-        Implementation of YoloV13 object detection algorithm
+        Implementation of Multimodal object detection algorithm
 
         Args:
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
-            dataset, may contain data information of the specific dataset.
-            net (BaseNet): Models required by the YoloV13 algorithm.
-            name (str): Name of the algorithm. Defaults to "yolo_v13".
+            net (BaseNet): Models required by the Multimodal algorithm.
+            name (str): Name of the algorithm. Defaults to "multimodal".
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
@@ -76,8 +74,7 @@ class YoloV13(AlgorithmBase):
         self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
-        # IoU vector for mAP@0.5:0.95
-        self.iouv = torch.linspace(0.5, 0.95, 10)
+        self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
         self.niou = self.iouv.numel()
 
     def _init_on_trainer(self, train_cfg, dataset):
@@ -89,16 +86,18 @@ class YoloV13(AlgorithmBase):
         self.topk = self.cfg["algorithm"]["topk"]
         self.alpha = self.cfg["algorithm"]["alpha"]
         self.beta = self.cfg["algorithm"]["beta"]
-        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
+        self.nc = self.dataset_cfg["nc"]
+        self.class_names = self.dataset_cfg["class_names"]
 
-        self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
+        self.assigner = TaskAlignedAssigner(
+            topk=self.topk, num_classes=self.dataset_cfg["nc"], alpha=self.alpha, beta=self.beta
+        )
 
     def _init_on_evaluator(self, ckpt, dataset, use_dataset):
         super()._init_on_evaluator(ckpt, dataset, use_dataset)
 
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
+        self.class_names = self.dataset_cfg["class_names"]
 
     def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
@@ -148,17 +147,17 @@ class YoloV13(AlgorithmBase):
             batches = epoch * self.train_batches + i
             self.warmup(batches, epoch)
 
-            # Load data
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            # load data
+            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
+            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
 
-            # Loss calculation
             with autocast(
                 device_type=str(self.device), enabled=self.amp
             ):  # Ensure that the autocast scope correctly covers the forward computation
-                preds = self.net(imgs)
+                preds = self.net(imgs, irs)
                 loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # Gradient backpropagation
@@ -186,13 +185,8 @@ class YoloV13(AlgorithmBase):
 
         return metrics
 
-    def close_dataloader_mosaic(self) -> None:
-        if hasattr(self.train_loader.dataset, "close_mosaic"):
-            LOGGER.info("Closing dataloader mosaic")
-            self.train_loader.dataset.close_mosaic()
-
     @torch.no_grad()
-    def validate(self):
+    def validate(self) -> dict[str, float]:
         super().validate()
 
         # log metrics
@@ -214,11 +208,12 @@ class YoloV13(AlgorithmBase):
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, batch in pbar:
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
 
-            preds = self.net(imgs)
+            preds = self.net(imgs, irs)
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # metrics

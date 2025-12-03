@@ -22,8 +22,6 @@ from machine_learning.data.dataset.base import DatasetBase, MultiModalDatasetBas
 from machine_learning.utils.augmentation import Compose
 from machine_learning.utils.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
 
-# from machine_learning.utils.ultralytics_augment import Compose, Format, Instances, LetterBox, v8_transforms
-
 from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.ops import resample_segments
 
