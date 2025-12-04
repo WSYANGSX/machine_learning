@@ -1,8 +1,7 @@
-import time
 from machine_learning.utils import load_cfg
 from machine_learning.data.dataset import YoloDataset
 from machine_learning.data.dataset.parsers import CocoParser
-from machine_learning.utils.plots import img_tensor2np
+from machine_learning.utils.ops import img_tensor2np
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 
 data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/coco-2017.yaml")

@@ -767,6 +767,13 @@ class MultiModalDatasetBase(Dataset):
         labels: np.ndarray | list[str] | dict[str, np.ndarray | list[str]],
     ) -> None:
         """Setups labels and data storage. Labels are always cached, data is cached conditionally."""
+
+        # ******************************************
+        #
+        # add properties used for cache_data() here.
+        #
+        # ******************************************
+
         # np.ndarray
         if isinstance(next(iter(data.values())), np.ndarray):
             self.cache_labels_np(labels)

@@ -1,5 +1,5 @@
 name: flir_aligned
-path: /home/yangxf/WorkSpace/machine_learning/data/flir_aligned
+path: /home/yangxf/WorkSpace/datasets/..datasets/flir_aligned
 dataset_type: YoloMultiModalDataset
 modals:
   - img

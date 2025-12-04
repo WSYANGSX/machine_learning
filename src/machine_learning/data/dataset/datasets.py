@@ -638,7 +638,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         def get_stats_desc():
             return (
-                f" {self.num_found} couple of {tuple(self.modals)} images, "
+                f" {self.num_found} couple of {tuple(self.modals)} data, "
                 f"{self.num_missing + self.num_empty} backgrounds, "
                 f"{self.num_skip} skip, "
                 f"{self.num_corrupt} corrupt."
@@ -1049,26 +1049,22 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                 )
 
             h0, w0 = next(iter(shapes))
-            hw0 = (h0, w0)
+            hw = hw0 = (h0, w0)
             # deal with load data
             if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
                 r = self.imgsz / max(h0, w0)  # ratio
                 if r != 1:  # if sizes are not equal
                     w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
-                else:
-                    w, h = w0, h0
-            else:
-                if not (h0 == w0 == self.imgsz):
-                    w = h = self.imgsz
-                else:
-                    w, h = w0, h0
-            hw = (h, w)
+                    hw = (h, w)
+            elif not (h0 == w0 == self.imgsz):
+                w = h = self.imgsz
+                hw = (h, w)
 
             for modal, dt in data.items():
                 if dt is not None:
-                    data[modal] = cv2.resize(dt, (w, h), interpolation=cv2.INTER_LINEAR)
+                    data[modal] = cv2.resize(dt, hw[::-1], interpolation=cv2.INTER_LINEAR)
                 else:
-                    data[modal] = np.zeros((w, h))
+                    data[modal] = np.zeros((w, hw[::-1]))
 
             if self.augment:
                 for name in self.data_names:
@@ -1178,7 +1174,26 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        ...
+        if self.augment:
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            transforms = v8_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LetterBox((self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=self.use_segments,
+                return_keypoint=self.use_keypoints,
+                return_obb=self.use_obb,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.mask_overlap,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+            )
+        )
+        return transforms
 
     def close_mosaic(self):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
