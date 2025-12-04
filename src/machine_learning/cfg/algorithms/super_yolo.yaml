@@ -72,10 +72,10 @@ data:
   nbs: 64 # (int) nominal batch size, -1 represent no
   batch_size: 256
   mosaic: 1.0
-  mixup: 0.2
+  mixup: 0.0
+  cutmix: 0.0
   erasing: 0.4
-  crop_fraction: 1.0
-  copy_paste: 0.6
+  copy_paste: 0.0
   copy_paste_mode: "flip" # (str) the method to do copy_paste augmentation (flip, mixup)
   auto_augment: randaugment # (str) auto augmentation policy for classification (randaugment, autoaugment, augmix)
   flipud: 0.0 # (float) image flip up-down (probability)
