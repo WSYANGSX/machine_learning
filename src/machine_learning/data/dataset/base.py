@@ -474,7 +474,7 @@ class DatasetBase(Dataset):
         try:
             # read img file with cv2
             if extension in IMG_FORMATS:  # imgs
-                data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)  # bgr
+                data = cv2.imread(str(path))  # bgr
                 # data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)  # bgr
                 if data is None:
                     LOGGER.error(f"Failed to read image: {path}")

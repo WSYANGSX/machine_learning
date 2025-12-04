@@ -441,18 +441,20 @@ class Mosaic(MixTransformBase):
         coordinates: list[tuple[tuple, tuple]],
         **params: dict[str, Any],
     ) -> np.ndarray:
-        # channel
-        ch = 3 if category == "img" else 1
+        # # channel
+        # ch = 3 if category == "img" else 1
         # data type
         pad_val = 0.0 if target.dtype.kind == "f" else 114 if category == "img" else 0
 
         # mosaic4
         if self.n == 4:
-            target4 = (
-                np.full((self.imgsz * 2, self.imgsz * 2), pad_val, dtype=target.dtype)
-                if ch == 1
-                else np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
-            )
+            # target4 = (
+            #     np.full((self.imgsz * 2, self.imgsz * 2), pad_val, dtype=target.dtype)
+            #     if ch == 1
+            #     else np.full((self.imgsz * 2, self.imgsz * 2, ch), pad_val, dtype=target.dtype)
+            # )
+
+            target4 = np.full((self.imgsz * 2, self.imgsz * 2, 3), pad_val, dtype=target.dtype)
 
             for i in range(4):
                 # Load image
@@ -460,31 +462,32 @@ class Mosaic(MixTransformBase):
 
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
-                if ch == 3 and target.ndim == 2:
-                    target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
-                elif ch == 1 and target.ndim == 3:
-                    target = target[..., 0]  # The original data is saved in three channels for single-channel data
+                # if ch == 3 and target.ndim == 2:
+                #     target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
+                # elif ch == 1 and target.ndim == 3:
+                #     target = target[..., 0]  # The original data is saved in three channels for single-channel data
                 target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
 
             return target4
 
         # mosaic9
         elif self.n == 9:
-            target9 = (
-                np.full((self.imgsz * 3, self.imgsz * 3), pad_val, dtype=target.dtype)
-                if ch == 1
-                else np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
-            )
+            # target9 = (
+            #     np.full((self.imgsz * 3, self.imgsz * 3), pad_val, dtype=target.dtype)
+            #     if ch == 1
+            #     else np.full((self.imgsz * 3, self.imgsz * 3, ch), pad_val, dtype=target.dtype)
+            # )
+            target9 = np.full((self.imgsz * 3, self.imgsz * 3, 3), pad_val, dtype=target.dtype)
 
             for i in range(9):
                 target = target if i == 0 else mix_samples[i - 1][category]
 
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
-                if ch == 3 and target.ndim == 2:
-                    target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
-                elif ch == 1 and target.ndim == 3:
-                    target = target[..., 0]  # The original data is saved in three channels for single-channel data
+                # if ch == 3 and target.ndim == 2:
+                #     target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
+                # elif ch == 1 and target.ndim == 3:
+                #     target = target[..., 0]  # The original data is saved in three channels for single-channel data
                 target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
 
             # Labels assuming imgsz*2 mosaic size

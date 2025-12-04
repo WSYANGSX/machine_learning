@@ -32,8 +32,8 @@ class MultimodalDetection(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        net: BaseNet,
-        name: str | None = "multimodal",
+        name: str,
+        net: BaseNet | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = False,
     ) -> None:
@@ -207,7 +207,7 @@ class MultimodalDetection(AlgorithmBase):
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, batch in pbar:
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
             irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device

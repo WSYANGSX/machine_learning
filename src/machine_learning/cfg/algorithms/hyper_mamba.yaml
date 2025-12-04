@@ -51,6 +51,7 @@ scheduler:
 
 net:
   initialize_weights: True
+  net_scale: "n"
 
 
 data:
