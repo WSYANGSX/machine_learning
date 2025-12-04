@@ -460,10 +460,11 @@ class Mosaic(MixTransformBase):
 
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
-                if ch == 3 and target.ndim == 2:  # There are grayscale images.
-                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
-                else:
-                    target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
+                if ch == 3 and target.ndim == 2:
+                    target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
+                elif ch == 1 and target.ndim == 3:
+                    target = target[..., 0]  # The original data is saved in three channels for single-channel data
+                target4[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
 
             return target4
 
@@ -481,9 +482,10 @@ class Mosaic(MixTransformBase):
                 (x1a, y1a, x2a, y2a), (x1b, y1b, x2b, y2b) = coordinates[i]
 
                 if ch == 3 and target.ndim == 2:
-                    target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b, None]
-                else:
-                    target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
+                    target = target[y1b:y2b, x1b:x2b, None]  # There are grayscale images.
+                elif ch == 1 and target.ndim == 3:
+                    target = target[..., 0]  # The original data is saved in three channels for single-channel data
+                target9[y1a:y2a, x1a:x2a] = target[y1b:y2b, x1b:x2b]
 
             # Labels assuming imgsz*2 mosaic size
             return target9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]

@@ -3,9 +3,11 @@ import numpy as np
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 from ultralytics.utils.ops import segments2boxes
 
-img = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/coco/images/train2017/000000378077.jpg")
+img = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/drone_vehicle/visible/train/00351.jpg")
 img = np.array(img)
-lb_file = "/home/yangxf/WorkSpace/datasets/..datasets/coco/annotations/train2017/000000378077.txt"
+ir = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/drone_vehicle/infrared/train/00351.jpg")
+ir = np.array(ir)
+lb_file = "/home/yangxf/WorkSpace/datasets/..datasets/drone_vehicle/labels/train/00351.txt"
 
 # segments to bboxes
 with open(lb_file) as f:
@@ -19,4 +21,4 @@ with open(lb_file) as f:
 
 bboxes = yolo2voc(lb[:, 1:5], img.shape[1], img.shape[0])
 cls = lb[:, 0]
-visualize_img_bboxes(img, bboxes, cls)
+visualize_img_bboxes(ir, bboxes, cls)
