@@ -10,8 +10,7 @@ import struct
 from abc import ABC, abstractmethod
 
 import numpy as np
-from torch.utils.data import Dataset
-from machine_learning.utils import load_cfg, list_from_txt, print_cfg
+from machine_learning.utils import list_from_txt
 
 
 class ParserBase(ABC):
@@ -179,3 +178,62 @@ class VedaiParser(ParserBase):
             "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
             "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
         }
+
+
+class DVParser(ParserBase):
+    r"""Drone Vehicle dataset parser."""
+
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
+
+        self.train_imgs_dir = self.dataset_cfg["train_imgs_dir"]
+        self.train_irs_dir = self.dataset_cfg["train_irs_dir"]
+        self.val_imgs_dir = self.dataset_cfg["val_imgs_dir"]
+        self.val_irs_dir = self.dataset_cfg["val_irs_dir"]
+        self.test_imgs_dir = self.dataset_cfg["test_imgs_dir"]
+        self.test_irs_dir = self.dataset_cfg["test_irs_dir"]
+
+        self.train_labels_dir = self.dataset_cfg["train_labels_dir"]
+        self.val_labels_dir = self.dataset_cfg["val_labels_dir"]
+        self.test_labels_dir = self.dataset_cfg["test_labels_dir"]
+
+        self.train_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.train_imgs_dir))
+        self.val_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.val_imgs_dir))
+        self.test_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.test_imgs_dir))
+
+    def parse(self) -> dict[str, Any]:
+        # train path
+        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_irs = [os.path.join(self.dataset_path, self.train_irs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.txt" for id in self.train_ids]
+
+        # val path
+        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_irs = [os.path.join(self.dataset_path, self.val_irs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.txt" for id in self.val_ids]
+
+        # test path
+        test_imgs = [os.path.join(self.dataset_path, self.test_imgs_dir) + f"/{id}.jpg" for id in self.test_ids]
+        test_irs = [os.path.join(self.dataset_path, self.test_irs_dir) + f"/{id}.jpg" for id in self.test_ids]
+        test_labels = [os.path.join(self.dataset_path, self.test_labels_dir) + f"/{id}.txt" for id in self.test_ids]
+
+        return {
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
+            "test": {"data": {"imgs": test_imgs, "irs": test_irs}, "labels": test_labels},
+        }
+
+
+"""Helper functions.
+"""
+
+
+def extract_ids_from_dir(file_dir: str) -> list[str]:
+    """Extract data ids from dataset directory."""
+    ids = []
+    for file in os.listdir(file_dir):
+        if os.path.isfile(os.path.join(file_dir, file)):
+            id, _ = os.path.splitext(file)
+            ids.append(id)
+
+    return ids
