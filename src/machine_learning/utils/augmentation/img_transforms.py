@@ -216,7 +216,7 @@ class MixTransformBase(TransformBase):
         if self.pre_transform is not None:
             for i, data in enumerate(mix_samples):
                 mix_samples[i] = self.pre_transform(data)
-        assert len(mix_samples), "There are no other images for mosaic augment."
+        assert len(mix_samples), "There are no other data for mosaic augment."
 
         return {"mix_samples": mix_samples}
 
@@ -2280,7 +2280,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         [
             pre_transform,
             MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
-            # CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
+            CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
             Albumentations(p=1.0),
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
             RandomFlip(direction="vertical", p=hyp.flipud),

@@ -12,6 +12,7 @@ hyp = {
     "mosaic": 1.0,
     "mixup": 0.2,
     "copy_paste": 0.6,
+    "cutmix": 0.0,
     "erasing": 0.4,
     "crop_fraction": 1.0,
     "copy_paste_mode": "flip",
@@ -30,7 +31,7 @@ hyp = {
 }
 
 dataset = YoloDataset(
-    imgs=parsing["train"]["imgs"], labels=parsing["train"]["labels"], cache=None, fraction=0.5, hyp=hyp
+    imgs=parsing["train"]["imgs"], labels=parsing["train"]["labels"], cache=None, fraction=0.1, hyp=hyp
 )
 
 
