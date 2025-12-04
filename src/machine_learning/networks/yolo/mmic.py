@@ -20,7 +20,7 @@ class MMICNet(BaseNet):
         *args,
         **kwargs,
     ):
-        """multimodal object detection network.
+        """Multimodal object detection network.
 
         Args:
             img_shape (Sequence[int]): the shape of input rgb image.
@@ -38,29 +38,29 @@ class MMICNet(BaseNet):
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 16, 3, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
+                    "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
+                    "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
+                    "DSC3k2_2": DSC3k2(64, 128, 1, False, 0.25),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
+                    "DSConv_1": DSConv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
+                    "A2C2f_1": A2C2f(128, 128, 2, True, 4),  # 6 (P4) (128, 40, 40)
+                    "DSConv_2": DSConv(128, 256, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
+                    "A2C2f_2": A2C2f(256, 256, 2, True, 1),  # 8 (P5) (256, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 16, 3, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
+                    "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
+                    "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
+                    "DSC3k2_2": DSC3k2(64, 128, 1, False, 0.25),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
+                    "DSConv_1": DSConv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
+                    "A2C2f_1": A2C2f(128, 128, 2, True, 4),  # 6 (P4) (128, 40, 40)
+                    "DSConv_2": DSConv(128, 256, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
+                    "A2C2f_2": A2C2f(256, 256, 2, True, 1),  # 8 (P5) (256, 20, 20)
                 }
             )
             # neck
@@ -98,29 +98,29 @@ class MMICNet(BaseNet):
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 32, 3, 2),  # 0 P1/2 (3, 640, 640) -> (32, 320, 320)
+                    "Conv_2": Conv(32, 64, 3, 2, 1, 2),  # 1 P2/4 (32, 320, 320) -> (64, 160, 160)
+                    "DSC3k2_1": DSC3k2(64, 128, 1, False, 0.25),  # 2 (P2) (64, 160, 160) -> (128, 160, 160)
+                    "Conv_3": Conv(128, 128, 3, 2, 1, 4),  # 3 P3/8 (128, 160, 160) -> (128, 80, 80)
+                    "DSC3k2_2": DSC3k2(128, 256, 1, False, 0.25),  # 4 (P3) (128, 80, 80) -> (256, 80, 80)
+                    "DSConv_1": DSConv(256, 256, 3, 2),  # 5 P4/16 (256, 80, 80) -> (256, 40, 40)
+                    "A2C2f_1": A2C2f(256, 256, 2, True, 4),  # 6 (P4) (256, 40, 40)
+                    "DSConv_2": DSConv(256, 512, 3, 2),  # 7 P5/32 (256, 40, 40) -> (512, 20, 20)
+                    "A2C2f_2": A2C2f(512, 512, 2, True, 1),  # 8 (P5) (512, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 32, 3, 2),  # 0 P1/2 (3, 640, 640) -> (32, 320, 320)
+                    "Conv_2": Conv(32, 64, 3, 2, 1, 2),  # 1 P2/4 (32, 320, 320) -> (64, 160, 160)
+                    "DSC3k2_1": DSC3k2(64, 128, 1, False, 0.25),  # 2 (P2) (64, 160, 160) -> (128, 160, 160)
+                    "Conv_3": Conv(128, 128, 3, 2, 1, 4),  # 3 P3/8 (128, 160, 160) -> (128, 80, 80)
+                    "DSC3k2_2": DSC3k2(128, 256, 1, False, 0.25),  # 4 (P3) (128, 80, 80) -> (256, 80, 80)
+                    "DSConv_1": DSConv(256, 256, 3, 2),  # 5 P4/16 (256, 80, 80) -> (256, 40, 40)
+                    "A2C2f_1": A2C2f(256, 256, 2, True, 4),  # 6 (P4) (256, 40, 40)
+                    "DSConv_2": DSConv(256, 512, 3, 2),  # 7 P5/32 (256, 40, 40) -> (512, 20, 20)
+                    "A2C2f_2": A2C2f(512, 512, 2, True, 1),  # 8 (P5) (512, 20, 20)
                 }
             )
             # neck
@@ -158,29 +158,29 @@ class MMICNet(BaseNet):
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
+                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
+                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
+                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
+                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
+                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
+                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
+                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
+                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
+                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
+                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
+                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
+                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
+                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
+                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
+                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
+                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
                 }
             )
             # neck
@@ -218,29 +218,29 @@ class MMICNet(BaseNet):
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 96, 3, 2),  # 0 P1/2  (3, 640, 640) -> (96, 320, 320)
+                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # 1 P2/4 (96, 320, 320) -> (192, 160, 160)
+                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # 2 (P2) (192, 160, 160) -> (384, 160, 160)
+                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # 3 P3/8 (384, 160, 160) -> (384, 80, 80)
+                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # 4 (P3) (384, 80, 80) -> (768, 80, 80)
+                    "DSConv_1": DSConv(768, 768, 3, 2),  # 5 P4/16 (768, 80, 80) -> (768, 40, 40)
+                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # 6 (P4) (768, 40, 40)
+                    "DSConv_2": DSConv(768, 768, 3, 2),  # 7 P5/32 (768, 40, 40) -> (768, 20, 20)
+                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # layer 0
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 2, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 96, 3, 2),  # 0 P1/2  (3, 640, 640) -> (96, 320, 320)
+                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # 1 P2/4 (96, 320, 320) -> (192, 160, 160)
+                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # 2 (P2) (192, 160, 160) -> (384, 160, 160)
+                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # 3 P3/8 (384, 160, 160) -> (384, 80, 80)
+                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # 4 (P3) (384, 80, 80) -> (768, 80, 80)
+                    "DSConv_1": DSConv(768, 768, 3, 2),  # 5 P4/16 (768, 80, 80) -> (768, 40, 40)
+                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # 6 (P4) (768, 40, 40)
+                    "DSConv_2": DSConv(768, 768, 3, 2),  # 7 P5/32 (768, 40, 40) -> (768, 20, 20)
+                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
                 }
             )
             # neck
