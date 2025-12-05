@@ -66,32 +66,35 @@ class MMICNet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # uable to train
-                    "HyperACE_Downsample": DownsampleConv(512, False),
-                    "HyperACE_Upsample": nn.Upsample(None, 2, "nearest"),
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
-                    "Inter_HyperACE_1": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Inter_HyperACE_2": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Cross_HyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Img": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_1": DownsampleConv(128),
+                    "HyperACE_Ir": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_2": DownsampleConv(128),
+                    "CHyperACE": CHyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_3": DownsampleConv(128),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "DSC3k2_1": DSC3k2(1024, 512, 2, True),
+                    "DSC3k2_1": DSC3k2(384, 128, 1, False),
                     "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
-                    "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1": Conv(512, 256, 1, 1),
+                    "DSC3k2_2": DSC3k2(256, 64, 1, False),
+                    "Conv_1_1": Conv(128, 64, 1, 1),
+                    "Conv_1_2": Conv(128, 64, 1, 1),
+                    "Conv_1_3": Conv(128, 64, 1, 1),
                     "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
-                    "Conv_2": Conv(256, 256, 3, 2),
-                    "DSC3k2_3": DSC3k2(768, 512, 2, True),
+                    "Conv_2": Conv(64, 64, 3, 2),
+                    "DSC3k2_3": DSC3k2(192, 128, 1, False),
                     "MMFullPAD_Tunnel_6": MMFullPAD_Tunnel(),
-                    "Conv_3": Conv(512, 512, 3, 2),
-                    "DSC3k2_4": DSC3k2(1024, 512, 2, True),
+                    "Conv_3": Conv(128, 128, 3, 2),
+                    "DSC3k2_4": DSC3k2(384, 256, 1, False),
                     "MMFullPAD_Tunnel_7": MMFullPAD_Tunnel(),
                 }
             )
             # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
+            self.head = DetectV8(nc=self.nc, ch=(64, 128, 256))
 
         elif self.net_scale == "s":
             # img backbone
@@ -126,32 +129,35 @@ class MMICNet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # uable to train
-                    "HyperACE_Downsample": DownsampleConv(512, False),
-                    "HyperACE_Upsample": nn.Upsample(None, 2, "nearest"),
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
-                    "Inter_HyperACE_1": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Inter_HyperACE_2": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Cross_HyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Img": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_1": DownsampleConv(256),
+                    "HyperACE_Ir": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_2": DownsampleConv(256),
+                    "CHyperACE": CHyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_3": DownsampleConv(256),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "DSC3k2_1": DSC3k2(1024, 512, 2, True),
+                    "DSC3k2_1": DSC3k2(768, 256, 1, False),
                     "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
-                    "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1": Conv(512, 256, 1, 1),
+                    "DSC3k2_2": DSC3k2(512, 128, 1, False),
+                    "Conv_1_1": Conv(256, 128, 1, 1),
+                    "Conv_1_2": Conv(256, 128, 1, 1),
+                    "Conv_1_3": Conv(256, 128, 1, 1),
                     "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
-                    "Conv_2": Conv(256, 256, 3, 2),
-                    "DSC3k2_3": DSC3k2(768, 512, 2, True),
+                    "Conv_2": Conv(128, 128, 3, 2),
+                    "DSC3k2_3": DSC3k2(384, 256, 1, False),
                     "MMFullPAD_Tunnel_6": MMFullPAD_Tunnel(),
-                    "Conv_3": Conv(512, 512, 3, 2),
-                    "DSC3k2_4": DSC3k2(1024, 512, 2, True),
+                    "Conv_3": Conv(256, 256, 3, 2),
+                    "DSC3k2_4": DSC3k2(768, 512, 1, False),
                     "MMFullPAD_Tunnel_7": MMFullPAD_Tunnel(),
                 }
             )
             # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
+            self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
         elif self.net_scale == "l":
             # img backbone
@@ -186,21 +192,24 @@ class MMICNet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # uable to train
-                    "HyperACE_Downsample": DownsampleConv(512, False),
-                    "HyperACE_Upsample": nn.Upsample(None, 2, "nearest"),
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
-                    "Inter_HyperACE_1": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Inter_HyperACE_2": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Cross_HyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Img": HyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both", False),
+                    "Downsample_1": DownsampleConv(512, False),
+                    "HyperACE_Ir": HyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both", False),
+                    "Downsample_2": DownsampleConv(512, False),
+                    "CHyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
+                    "Downsample_3": DownsampleConv(512, False),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
                     "DSC3k2_1": DSC3k2(1024, 512, 2, True),
                     "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
                     "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1": Conv(512, 256, 1, 1),
+                    "Conv_1_1": Conv(512, 256, 1, 1),
+                    "Conv_1_2": Conv(512, 256, 1, 1),
+                    "Conv_1_3": Conv(512, 256, 1, 1),
                     "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
                     "Conv_2": Conv(256, 256, 3, 2),
                     "DSC3k2_3": DSC3k2(768, 512, 2, True),
@@ -213,7 +222,7 @@ class MMICNet(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-        elif self.net_scale == "x":
+        else:
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
@@ -246,35 +255,35 @@ class MMICNet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # uable to train
-                    "HyperACE_Downsample": DownsampleConv(512, False),
-                    "HyperACE_Upsample": nn.Upsample(None, 2, "nearest"),
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
-                    "Inter_HyperACE_1": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Inter_HyperACE_2": HyperACE(512, 512, 2, 6, True, True, 0.5, 1, "both", False),
-                    "Cross_HyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Img": HyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both", False),
+                    "Downsample_1": DownsampleConv(768, False),
+                    "HyperACE_Ir": HyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both", False),
+                    "Downsample_2": DownsampleConv(768, False),
+                    "CHyperACE": CHyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both"),
+                    "Downsample_3": DownsampleConv(768, False),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "DSC3k2_1": DSC3k2(1024, 512, 2, True),
+                    "DSC3k2_1": DSC3k2(1536, 768, 1, True),
                     "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
-                    "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1": Conv(512, 256, 1, 1),
+                    "DSC3k2_2": DSC3k2(1536, 384, 1, True),
+                    "Conv_1_1": Conv(768, 384, 1, 1),
+                    "Conv_1_2": Conv(768, 384, 1, 1),
+                    "Conv_1_3": Conv(768, 384, 1, 1),
                     "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
-                    "Conv_2": Conv(256, 256, 3, 2),
-                    "DSC3k2_3": DSC3k2(768, 512, 2, True),
+                    "Conv_2": Conv(384, 384, 3, 2),
+                    "DSC3k2_3": DSC3k2(1152, 768, 1, True),
                     "MMFullPAD_Tunnel_6": MMFullPAD_Tunnel(),
-                    "Conv_3": Conv(512, 512, 3, 2),
-                    "DSC3k2_4": DSC3k2(1024, 512, 2, True),
+                    "Conv_3": Conv(768, 768, 3, 2),
+                    "DSC3k2_4": DSC3k2(1536, 768, 1, True),
                     "MMFullPAD_Tunnel_7": MMFullPAD_Tunnel(),
                 }
             )
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
-
-        # init stride
-        self._initialize_strides()
 
     def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
@@ -284,15 +293,12 @@ class MMICNet(BaseNet):
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
                 img_skips.append(imgs)
 
-        # themral backbone
+        # ir backbone
         ir_skips = []
         for key, layer in self.ir_backbone.items():
             irs = layer(irs)
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
                 ir_skips.append(irs)
-
-        # # random modal dropout
-        # img_skips, ir_skips = self.mfd([img_skips, ir_skips])
 
         pixels_fuse = [img_skips[i] + ir_skips[i] for i in range(len(img_skips))]
 
@@ -301,28 +307,28 @@ class MMICNet(BaseNet):
         img_enhanced = []
         ir_enhanced = []
 
-        img_h2 = self.neck.Inter_HyperACE_1(img_skips)
-        ir_h2 = self.neck.Inter_HyperACE_2(ir_skips)
+        img_h2 = self.neck.HyperACE_Img(img_skips)
+        ir_h2 = self.neck.HyperACE_Ir(ir_skips)
 
-        img_h1 = self.neck.HyperACE_Upsample(img_h2)
-        ir_h1 = self.neck.HyperACE_Upsample(ir_h2)
+        img_h1 = self.neck.Upsample(img_h2)
+        ir_h1 = self.neck.Upsample(ir_h2)
 
         img_enhanced.append(img_h1)
         ir_enhanced.append(ir_h1)
         img_enhanced.append(img_h2)
         ir_enhanced.append(ir_h2)
 
-        img_h3 = self.neck.HyperACE_Downsample(img_h2)
-        ir_h3 = self.neck.HyperACE_Downsample(ir_h2)
+        img_h3 = self.neck.Downsample_1(img_h2)
+        ir_h3 = self.neck.Downsample_3(ir_h2)
 
         img_enhanced.append(img_h3)
         ir_enhanced.append(ir_h3)
 
         # Cross HyerACE
         fuse_enhanced = []
-        fuse_h2 = self.neck.Cross_HyperACE([img_enhanced[1], ir_enhanced[1]])
-        fuse_h1 = self.neck.HyperACE_Upsample(fuse_h2)
-        fuse_h3 = self.neck.HyperACE_Downsample(fuse_h2)
+        fuse_h2 = self.neck.CHyperACE([img_enhanced[1], ir_enhanced[1]])
+        fuse_h1 = self.neck.Upsample(fuse_h2)
+        fuse_h3 = self.neck.Downsample_3(fuse_h2)
         fuse_enhanced.append(fuse_h1)
         fuse_enhanced.append(fuse_h2)
         fuse_enhanced.append(fuse_h3)
@@ -339,9 +345,9 @@ class MMICNet(BaseNet):
         det1 = f4 = self.neck.MMFullPAD_Tunnel_4(
             [
                 d2,
-                self.neck.Conv_1(img_enhanced[0]),  # 是否分开Conv？
-                self.neck.Conv_1(ir_enhanced[0]),
-                self.neck.Conv_1(fuse_enhanced[0]),
+                self.neck.Conv_1_1(img_enhanced[0]),  # 是否分开Conv？
+                self.neck.Conv_1_2(ir_enhanced[0]),
+                self.neck.Conv_1_3(fuse_enhanced[0]),
             ]
         )
         d3 = self.neck.DSC3k2_3(self.neck.Cat([self.neck.Conv_2(f4), f5]))
@@ -350,8 +356,6 @@ class MMICNet(BaseNet):
         # det3
         d4 = self.neck.DSC3k2_4(self.neck.Cat([self.neck.Conv_3(d3), f3]))
         det3 = self.neck.MMFullPAD_Tunnel_7([d4, img_enhanced[2], ir_enhanced[2], fuse_enhanced[2]])
-
-        # ----- head -----
 
         return self.head([det1, det2, det3])
 
@@ -376,12 +380,13 @@ class MMICNet(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
+        self._initialize_strides()
         self.head.bias_init()
 
     def _initialize_strides(self):
         img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         self.stride = torch.tensor(
-            [self.imgsz / x.shape[-2] for x in self.forward(img_input, ir_input)], dtype=torch.int8
+            [self.imgsz / x.shape[-2] for x in self.forward(img_input, ir_input)], dtype=torch.int8, device=self.device
         )
         self.head.stride = self.stride

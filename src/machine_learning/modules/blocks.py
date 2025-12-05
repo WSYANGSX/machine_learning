@@ -1,14 +1,15 @@
 from typing import Sequence
-import random
 
+import math
 import torch
+import random
 import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
 from mamba_ssm.modules.mamba_simple import Mamba
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH, HyperACE, GhostConv
+from ultralytics.nn.modules.block import DSC3k, DSBottleneck, C3AH, HyperACE
 
 
 class AttentionBlock(nn.Module):
@@ -170,6 +171,7 @@ class CHyperACE(nn.Module):
         e1=0.5,
         e2=1,
         context="both",
+        channel_adjust=True,
     ):
         super().__init__()
         self.c = int(c2 * e1)
@@ -298,7 +300,6 @@ class ECABlock(nn.Module):
         super().__init__()
         self.ch = ch
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        # 1D conv expects (B, C=1, L), we keep it as in typical ECA impl
         self.conv = nn.Conv1d(1, 1, kernel_size=k_size, padding=(k_size - 1) // 2, bias=False)
         self.sigmoid = nn.Sigmoid()
 
@@ -330,15 +331,19 @@ class LowRankFeedForward(nn.Module):
 
 
 class SingleMambaBlock(nn.Module):
-    def __init__(self, dim, H, W, shared_block=None, scale_init=1.0):
+    def __init__(self, dim, shared_block=None, scale_init=1.0):
         super().__init__()
         self.norm = RMSNorm(dim)
+        # Mamba2.0：use d_model / d_state / expand
         self.block = shared_block or Mamba(
-            dim, expand=1, d_state=8, bimamba_type="v6", if_devide_out=True, use_norm=True, input_h=H, input_w=W
+            d_model=dim,
+            d_state=8,
+            expand=1,
         )
         self.gamma = nn.Parameter(scale_init * torch.ones(dim))
 
     def forward(self, x):
+        # x: (B, L, C)
         residual = x
         x = self.norm(x)
         x = self.block(x)
@@ -346,20 +351,36 @@ class SingleMambaBlock(nn.Module):
 
 
 class CrossMambaBlock(nn.Module):
-    def __init__(self, dim, H, W, rank_ratio=0.5):
+    def __init__(self, dim, rank_ratio=0.5):
         super().__init__()
         self.norm0 = RMSNorm(dim)
         self.norm1 = RMSNorm(dim)
         self.block = Mamba(
-            dim, expand=1, d_state=8, bimamba_type="v7", if_devide_out=True, use_norm=True, input_h=H, input_w=W
+            d_model=dim,
+            d_state=8,
+            expand=1,
         )
+        # Merge [x0, x1] into a D-dimensional representation using a linear layer
+        self.fuse_proj = nn.Linear(dim * 2, dim, bias=False)
         self.mlp = LowRankFeedForward(dim, rank_ratio=rank_ratio)
 
     def forward(self, x0, x1):
+        """
+        x0, x1: (B, L, C)
+        """
         residual = x0
-        x0 = self.norm0(x0)
-        x1 = self.norm1(x1)
-        x = self.block(x0, extra_emb=x1)
+
+        x0n = self.norm0(x0)
+        x1n = self.norm1(x1)
+
+        # Simple yet effective cross-modal fusion: Linear compression back to dim after splicing
+        z = torch.cat([x0n, x1n], dim=-1)  # (B, L, 2C)
+        z = self.fuse_proj(z)  # (B, L, C)
+
+        # Through Mamba (only one sequence is accepted)
+        x = self.block(z)
+
+        # Residual + low-rank FFN
         x = x + residual
         x = x + self.mlp(x)
         return x
@@ -385,19 +406,14 @@ class FusionMamba(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d((H, W))
         self.max_pool = nn.AdaptiveMaxPool2d((H, W))
 
-        shared_block = (
-            Mamba(dim, expand=1, d_state=8, bimamba_type="v6", if_devide_out=True, use_norm=True, input_h=H, input_w=W)
-            if shared_weights
-            else None
-        )
+        shared_block = Mamba(d_model=dim, d_state=8, expand=1) if shared_weights else None
 
-        self.spa_layers = nn.ModuleList([SingleMambaBlock(dim, H, W, shared_block) for _ in range(depth)])
-        self.spe_layers = nn.ModuleList([SingleMambaBlock(dim, H, W, shared_block) for _ in range(depth)])
+        self.spa_layers = nn.ModuleList([SingleMambaBlock(dim, shared_block) for _ in range(depth)])
+        self.spe_layers = nn.ModuleList([SingleMambaBlock(dim, shared_block) for _ in range(depth)])
 
-        self.cross_spa = CrossMambaBlock(dim, H, W)
-        self.cross_spe = CrossMambaBlock(dim, H, W)
+        self.cross_spa = CrossMambaBlock(dim)
+        self.cross_spe = CrossMambaBlock(dim)
 
-        # Here we pass in channels dim*2 (because concatenating pan_out and ms_out)
         self.eca = ECABlock(dim * 2, k_size=3)
         self.out_conv = nn.Conv2d(dim * 2, dim, 1, bias=False)
 
@@ -428,7 +444,7 @@ class FusionMamba(nn.Module):
         ms_out = F.interpolate(ms_rec, size=(h0, w0), mode="bilinear", align_corners=False)
 
         fused = torch.cat([pan_out, ms_out], dim=1)  # (B, dim*2, H0, W0)
-        fused = self.eca(fused)  # ECA expects ch=dim*2
+        fused = self.eca(fused)
         fused = self.out_conv(fused)
 
         return fused
@@ -653,3 +669,25 @@ class FourInputFusionBlock(nn.Module):
         out = self.attn(out)
         out = self.out_bn(out)
         return out
+
+
+class GhostConv(nn.Module):
+    def __init__(self, in_ch, out_ch, k=1, s=1, p=0, ratio=2, act=True):
+        super().__init__()
+        init_channels = math.ceil(out_ch / ratio)
+        new_channels = init_channels * (ratio - 1)
+        self.primary_conv = nn.Sequential(
+            nn.Conv2d(in_ch, init_channels, k, s, p, bias=False),
+            nn.BatchNorm2d(init_channels),
+            nn.SiLU() if act else nn.Identity(),
+        )
+        self.cheap_op = nn.Sequential(
+            nn.Conv2d(init_channels, new_channels, 3, 1, 1, groups=init_channels, bias=False),
+            nn.BatchNorm2d(new_channels),
+            nn.SiLU() if act else nn.Identity(),
+        )
+
+    def forward(self, x):
+        x1 = self.primary_conv(x)
+        x2 = self.cheap_op(x1)
+        return torch.cat([x1, x2], dim=1)[:, : self.primary_conv[0].out_channels * 2, :, :]

@@ -32,8 +32,8 @@ class MultimodalDetection(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        name: str,
         net: BaseNet | None = None,
+        name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = False,
     ) -> None:
