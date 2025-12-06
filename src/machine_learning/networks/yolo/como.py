@@ -386,7 +386,7 @@ class COMONet(BaseNet):
         p3_cat = self.neck["Concat"]([up_p4, p3_rgb, p3_ir])
         p3_out = self.neck["C2f_p3"](p3_cat)  # 256
 
-        # PAN: 自下而上
+        # PAN
         p3_down = self.neck["Conv_p3_down"](p3_out)  # -> P4 尺度
         p4_pan_cat = self.neck["Concat"]([p3_down, p4_out])
         p4_pan = self.neck["C2f_pan_p4"](p4_pan_cat)  # 512
