@@ -7,8 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
-from ultralytics.nn.modules.conv import Conv, DSConv, DWConv, GhostConv, LightConv, RepConv, autopad
 from ultralytics.nn.modules.transformer import TransformerBlock
+from ultralytics.nn.modules.conv import Conv, DSConv, DWConv, GhostConv, LightConv, RepConv, autopad
+
 
 __all__ = (
     "DFL",
