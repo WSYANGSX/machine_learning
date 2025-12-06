@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from machine_learning.networks import BaseNet
-from machine_learning.modules.head import DetectV8
+from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel
 from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
 
