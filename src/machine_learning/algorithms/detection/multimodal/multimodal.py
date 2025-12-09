@@ -185,6 +185,11 @@ class MultimodalDetection(AlgorithmBase):
 
         return metrics
 
+    def close_dataloader_mosaic(self) -> None:
+        if hasattr(self.train_loader.dataset, "close_mosaic"):
+            LOGGER.info("Closing dataloader mosaic")
+            self.train_loader.dataset.close_mosaic()
+
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         super().validate()

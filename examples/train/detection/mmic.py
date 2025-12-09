@@ -1,10 +1,14 @@
+from machine_learning.networks.yolo.mmic import MMICNet_with_v8_backbone
 from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
+    # Step 0: build network
+    net = MMICNet_with_v8_backbone(640, nc=5, net_scale="s")
+
     # Step 1: Parse the data
-    mmic = MultimodalDetection("mmic.yaml", amp=True)
+    mmic = MultimodalDetection("mmic.yaml", net=net, amp=True)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(

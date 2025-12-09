@@ -30,24 +30,24 @@ algorithm:
   nbs: 64 # (int) nominal batch size, -1 represent no 
 
 optimizer:
-  opt: "Adam"
-  lr: 1.0e-4
-  final_factor: 0.01
-  beta1: 0.937
-  beta2: 0.999
-  eps: 1.0e-8
-  weight_decay: 0.0005
-
-  # opt: "auto"
-  # lr: 0.001
+  # opt: "Adam"
+  # lr: 1.0e-4
   # final_factor: 0.01
-  # momentum: 0.9
+  # beta1: 0.937
+  # beta2: 0.999
+  # eps: 1.0e-8
   # weight_decay: 0.0005
+
+  opt: "auto"
+  lr: 0.01
+  final_factor: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
 
   grad_clip: 10.0
   warmup_epochs: 3.0 # (float) warmup epochs (fractions ok)
   warmup_momentum: 0.8 # (float) warmup initial momentum
-  warmup_bias_lr: 0.0 # 0.1 # (float) warmup initial bias lr
+  warmup_bias_lr: 0.1 # 0.1 # (float) warmup initial bias lr
   
 scheduler:
   # sched: "ReduceLROnPlateau"
@@ -58,7 +58,7 @@ scheduler:
 
 net:
   initialize_weights: True
-  net_scale: "n"
+  net_scale: "s"
   channels: 3
 
 data:
@@ -71,7 +71,7 @@ data:
   mask_overlap: True # (bool) merge object masks into a single image mask during training (segment train only)
   mask_ratio: 4 # (int) mask downsample ratio (segment train only)
   nbs: 64 # (int) nominal batch size, -1 represent no
-  batch_size: 128
+  batch_size: 64
   mosaic: 1.0
   mixup: 0.0
   cutmix: 0.0
