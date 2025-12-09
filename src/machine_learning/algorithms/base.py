@@ -202,6 +202,10 @@ class AlgorithmBase(ABC):
         if net is not None:
             self.net = net
             self._add_net("net", self.net)
+            # override parameters of net
+            for key in self.cfg["net"]:
+                if key in self.net.__dict__:
+                    self.cfg["net"][key] = self.net.__dict__[key]
         else:
             LOGGER.info("No outside net provided, building net from default configuration...")
             if issubclass(NET_MAPS[self.name], BaseNet):

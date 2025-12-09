@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
-from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel
+from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, ModalFuseSE
 from ultralytics.nn.modules import (
     Conv,
     DSC3k2,
@@ -427,34 +427,35 @@ class MMICNet_with_v8_backbone(BaseNet):
         self.net_scale = net_scale
         self.channels = channels
 
-        # TODO implement
         if self.net_scale == "n":
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 16, 3, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
-                    "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
-                    "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
-                    "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
-                    "DSC3k2_2": DSC3k2(64, 128, 1, False, 0.25),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
-                    "DSConv_1": DSConv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
-                    "A2C2f_1": A2C2f(128, 128, 2, True, 4),  # 6 (P4) (128, 40, 40)
-                    "DSConv_2": DSConv(128, 256, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
-                    "A2C2f_2": A2C2f(256, 256, 2, True, 1),  # 8 (P5) (256, 20, 20)
+                    "Conv_1": Conv(self.channels, 16, 6, 2, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
+                    "Conv_2": Conv(16, 32, 3, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
+                    "C2f_1": C2f(32, 64, 1, True),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(64, 64, 3, 2),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
+                    "C2f_2": C2f(64, 128, 2, True),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
+                    "Conv_4": Conv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
+                    "C2f_3": C2f(128, 128, 3, True),  # 6 (P4) (128, 40, 40)
+                    "Conv_5": Conv(128, 128, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
+                    "C2f_4": C2f(128, 256, 1, True),  # 8 (P5) (256, 20, 20)
+                    "SPPF": SPPF(256, 256, k=5),  # 9 (P5) (256, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 16, 3, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
-                    "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
-                    "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
-                    "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
-                    "DSC3k2_2": DSC3k2(64, 128, 1, False, 0.25),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
-                    "DSConv_1": DSConv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
-                    "A2C2f_1": A2C2f(128, 128, 2, True, 4),  # 6 (P4) (128, 40, 40)
-                    "DSConv_2": DSConv(128, 256, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
-                    "A2C2f_2": A2C2f(256, 256, 2, True, 1),  # 8 (P5) (256, 20, 20)
+                    "Conv_1": Conv(self.channels, 16, 6, 2, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
+                    "Conv_2": Conv(16, 32, 3, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
+                    "C2f_1": C2f(32, 64, 1, True),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(64, 64, 3, 2),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
+                    "C2f_2": C2f(64, 128, 2, True),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
+                    "Conv_4": Conv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
+                    "C2f_3": C2f(128, 128, 3, True),  # 6 (P4) (128, 40, 40)
+                    "Conv_5": Conv(128, 128, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
+                    "C2f_4": C2f(128, 256, 1, True),  # 8 (P5) (256, 20, 20)
+                    "SPPF": SPPF(256, 256, k=5),  # 9 (P5) (256, 20, 20)
                 }
             )
             # neck
@@ -464,6 +465,9 @@ class MMICNet_with_v8_backbone(BaseNet):
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
+                    "ModalFuseSE_1": ModalFuseSE(128),
+                    "ModalFuseSE_2": ModalFuseSE(128),
+                    "ModalFuseSE_3": ModalFuseSE(256),
                     "HyperACE_Img": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
@@ -530,6 +534,9 @@ class MMICNet_with_v8_backbone(BaseNet):
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
+                    "ModalFuseSE_1": ModalFuseSE(256),
+                    "ModalFuseSE_2": ModalFuseSE(256),
+                    "ModalFuseSE_3": ModalFuseSE(512),
                     "HyperACE_Img": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
@@ -557,34 +564,35 @@ class MMICNet_with_v8_backbone(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
-        # TODO implement
         elif self.net_scale == "l":
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
-                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
-                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 64, 6, 2, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
+                    "Conv_2": Conv(64, 128, 3, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
+                    "C2f_1": C2f(128, 256, 3, True),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
+                    "Conv_3": Conv(256, 256, 3, 2),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
+                    "C2f_2": C2f(256, 512, 6, True),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
+                    "Conv_4": Conv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
+                    "C2f_3": C2f(512, 512, 9, True),  # 6 (P4) (512, 40, 40)
+                    "Conv_5": Conv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
+                    "C2f_4": C2f(512, 512, 3, True),  # 8 (P5) (512, 20, 20)
+                    "SPPF": SPPF(512, 512, k=5),  # 9 (P5) (512, 20, 20)
                 }
             )
             # ir backbone
             self.ir_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
-                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
-                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
+                    "Conv_1": Conv(self.channels, 64, 6, 2, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
+                    "Conv_2": Conv(64, 128, 3, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
+                    "C2f_1": C2f(128, 256, 3, True),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
+                    "Conv_3": Conv(256, 256, 3, 2),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
+                    "C2f_2": C2f(256, 512, 6, True),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
+                    "Conv_4": Conv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
+                    "C2f_3": C2f(512, 512, 9, True),  # 6 (P4) (512, 40, 40)
+                    "Conv_5": Conv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
+                    "C2f_4": C2f(512, 512, 3, True),  # 8 (P5) (512, 20, 20)
+                    "SPPF": SPPF(512, 512, k=5),  # 9 (P5) (512, 20, 20)
                 }
             )
             # neck
@@ -621,20 +629,21 @@ class MMICNet_with_v8_backbone(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-        # TODO implement
+        # TODO Implement
         else:
             # img backbone
             self.img_backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.channels, 96, 3, 2),  # 0 P1/2  (3, 640, 640) -> (96, 320, 320)
-                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # 1 P2/4 (96, 320, 320) -> (192, 160, 160)
-                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # 2 (P2) (192, 160, 160) -> (384, 160, 160)
-                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # 3 P3/8 (384, 160, 160) -> (384, 80, 80)
-                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # 4 (P3) (384, 80, 80) -> (768, 80, 80)
-                    "DSConv_1": DSConv(768, 768, 3, 2),  # 5 P4/16 (768, 80, 80) -> (768, 40, 40)
-                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # 6 (P4) (768, 40, 40)
-                    "DSConv_2": DSConv(768, 768, 3, 2),  # 7 P5/32 (768, 40, 40) -> (768, 20, 20)
-                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
+                    "Conv_1": Conv(self.channels, 80, 6, 2, 2),  # 0 P1/2  (3, 640, 640) -> (80, 320, 320)
+                    "Conv_2": Conv(80, 160, 3, 2, 1, 2),  # 1 P2/4 (80, 320, 320) -> (160, 160, 160)
+                    "C2f_1": C2f(160, 320, 3, True),  # 2 (P2) (160, 160, 160) -> (320, 160, 160)
+                    "Conv_3": Conv(320, 320, 3, 2, 1, 4),  # 3 P3/8 (320, 160, 160) -> (320, 80, 80)
+                    "C2f_2": C2f(320, 512, 6, True),  # 4 (P3) (320, 80, 80) -> (512, 80, 80)
+                    "Conv_4": Conv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (640, 40, 40)
+                    "C2f_3": C2f(640, 640, 9, True),  # 6 (P4) (640, 40, 40)
+                    "Conv_5": Conv(768, 768, 3, 2),  # 7 P5/32 (640, 40, 40) -> (768, 20, 20)
+                    "C2f_4": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
+                    "SPPF": SPPF(512, 512, k=5),  # 9 (P5) (512, 20, 20)
                 }
             )
             # ir backbone
@@ -700,7 +709,7 @@ class MMICNet_with_v8_backbone(BaseNet):
             if key in ["C2f_2", "C2f_3", "SPPF"]:
                 ir_skips.append(irs)
 
-        pixels_fuse = [img_skips[i] + ir_skips[i] for i in range(len(img_skips))]
+        features_fuse = [self.neck[f"ModalFuseSE_{i + 1}"](img_skips[i], ir_skips[i]) for i in range(len(img_skips))]
 
         # ----- neck -----
         # Inter HyperACE
@@ -719,7 +728,7 @@ class MMICNet_with_v8_backbone(BaseNet):
         ir_enhanced.append(ir_h2)
 
         img_h3 = self.neck.Downsample_1(img_h2)
-        ir_h3 = self.neck.Downsample_3(ir_h2)
+        ir_h3 = self.neck.Downsample_2(ir_h2)
 
         img_enhanced.append(img_h3)
         ir_enhanced.append(ir_h3)
@@ -733,9 +742,9 @@ class MMICNet_with_v8_backbone(BaseNet):
         fuse_enhanced.append(fuse_h2)
         fuse_enhanced.append(fuse_h3)
 
-        f1 = self.neck.FullPAD_Tunnel_1([pixels_fuse[0], fuse_enhanced[0]])
-        f2 = self.neck.FullPAD_Tunnel_2([pixels_fuse[1], fuse_enhanced[1]])
-        f3 = self.neck.FullPAD_Tunnel_3([pixels_fuse[2], fuse_enhanced[2]])
+        f1 = self.neck.FullPAD_Tunnel_1([features_fuse[0], fuse_enhanced[0]])
+        f2 = self.neck.FullPAD_Tunnel_2([features_fuse[1], fuse_enhanced[1]])
+        f3 = self.neck.FullPAD_Tunnel_3([features_fuse[2], fuse_enhanced[2]])
 
         # Full_Tunnel
         d1 = self.neck.DSC3k2_1(self.neck.Cat([self.neck.Upsample(f3), f2]))

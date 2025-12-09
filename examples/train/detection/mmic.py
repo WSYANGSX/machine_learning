@@ -5,7 +5,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 def main():
     # Step 0: build network
-    net = MMICNet_with_v8_backbone(640, nc=5, net_scale="s")
+    net = MMICNet_with_v8_backbone(640, nc=5, net_scale="n")
 
     # Step 1: Parse the data
     mmic = MultimodalDetection("mmic.yaml", net=net, amp=True)

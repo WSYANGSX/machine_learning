@@ -2541,6 +2541,63 @@ class FuseModule(nn.Module):
         return out
 
 
+class FuseModuleSE(nn.Module):
+    """
+    A module to fuse multi-scale features for the HyperACE block.
+
+    This module takes a list of three feature maps from different scales, aligns them to a common
+    spatial resolution by downsampling the first and upsampling the third, and then concatenates
+    and fuses them with a convolution layer.
+
+    Attributes:
+        c_in (int): The number of channels of the input feature maps.
+        channel_adjust (bool): Whether to adjust the channel count of the concatenated features.
+
+    Methods:
+        forward: Fuses a list of three multi-scale feature maps.
+
+    Examples:
+        >>> import torch
+        >>> model = FuseModule(c_in=64, channel_adjust=False)
+        >>> # Input is a list of features from different backbone stages
+        >>> x_list = [torch.randn(2, 64, 64, 64), torch.randn(2, 64, 32, 32), torch.randn(2, 64, 16, 16)]
+        >>> output = model(x_list)
+        >>> print(output.shape)
+        torch.Size([2, 64, 32, 32])
+    """
+
+    def __init__(self, c_in, channel_adjust, reduction: int = 16):
+        super(FuseModule, self).__init__()
+        self.downsample = nn.AvgPool2d(kernel_size=2)
+        self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+        if channel_adjust:
+            self.conv_out = Conv(4 * c_in, c_in, 1)
+        else:
+            self.conv_out = Conv(3 * c_in, c_in, 1)
+
+        # simple SE
+        hidden = max(c_in // reduction, 4)
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(c_in, hidden, 1, bias=True),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(hidden, c_in, 1, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        x1_ds = self.downsample(x[0])
+        x3_up = self.upsample(x[2])
+        x_cat = torch.cat([x1_ds, x[1], x3_up], dim=1)
+        out = self.conv_out(x_cat)
+
+        # gate attentation
+        w = self.se(out)
+        out = out * w
+
+        return out
+
+
 class HyperACE(nn.Module):
     """
     Hypergraph-based Adaptive Correlation Enhancement (HyperACE).
@@ -2595,7 +2652,7 @@ class HyperACE(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
-        self.fuse = FuseModule(c1, channel_adjust)
+        self.fuse = FuseModuleSE(c1, channel_adjust)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
@@ -2771,13 +2828,45 @@ class ResidualBlock(nn.Module):
         return self.conv2(self.conv1(x)) + x
 
 
-class CFuseModule(nn.Module):
+class ModalFuseSE(nn.Module):
+    def __init__(self, c, reduction=16):
+        super().__init__()
+        # 先 concat 成 2c，再用 1×1 Conv 压回 c 维
+        self.conv1x1 = Conv(2 * c, c, k=1, s=1)
+        # 简单 SE 通道注意力
+        rc = max(c // reduction, 4)  # 防止太小
+        self.attn = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(c, rc, 1, 1, 0),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(rc, c, 1, 1, 0),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x_rgb, x_ir):
+        x = torch.cat([x_rgb, x_ir], dim=1)  # [B,2C,H,W]
+        x = self.conv1x1(x)  # [B,C,H,W]
+        w = self.attn(x)  # [B,C,1,1]
+        return x * w  # 通道重标定后的融合特征
+
+
+class ModalFuseGate(nn.Module):
     def __init__(self, c_in):
         super().__init__()
+        # add gate weight
+        self.alpha = nn.Parameter(torch.tensor(0.5))
+        self.beta = nn.Parameter(torch.tensor(0.5))
+
         self.conv_out = Conv(2 * c_in, c_in, 1)
 
     def forward(self, x):
-        x_cat = torch.cat([x[0], x[1]], dim=1)
+        x0, x1 = x
+
+        # gate
+        x0_w = self.alpha * x0
+        x1_w = self.beta * x1
+
+        x_cat = torch.cat([x0_w, x1_w], dim=1)
         out = self.conv_out(x_cat)
         return out
 
@@ -2839,7 +2928,6 @@ class CHyperACE(nn.Module):
         e1=0.5,
         e2=1,
         context="both",
-        channel_adjust=True,
     ):
         super().__init__()
         self.c = int(c2 * e1)
@@ -2849,13 +2937,11 @@ class CHyperACE(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
-        self.cmca = CMCA(c1, c1)
-        self.fuse = CFuseModule(c1)
+        self.fuse = ModalFuseGate(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
     def forward(self, X):
-        X = self.cmca(X)
         x = self.fuse(X)
         y = list(self.cv1(x).chunk(3, 1))
         out1 = self.branch1(y[1])
@@ -2889,9 +2975,9 @@ class CHyperACEV2(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
-        self.cmca = CMCA(c1, c1)
-        self.fuse1 = CFuseModule(c1)
-        self.fuse2 = CFuseModule(c1)
+        self.cmca = CMCA(c1, c1)  # 通道注意力位置？
+        self.fuse1 = ModalFuseGate(c1)
+        self.fuse2 = ModalFuseGate(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
