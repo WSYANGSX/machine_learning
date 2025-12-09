@@ -5,19 +5,21 @@ import torch.nn as nn
 
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
-from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, ModalFuseSE
-from ultralytics.nn.modules import (
+from machine_learning.modules.blocks import (
+    CHyperACE,
+    MMFullPAD_Tunnel,
+    ModalFuseSE,
     Conv,
     DSC3k2,
     DSConv,
     A2C2f,
     HyperACE,
     DownsampleConv,
-    Concat,
     FullPAD_Tunnel,
     C2f,
     SPPF,
 )
+from ultralytics.nn.modules import Concat
 
 
 class MMICNet(BaseNet):

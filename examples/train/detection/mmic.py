@@ -4,7 +4,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
-    # Step 0: build network
+    # Step 0: build network (optional)
     net = MMICNet_with_v8_backbone(640, nc=5, net_scale="s")
 
     # Step 1: Parse the data
