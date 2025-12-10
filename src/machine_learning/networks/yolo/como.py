@@ -82,7 +82,7 @@ class COMONet(BaseNet):
                     "C2f_p3": C2f(64 * 3, 64, n=1, shortcut=False),
                     # PAN`
                     "Conv_p3_down": Conv(64, 64, 3, 2),
-                    "C2f_pan_p4": C2f(64 * 3, 128, n=1, shortcut=False),
+                    "C2f_pan_p4": C2f(64 + 128, 128, n=1, shortcut=False),
                     "Conv_p4_down": Conv(128, 128, 3, 2),
                     "C2f_pan_p5": C2f(128 + 256, 256, n=1, shortcut=False),
                 }
@@ -132,14 +132,14 @@ class COMONet(BaseNet):
                     "Upsample": nn.Upsample(scale_factor=2, mode="nearest"),
                     # FPN
                     "Conv_fuse_p5": Conv(512, 256, 1, 1),
-                    "C2f_p4": C2f(256 * 3, 256, n=1, shortcut=False),
+                    "C2f_p4": C2f(768, 256, n=1, shortcut=False),
                     "Conv_p4_to_p3": Conv(256, 128, 1, 1),
-                    "C2f_p3": C2f(128 * 3, 128, n=1, shortcut=False),
+                    "C2f_p3": C2f(384, 128, n=1, shortcut=False),
                     # PAN`
                     "Conv_p3_down": Conv(128, 128, 3, 2),
-                    "C2f_pan_p4": C2f(128 * 3, 256, n=1, shortcut=False),
+                    "C2f_pan_p4": C2f(256, 256, n=1, shortcut=False),
                     "Conv_p4_down": Conv(256, 256, 3, 2),
-                    "C2f_pan_p5": C2f(256 + 512, 512, n=1, shortcut=False),
+                    "C2f_pan_p5": C2f(768, 512, n=1, shortcut=False),
                 }
             )
             # head
@@ -180,24 +180,25 @@ class COMONet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # multi modal fusion
-                    "FusionMamba": FusionMamba(256, 8, 8),  # 20: from [P5_img, P5_ir]
-                    "FourInputFusionBlock": FourInputFusionBlock(256),  # 21
+                    "FusionMamba": FusionMamba(768, 768, 8, 8),  # 20: from [P5_img, P5_ir]
+                    "FourInputFusionBlock": FourInputFusionBlock(768),  # 21
                     # common ops
                     "Concat": Concat(1),
                     "Upsample": nn.Upsample(scale_factor=2, mode="nearest"),
-                    # FPN / PAN
-                    "Conv_1": Conv(128, 128, 1, 1),
-                    "C2f_1": C2f(128 * 3, 128, n=1, shortcut=False),
-                    "Conv_2": Conv(128, 64, 1, 1),
-                    "C2f_2": C2f(64 * 3, 64, n=1, shortcut=False),
-                    "Conv_3": Conv(64, 64, 3, 2),
-                    "C2f_3": C2f(64 + 64, 128, n=1, shortcut=False),
-                    "Conv_4": Conv(128, 128, 3, 2),
-                    "C2f_4": C2f(128 + 256, 256, n=1, shortcut=False),
+                    # FPN
+                    "Conv_fuse_p5": Conv(768, 384, 1, 1),
+                    "C2f_p4": C2f(384 * 3, 384, n=2, shortcut=False),
+                    "Conv_p4_to_p3": Conv(384, 192, 1, 1),
+                    "C2f_p3": C2f(192 * 3, 192, n=2, shortcut=False),
+                    # PAN`
+                    "Conv_p3_down": Conv(192, 192, 3, 2),
+                    "C2f_pan_p4": C2f(192 * 3, 384, n=2, shortcut=False),
+                    "Conv_p4_down": Conv(384, 384, 3, 2),
+                    "C2f_pan_p5": C2f(384 + 768, 768, n=2, shortcut=False),
                 }
             )
             # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 1024))
+            self.head = DetectV8(nc=self.nc, ch=(192, 384, 768))
 
         elif self.net_scale == "l":
             # img backbone
@@ -342,7 +343,15 @@ class COMONet(BaseNet):
         img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
 
-        summary(self, input_data=[img_input, ir_input])
+        # Limit depth to avoid expand the detailed list of recursive modules
+        # Looking only at the main hierarchy and parameters
+        summary(
+            self,
+            input_data=[img_input, ir_input],
+            depth=1,
+            col_names=("input_size", "output_size", "num_params", "trainable"),
+            row_settings=("depth",),
+        )
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -367,34 +376,34 @@ class COMONet(BaseNet):
         self.head.stride = self.stride
 
     def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
+        # The channel annotation takes "n" net scale as an example
         # backbone
-        p3_rgb, p4_rgb, p5_rgb = self._rgb_forward_backbone(imgs)
-        p3_ir, p4_ir, p5_ir = self._ir_forward_backbone(irs)
+        p3_rgb, p4_rgb, p5_rgb = self._rgb_forward_backbone(imgs)  # (64, 128, 256)
+        p3_ir, p4_ir, p5_ir = self._ir_forward_backbone(irs)  # (64, 128, 256)
 
         # multi modal fusion
-        p5_fused = self.neck["FusionMamba"]([p5_rgb, p5_ir])  # 20
-        p5_fuse_block = self.neck["FourInputFusionBlock"]([p5_fused, p5_rgb, p5_ir])  # 21
+        p5_fused = self.neck["FusionMamba"]([p5_rgb, p5_ir])  # 256 -> 256
+        p5_fuse_block = self.neck["FourInputFusionBlock"]([p5_fused, p5_rgb, p5_ir])  # 256 -> 256
 
         # FPN
-        p5_top = self.neck["Conv_fuse_p5"](p5_fuse_block)  # 512
+        p5_top = self.neck["Conv_fuse_p5"](p5_fuse_block)  # 256 -> 128
+        up_p5 = self.neck["Upsample"](p5_top)  # 128 -> 128
+        p4_cat = self.neck["Concat"]([up_p5, p4_rgb, p4_ir])  # 128 * 3
+        p4_out = self.neck["C2f_p4"](p4_cat)  # 128 * 3 -> 128
 
-        up_p5 = self.neck["Upsample"](p5_top)  # 上采样到 P4 尺度
-        p4_cat = self.neck["Concat"]([up_p5, p4_rgb, p4_ir])
-        p4_out = self.neck["C2f_p4"](p4_cat)  # 512
-
-        p4_red = self.neck["Conv_p4_to_p3"](p4_out)  # 256
-        up_p4 = self.neck["Upsample"](p4_red)
-        p3_cat = self.neck["Concat"]([up_p4, p3_rgb, p3_ir])
-        p3_out = self.neck["C2f_p3"](p3_cat)  # 256
+        p4_red = self.neck["Conv_p4_to_p3"](p4_out)  # 128 -> 64
+        up_p4 = self.neck["Upsample"](p4_red)  # 64 -> 64
+        p3_cat = self.neck["Concat"]([up_p4, p3_rgb, p3_ir])  # 64 * 3
+        p3_out = self.neck["C2f_p3"](p3_cat)  # 64 * 3 -> 64
 
         # PAN
-        p3_down = self.neck["Conv_p3_down"](p3_out)  # -> P4 尺度
-        p4_pan_cat = self.neck["Concat"]([p3_down, p4_out])
-        p4_pan = self.neck["C2f_pan_p4"](p4_pan_cat)  # 512
+        p3_down = self.neck["Conv_p3_down"](p3_out)  # 64 -> 64
+        p4_pan_cat = self.neck["Concat"]([p3_down, p4_red])  # 64 + 64
+        p4_pan = self.neck["C2f_pan_p4"](p4_pan_cat)  # 64 + 128 -> 128
 
-        p4_down = self.neck["Conv_p4_down"](p4_pan)  # -> P5 尺度
-        p5_pan_cat = self.neck["Concat"]([p4_down, p5_fuse_block])
-        p5_pan = self.neck["C2f_pan_p5"](p5_pan_cat)  # 1024
+        p4_down = self.neck["Conv_p4_down"](p4_pan)  # 128 -> 128
+        p5_pan_cat = self.neck["Concat"]([p4_down, p5_fuse_block])  # 128 + 256
+        p5_pan = self.neck["C2f_pan_p5"](p5_pan_cat)  # 128 + 256 -> 256
 
         # Detect head: [P3, P4, P5]
         return self.head([p3_out, p4_pan, p5_pan])
