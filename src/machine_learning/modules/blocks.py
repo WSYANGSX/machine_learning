@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from einops import rearrange
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.block import GhostConv, DSBottleneck, DSC3k
+from ultralytics.nn.modules.block import DSC3k, DSBottleneck
 from mamba_ssm.modules.mamba_simple import Mamba
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -808,6 +808,28 @@ class LowRankFeedForward(nn.Module):
         return self.dropout(x)
 
 
+class GhostConv(nn.Module):
+    def __init__(self, in_ch, out_ch, k=1, s=1, p=0, ratio=2, act=True):
+        super().__init__()
+        init_channels = math.ceil(out_ch / ratio)
+        new_channels = init_channels * (ratio - 1)
+        self.primary_conv = nn.Sequential(
+            nn.Conv2d(in_ch, init_channels, k, s, p, bias=False),
+            nn.BatchNorm2d(init_channels),
+            nn.SiLU() if act else nn.Identity(),
+        )
+        self.cheap_op = nn.Sequential(
+            nn.Conv2d(init_channels, new_channels, 3, 1, 1, groups=init_channels, bias=False),
+            nn.BatchNorm2d(new_channels),
+            nn.SiLU() if act else nn.Identity(),
+        )
+
+    def forward(self, x):
+        x1 = self.primary_conv(x)
+        x2 = self.cheap_op(x1)
+        return torch.cat([x1, x2], dim=1)[:, : self.primary_conv[0].out_channels * 2, :, :]
+
+
 # Single Mamba module
 class SingleMambaBlock(nn.Module):
     def __init__(self, dim, H, W, shared_block=None, scale_init=1.0):
@@ -1137,41 +1159,3 @@ class CrossModalHyperMamba(nn.Module):
         y2 = identity2 + gate2 * x_m
 
         return y1, y2
-
-
-class FourInputFusionBlock(nn.Module):
-    def __init__(self, in_channels=1024, use_attn=True):
-        super().__init__()
-        if isinstance(in_channels, int):
-            in_channels = [in_channels] * 3
-        assert len(in_channels) == 3
-
-        c = min(in_channels)  # The channel is compressed to 1/4
-        self.proj = nn.ModuleList(
-            [nn.Sequential(nn.Conv2d(ic, c, 1, bias=False), nn.BatchNorm2d(c), nn.SiLU()) for ic in in_channels]
-        )
-
-        # Learnable fusion weights (lighter than concat)
-        self.weights = nn.Parameter(torch.ones(3, dtype=torch.float32))
-        self.post = GhostConv(c, c, k=3, p=1)
-
-        # attentation
-        self.attn = ECABlock(c) if use_attn else nn.Identity()
-
-        self.out_bn = nn.BatchNorm2d(c)
-
-    def forward(self, x):
-        x1 = x[0]
-        x2 = x[1]
-        x3 = x[2]
-
-        xs = [proj(inp) for proj, inp in zip(self.proj, (x1, x2, x3))]
-
-        # Weighted Fusion (Adaptive Scaling)
-        w = torch.softmax(self.weights, dim=0)
-        feat = sum(w[i] * xs[i] for i in range(3))
-
-        out = self.post(feat)
-        out = self.attn(out)
-        out = self.out_bn(out)
-        return out

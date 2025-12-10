@@ -80,9 +80,9 @@ class COMONet(BaseNet):
                     "C2f_p4": C2f(128 * 3, 128, n=1, shortcut=False),
                     "Conv_p4_to_p3": Conv(128, 64, 1, 1),
                     "C2f_p3": C2f(64 * 3, 64, n=1, shortcut=False),
-                    # PAN
+                    # PAN`
                     "Conv_p3_down": Conv(64, 64, 3, 2),
-                    "C2f_pan_p4": C2f(64 * 2, 128, n=1, shortcut=False),
+                    "C2f_pan_p4": C2f(64 * 3, 128, n=1, shortcut=False),
                     "Conv_p4_down": Conv(128, 128, 3, 2),
                     "C2f_pan_p5": C2f(128 + 256, 256, n=1, shortcut=False),
                 }
@@ -125,24 +125,25 @@ class COMONet(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # multi modal fusion
-                    "FusionMamba": FusionMamba(256, 8, 8),  # 20: from [P5_img, P5_ir]
-                    "FourInputFusionBlock": FourInputFusionBlock(256),  # 21
+                    "FusionMamba": FusionMamba(512, 512, 8, 8),  # 20: from [P5_img, P5_ir]
+                    "FourInputFusionBlock": FourInputFusionBlock(512),  # 21
                     # common ops
                     "Concat": Concat(1),
                     "Upsample": nn.Upsample(scale_factor=2, mode="nearest"),
-                    # FPN / PAN
-                    "Conv_1": Conv(128, 128, 1, 1),
-                    "C2f_1": C2f(128 * 3, 128, n=1, shortcut=False),
-                    "Conv_2": Conv(128, 64, 1, 1),
-                    "C2f_2": C2f(64 * 3, 64, n=1, shortcut=False),
-                    "Conv_3": Conv(64, 64, 3, 2),
-                    "C2f_3": C2f(64 + 64, 128, n=1, shortcut=False),
-                    "Conv_4": Conv(128, 128, 3, 2),
-                    "C2f_4": C2f(128 + 256, 256, n=1, shortcut=False),
+                    # FPN
+                    "Conv_fuse_p5": Conv(512, 256, 1, 1),
+                    "C2f_p4": C2f(256 * 3, 256, n=1, shortcut=False),
+                    "Conv_p4_to_p3": Conv(256, 128, 1, 1),
+                    "C2f_p3": C2f(128 * 3, 128, n=1, shortcut=False),
+                    # PAN`
+                    "Conv_p3_down": Conv(128, 128, 3, 2),
+                    "C2f_pan_p4": C2f(128 * 3, 256, n=1, shortcut=False),
+                    "Conv_p4_down": Conv(256, 256, 3, 2),
+                    "C2f_pan_p5": C2f(256 + 512, 512, n=1, shortcut=False),
                 }
             )
             # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 1024))
+            self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
         elif self.net_scale == "m":
             # img backbone
