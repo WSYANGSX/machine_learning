@@ -9,17 +9,11 @@ from machine_learning.modules.blocks import (
     CHyperACE,
     MMFullPAD_Tunnel,
     ModalFuseSE,
-    Conv,
-    DSC3k2,
-    DSConv,
-    A2C2f,
     HyperACE,
     DownsampleConv,
     FullPAD_Tunnel,
-    C2f,
-    SPPF,
 )
-from ultralytics.nn.modules import Concat
+from ultralytics.nn.modules import Conv, Concat, DSC3k2, DSConv, A2C2f, C2f, SPPF
 
 
 class MMICNet(BaseNet):
@@ -756,7 +750,7 @@ class MMICNet_with_v8_backbone(BaseNet):
         det1 = f4 = self.neck.MMFullPAD_Tunnel_4(
             [
                 d2,
-                self.neck.Conv_1_1(img_enhanced[0]),  # 是否分开Conv？
+                self.neck.Conv_1_1(img_enhanced[0]),
                 self.neck.Conv_1_2(ir_enhanced[0]),
                 self.neck.Conv_1_3(fuse_enhanced[0]),
             ]
