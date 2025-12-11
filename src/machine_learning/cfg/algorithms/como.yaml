@@ -62,7 +62,7 @@ net:
 
 data:
   fraction: 1
-  pin_memory: True
+  pin_memory: False
   single_cls: False
   rect: False
   stride: 32

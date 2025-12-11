@@ -237,12 +237,12 @@ class BaseNet(nn.Module, ABC):
                         nn.GroupNorm: None,  # skip GroupNorm
                     },
                 )
-                flops_formatted, _ = clever_format([flops, params], "%.3f")
-                print(f"Total params: {total_params:,}, gradients: {trainable:,}, FLOPs: {flops_formatted}\n")
+                flops_formatted, _ = clever_format([flops * 3, params], "%.3f")
+                print(f"Total params: {total_params:,}, gradients: {trainable:,}, MACs: {flops_formatted}\n")
             except Exception as e:
                 print(f"Total params: {total_params:,}, gradients: {trainable:,}")
-                print(f"FLOPs calculation failed: {e}\n")
+                print(f"MACs calculation failed: {e}\n")
         else:
             print(f"Total params: {total_params:,}, gradients: {trainable:,}")
             if not thop_available:
-                print("Install 'thop' for FLOPs calculation: pip install thop\n")
+                print("Install 'thop' for MACs calculation: pip install thop\n")

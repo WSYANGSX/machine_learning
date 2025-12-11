@@ -1177,6 +1177,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            hyp.cutmix = hyp.cutmix if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox((self.imgsz, self.imgsz), scaleup=False)])
@@ -1198,9 +1199,10 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
     def close_mosaic(self):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
         hyp = deepcopy(self.hyp)
-        hyp.mosaic = 0.0  # set mosaic ratio=0.0
-        hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
-        hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp.mosaic = 0.0
+        hyp.copy_paste = 0.0
+        hyp.mixup = 0.0
+        hyp.cutmix = 0.0
         self.transforms = self.build_transforms(hyp)
 
     def collate_fn(self, batch):

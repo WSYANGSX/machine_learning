@@ -87,7 +87,7 @@ class COMONet(BaseNet):
                     "C2f_p3": C2f(64 * 3, 64, n=1, shortcut=False),
                     # PAN`
                     "Conv_p3_down": Conv(64, 64, 3, 2),
-                    "C2f_pan_p4": C2f(64 + 128, 128, n=1, shortcut=False),
+                    "C2f_pan_p4": C2f(128, 128, n=1, shortcut=False),
                     "Conv_p4_down": Conv(128, 128, 3, 2),
                     "C2f_pan_p5": C2f(128 + 256, 256, n=1, shortcut=False),
                 }
