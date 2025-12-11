@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from machine_learning.networks import BaseNet
 
@@ -41,15 +42,12 @@ class AENet(BaseNet):
             nn.Sigmoid(),
         )
 
+    @property
+    def dummy_input(self) -> torch.Tensor:
+        return (1, 1, self.img_size, self.img_size)
+
     def forward(self, x):
         y = self.encoder(x)
         y = self.decoder(y)
 
         return y
-
-    def view_structure(self):
-        super().view_structure()
-
-        from torchinfo import summary
-
-        summary(self, input_size=(1, 1, self.img_size, self.img_size))

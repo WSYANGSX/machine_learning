@@ -3,6 +3,11 @@ from typing import Literal, Any
 import torch
 import torch.nn as nn
 
+try:
+    from thop import profile  # pip install thop
+except ImportError:
+    profile = None
+
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import FusionMamba, FourInputFusionBlock
@@ -309,6 +314,12 @@ class COMONet(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 1024))
 
+    @property
+    def dummy_input(self) -> tuple[torch.Tensor]:
+        dummy_img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        dummy_ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        return dummy_img_input, dummy_ir_input
+
     def _rgb_forward_backbone(self, x: torch.Tensor):
         x0 = self.img_backbone["Conv_0"](x)
         x1 = self.img_backbone["Conv_1"](x0)
@@ -335,24 +346,6 @@ class COMONet(BaseNet):
         x9 = self.ir_backbone["SPPF_9"](x8)  # P5_ir
         return x4, x6, x9
 
-    def view_structure(self) -> None:
-        super().view_structure()
-
-        from torchinfo import summary
-
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-
-        # Limit depth to avoid expand the detailed list of recursive modules
-        # Looking only at the main hierarchy and parameters
-        summary(
-            self,
-            input_data=[img_input, ir_input],
-            depth=1,
-            col_names=("input_size", "output_size", "num_params", "trainable"),
-            row_settings=("depth",),
-        )
-
     def _initialize_weights(self):
         for m in self.modules():
             t = type(m)
@@ -368,10 +361,8 @@ class COMONet(BaseNet):
         self.head.bias_init()
 
     def _initialize_strides(self):
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         self.stride = torch.tensor(
-            [self.imgsz / x.shape[-2] for x in self.forward(img_input, ir_input)], dtype=torch.int8, device=self.device
+            [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
         self.head.stride = self.stride
 
