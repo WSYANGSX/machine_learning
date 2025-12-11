@@ -62,6 +62,7 @@ net:
   channels: 3
 
 data:
+  augment: True
   fraction: 1
   pin_memory: True
   single_cls: False

@@ -150,9 +150,6 @@ class MultimodalDetection(AlgorithmBase):
             self.warmup(batches, epoch)
 
             # load data
-            imgs = batch["img"].permute(0, 2, 3, 1).cpu().numpy()
-            plot_imgs([imgs[i] for i in range(len(imgs))])
-
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
             irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
