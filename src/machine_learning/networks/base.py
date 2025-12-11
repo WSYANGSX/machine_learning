@@ -49,11 +49,12 @@ class BaseNet(nn.Module, ABC):
         # 检查thop是否可用
         try:
             from thop import profile, clever_format
+            from copy import deepcopy
 
             thop_available = True
         except ImportError:
             thop_available = False
-            print("Note: Install 'thop' for FLOPs calculation: pip install thop")
+            LOGGER.warning("Please install 'thop' for FLOPs calculation: pip install thop")
 
         records = []
         tensor_to_idx: dict[int, int] = {}  # id(tensor) -> layer_idx
@@ -184,35 +185,50 @@ class BaseNet(nn.Module, ABC):
         # Run forward propagation
         self.eval()
         with torch.no_grad():
-            _ = self.forward(*tuple(self.dummy_input) if hasattr(self, "dummy_input") else None)
+            if hasattr(self, "dummy_input"):
+                dummy_input = self.dummy_input
+                if isinstance(dummy_input, tuple):
+                    _ = self.forward(*dummy_input)
+                elif isinstance(dummy_input, dict):
+                    _ = self.forward(**dummy_input)
+                else:
+                    _ = self.forward(dummy_input)
+            else:
+                LOGGER.warning("Model has no dummy_input attribute, skipping forward pass")
+                return records
 
         # Remove Hooks
         for h in hooks:
             h.remove()
 
         # Calculate alignment width
-        idxs, names, mtypes, shapes, n_params, froms = zip(*records)
-        idx_len = max(max(len(str(id)) for id in idxs), 3)
-        from_len = max(len(str(f)) for f in froms) if froms else 5
-        name_len = max(len(str(name)) for name in names) + 3
-        mtype_len = max(len(str(mtype)) for mtype in mtypes) + 3
-        shape_len = max(len(str(shape)) for shape in shapes) + 3
-        param_len = max(len(str(param)) for param in n_params) + 3
+        if records:
+            idxs, names, mtypes, shapes, n_params, froms = zip(*records)
+            idx_len = max(max(len(str(id)) for id in idxs), 3)
+            from_len = max(len(str(f)) for f in froms) if froms else 5
+            name_len = max(len(str(name)) for name in names) + 3
+            mtype_len = max(len(str(mtype)) for mtype in mtypes) + 3
+            shape_len = max(len(str(shape)) for shape in shapes) + 3
+            param_len = max(len(str(param)) for param in n_params) + 3
 
-        # Print the table header
-        print(
-            f"{'idx':>{idx_len}} {'from':>{from_len}} {'name':>{name_len}} {'type':>{mtype_len}}"
-            f" {'output':>{shape_len}} {'params':>{param_len}}"
-        )
-
-        # Print Record
-        for idx, name, mtype, shape, n_param, f in records:
-            # Format the from field
-            from_str = "-1" if not f else str(f[0]) if len(f) == 1 else str(f)
+            # Print the table header
             print(
-                f"{idx:>{idx_len}} {from_str:>{from_len}} {name:>{name_len}} {mtype:>{mtype_len}}"
-                f" {str(shape):>{shape_len}} {n_param:>{param_len}d}"
+                f"{'idx':>{idx_len}} {'from':>{from_len}} {'name':>{name_len}} {'type':>{mtype_len}}"
+                f" {'output':>{shape_len}} {'params':>{param_len}}"
             )
+
+            # Print Record
+            for idx, name, mtype, shape, n_param, f in records:
+                # Format the from field
+                from_str = "-1" if not f else str(f[0]) if len(f) == 1 else str(f)
+                print(
+                    f"{idx:>{idx_len}} {from_str:>{from_len}} {name:>{name_len}} {mtype:>{mtype_len}}"
+                    f" {str(shape):>{shape_len}} {n_param:>{param_len}d}"
+                )
+
+        else:
+            print("No records to display.")
+            return records
 
         # Statistics of total parameters
         total_params = sum(p.numel() for p in self.parameters())
@@ -225,24 +241,39 @@ class BaseNet(nn.Module, ABC):
                 dummy_input = self.dummy_input
                 if isinstance(dummy_input, tuple):
                     inputs_for_thop = dummy_input
+                elif isinstance(dummy_input, dict):
+                    inputs_for_thop = tuple(dummy_input.values())
                 else:
                     inputs_for_thop = (dummy_input,)
 
-                flops, params = profile(
-                    self,
+                macs, params = profile(
+                    deepcopy(self),
                     inputs=inputs_for_thop,
                     verbose=False,
                     custom_ops={
-                        nn.LayerNorm: None,  # skip LayerNorm
-                        nn.GroupNorm: None,  # skip GroupNorm
+                        nn.LayerNorm: None,
+                        nn.GroupNorm: None,
+                        nn.InstanceNorm1d: None,
+                        nn.InstanceNorm2d: None,
+                        nn.InstanceNorm3d: None,
                     },
                 )
+                macs_formatted, params_formatted = clever_format([macs, params], "%.3f")
+                # 估算FLOPs（MACs × 2）
+                flops = macs * 2
                 flops_formatted, _ = clever_format([flops, params], "%.3f")
-                print(f"Total params: {total_params:,}, gradients: {trainable:,}, MACs: {flops_formatted}\n")
+
+                print(f"\nTotal params: {total_params:,}")
+                print(f"Trainable params: {trainable:,}")
+                print(f"Non-trainable params: {total_params - trainable:,}")
+                print(f"MACs (Multiply-Accumulates): {macs_formatted}")
+                print(f"FLOPs (estimated): {flops_formatted}.")
+
             except Exception as e:
-                print(f"Total params: {total_params:,}, gradients: {trainable:,}")
-                print(f"MACs calculation failed: {e}\n")
+                print(f"\nTotal params: {total_params:,}, Trainable params: {trainable:,}")
+                print(f"MACs/FLOPs calculation failed: {e}.")
+
         else:
-            print(f"Total params: {total_params:,}, gradients: {trainable:,}")
+            print(f"\nTotal params: {total_params:,}, Trainable params: {trainable:,}")
             if not thop_available:
-                print("Install 'thop' for MACs calculation: pip install thop\n")
+                print("Install 'thop' for MACs calculation: pip install thop.")
