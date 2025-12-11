@@ -151,7 +151,6 @@ class MultimodalDetection(AlgorithmBase):
 
             # load data
             imgs = batch["img"].permute(0, 2, 3, 1).cpu().numpy()
-            bboxes = yolo2voc(batch["bboxes"], imgs.shape[2], imgs.shape[2])
             plot_imgs([imgs[i] for i in range(len(imgs))])
 
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
