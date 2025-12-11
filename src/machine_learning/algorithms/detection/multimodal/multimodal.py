@@ -26,6 +26,8 @@ from machine_learning.utils.detection import (
     rescale_bboxes,
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
+from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
+from machine_learning.utils.plots import plot_imgs
 
 
 class MultimodalDetection(AlgorithmBase):
@@ -148,6 +150,10 @@ class MultimodalDetection(AlgorithmBase):
             self.warmup(batches, epoch)
 
             # load data
+            imgs = batch["img"].permute(0, 2, 3, 1).cpu().numpy()
+            bboxes = yolo2voc(batch["bboxes"], imgs.shape[2], imgs.shape[2])
+            plot_imgs([imgs[i] for i in range(len(imgs))])
+
             imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
             irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
@@ -189,6 +195,15 @@ class MultimodalDetection(AlgorithmBase):
         if hasattr(self.train_loader.dataset, "close_mosaic"):
             LOGGER.info("Closing dataloader mosaic")
             self.train_loader.dataset.close_mosaic()
+
+            self.train_loader = torch.utils.data.DataLoader(
+                self.train_loader.dataset,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.train_loader.num_workers,
+                pin_memory=self.train_loader.pin_memory,
+                collate_fn=self.train_loader.collate_fn,
+            )
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
