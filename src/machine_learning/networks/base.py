@@ -108,7 +108,7 @@ class BaseNet(nn.Module, ABC):
         if use_ema:
             with self.ema_scope():
                 return self._forward_impl(*args, **kwargs)
-            print(1)
+
         else:
             return self._forward_impl(*args, **kwargs)
 
