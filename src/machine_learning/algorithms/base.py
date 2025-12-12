@@ -521,7 +521,6 @@ class AlgorithmBase(ABC):
             "cfg": self.cfg,
             "best_loss": best_loss,
             "nets": {},
-            "net_ema_states": {},  # save EMA states
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
@@ -533,16 +532,8 @@ class AlgorithmBase(ABC):
 
         # save the nets' parameters
         for key, net in self.nets.items():
-            state["nets"][key] = net.state_dict(include_ema=False)  # not include EMA
-
-            if hasattr(net, "ema_enabled") and net.ema_enabled:
-                ema_state = net.state_dict(include_ema=True)
-                state["net_ema_states"][key] = {
-                    "ema_state": ema_state.get("ema_state"),
-                    "ema_config": ema_state.get("ema_config"),
-                    "ema_enabled": ema_state.get("ema_enabled"),
-                }
-                LOGGER.info(f"Saved EMA state for network {net.__class__.__name__}.")
+            state["nets"][key] = net.state_dict(include_ema=True)  # include EMA
+            LOGGER.info(f"Saved EMA state for network {net.__class__.__name__}.")
 
         # save the optimizers' parameters
         for key, optimizer in self.optimizers.items():
@@ -563,12 +554,6 @@ class AlgorithmBase(ABC):
         "Load checkpoint."
         state = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
-        # Check if it is an EMA separate model
-        is_ema_model = state.get("is_ema_model", False)
-        if is_ema_model:
-            LOGGER.warning(f"Loading EMA model from {checkpoint}")
-            return self._load_ema_model(state)
-
         # cfg
         self._cfg = state["cfg"]  # include dataset, trainer
         self._dataset_cfg = self._cfg["data"].get("dataset", {})
@@ -583,13 +568,19 @@ class AlgorithmBase(ABC):
                 LOGGER.warning(f"Network '{key}' not found in checkpoint, skipping.")
                 continue
 
+            net_state = dict(state["nets"][key])
+            ema_state = net_state.get("ema_state", None)
+
+            if not load_ema:
+                net_state.pop("ema_state", None)
+                net_state.pop("ema_config", None)
+                net_state.pop("ema_enabled", None)
+
             net.load_state_dict(state["nets"][key], strict=True)
             net.to(self.device)
 
-            ema_data = state.get("net_ema_states", {}).get(key, None)
-
-            if use_ema_as_weights and ema_data is not None:
-                shadow = ema_data["ema_state"]["shadow"]
+            if use_ema_as_weights and ema_state is not None:
+                shadow = ema_state.get("shadow", {})
                 with torch.no_grad():
                     for name, param in net.named_parameters():
                         if param.requires_grad and name in shadow:
@@ -599,20 +590,6 @@ class AlgorithmBase(ABC):
                     net._ema = None
                 if hasattr(net, "_ema_enabled"):
                     net._ema_enabled = False
-
-            elif load_ema and ema_data is not None and getattr(net, "ema_enabled", False):
-                net.load_state_dict(
-                    {
-                        "ema_state": ema_data.get("ema_state"),
-                        "ema_config": ema_data.get("ema_config"),
-                        "ema_enabled": ema_data.get("ema_enabled", True),
-                    },
-                    strict=False,
-                )
-                LOGGER.info(
-                    f"Loaded EMA state for network '{key}' "
-                    f"(updates: {ema_data.get('ema_state', {}).get('updates', 0)})."
-                )
 
         # load the optimizers' parameters
         for key, optimizer in self.optimizers.items():

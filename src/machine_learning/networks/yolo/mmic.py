@@ -293,7 +293,7 @@ class MMICNet(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-    def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
+    def _forward_impl(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
         for key, layer in self.img_backbone.items():
@@ -685,7 +685,7 @@ class MMICNet_with_v8_backbone(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
-    def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
+    def _forward_impl(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
         for key, layer in self.img_backbone.items():
