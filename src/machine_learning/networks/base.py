@@ -75,7 +75,9 @@ class BaseNet(nn.Module, ABC):
             decay=self._ema_config["decay"],
             tau=self._ema_config["tau"],
         )
-        LOGGER.info(f"EMA enabled for {self.__class__.__name__} (decay={self._ema_config['decay']}, tau={self._ema_config['tau']}).")
+        LOGGER.info(
+            f"EMA enabled for {self.__class__.__name__} (decay={self._ema_config['decay']}, tau={self._ema_config['tau']})."
+        )
 
     def disable_ema(self) -> None:
         """Disable EMA tracking."""
@@ -106,6 +108,7 @@ class BaseNet(nn.Module, ABC):
         if use_ema:
             with self.ema_scope():
                 return self._forward_impl(*args, **kwargs)
+            print(1)
         else:
             return self._forward_impl(*args, **kwargs)
 
