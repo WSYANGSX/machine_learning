@@ -23,6 +23,7 @@ class MMICNet(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
+        ema: bool = True,
         *args,
         **kwargs,
     ):
@@ -366,16 +367,6 @@ class MMICNet(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def view_structure(self) -> None:
-        super().view_structure()
-
-        from torchinfo import summary
-
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-
-        summary(self, input_data=[img_input, ir_input])
-
     def _initialize_weights(self):
         for m in self.modules():
             t = type(m)
@@ -389,6 +380,9 @@ class MMICNet(BaseNet):
 
         self._initialize_strides()
         self.head.bias_init()
+
+        if self.ema_enabled and self._ema is not None:
+            self._ema.update(self, False)
 
     def _initialize_strides(self):
         img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
@@ -406,6 +400,7 @@ class MMICNet_with_v8_backbone(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
+        ema: bool = True,
         *args,
         **kwargs,
     ):
@@ -764,16 +759,6 @@ class MMICNet_with_v8_backbone(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def view_structure(self) -> None:
-        super().view_structure()
-
-        from torchinfo import summary
-
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-
-        summary(self, input_data=[img_input, ir_input])
-
     def _initialize_weights(self):
         for m in self.modules():
             t = type(m)
@@ -787,6 +772,9 @@ class MMICNet_with_v8_backbone(BaseNet):
 
         self._initialize_strides()
         self.head.bias_init()
+
+        if self.ema_enabled and self._ema is not None:
+            self._ema.update(self, False)
 
     def _initialize_strides(self):
         img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)

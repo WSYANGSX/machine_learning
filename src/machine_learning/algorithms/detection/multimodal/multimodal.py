@@ -192,15 +192,6 @@ class MultimodalDetection(AlgorithmBase):
             LOGGER.info("Closing dataloader mosaic")
             self.train_loader.dataset.close_mosaic()
 
-            self.train_loader = torch.utils.data.DataLoader(
-                self.train_loader.dataset,
-                batch_size=self.batch_size,
-                shuffle=True,
-                num_workers=self.train_loader.num_workers,
-                pin_memory=self.train_loader.pin_memory,
-                collate_fn=self.train_loader.collate_fn,
-            )
-
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         super().validate()

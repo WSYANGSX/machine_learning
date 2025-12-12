@@ -2,8 +2,8 @@ from typing import Literal, Mapping, Any
 
 import os
 from tqdm import tqdm
-from abc import ABC, abstractmethod
 from numbers import Integral, Real
+from abc import ABC, abstractmethod
 
 import torch
 from torch.amp import GradScaler
@@ -16,12 +16,7 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.networks import BaseNet, NET_MAPS
 from machine_learning.utils import get_gpu_mem, load_cfg
 from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
-from machine_learning.data.dataset import (
-    ParserBase,
-    PARSER_MAPS,
-    build_dataset,
-    build_dataloader,
-)
+from machine_learning.data.dataset import ParserBase, PARSER_MAPS, build_dataset, build_dataloader
 
 
 class AlgorithmBase(ABC):
@@ -209,6 +204,7 @@ class AlgorithmBase(ABC):
         else:
             LOGGER.info("No outside net provided, building net from default configuration...")
             if issubclass(NET_MAPS[self.name], BaseNet):
+                LOGGER.info(f"Adding network {net.__class__.__name__}...")
                 self.net = NET_MAPS[self.name](**self.flatten_cfg)
                 self._add_net("net", self.net)
 
@@ -220,7 +216,6 @@ class AlgorithmBase(ABC):
             self.cfg[name].update(cfg)
 
     def _add_net(self, name: str, net: BaseNet) -> None:
-        LOGGER.info(f"Adding network {net.__class__.__name__}...")
         self._nets.update({name: net})
 
     def _add_optimizer(self, name: str, optimizer: Optimizer) -> None:
@@ -500,6 +495,9 @@ class AlgorithmBase(ABC):
             else:
                 self.optimizer.step()
 
+            for net in self.nets.values():
+                net.ema_update()  # Update EMA on the Internet by itself
+
             self.optimizer.zero_grad()
             self.last_opt_step = batches
 
@@ -510,19 +508,20 @@ class AlgorithmBase(ABC):
     @abstractmethod
     def eval(self, *args, **kwargs) -> None:
         """
-        Evaluate the model of the algorithm
+        Evaluate the model of the algorithm.
 
         The parameters change according to the specific implementation logic of the subclass
         """
         pass
 
     def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str, ckpt_dir: str) -> None:
-        """Save checkpoint"""
+        """Save checkpoint."""
         state = {
             "epoch": epoch,
             "cfg": self.cfg,
-            "best loss": best_loss,
+            "best_loss": best_loss,
             "nets": {},
+            "net_ema_states": {},  # save EMA states
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
@@ -530,15 +529,24 @@ class AlgorithmBase(ABC):
         }
 
         for key, val in val_info.items():
-            state.update({key: val})
+            state[key] = val
 
         # save the nets' parameters
-        for key, val in self.nets.items():
-            state["nets"].update({key: val.state_dict()})
+        for key, net in self.nets.items():
+            state["nets"][key] = net.state_dict(include_ema=False)  # not include EMA
+
+            if hasattr(net, "ema_enabled") and net.ema_enabled:
+                ema_state = net.state_dict(include_ema=True)
+                state["net_ema_states"][key] = {
+                    "ema_state": ema_state.get("ema_state"),
+                    "ema_config": ema_state.get("ema_config"),
+                    "ema_enabled": ema_state.get("ema_enabled"),
+                }
+                LOGGER.info(f"Saved EMA state for network {net.__class__.__name__}.")
 
         # save the optimizers' parameters
-        for key, val in self.optimizers.items():
-            state["optimizers"].update({key: val.state_dict()})
+        for key, optimizer in self.optimizers.items():
+            state["optimizers"][key] = optimizer.state_dict()
 
         # save the schedulers' parameters
         if hasattr(self, "schedulers"):
@@ -549,46 +557,105 @@ class AlgorithmBase(ABC):
             state["scaler"] = self.scaler.state_dict()
 
         torch.save(state, save_path)
-        LOGGER.info(f"Saved checkpoint to {save_path}")
+        LOGGER.info(f"Saved checkpoint to {save_path}.")
 
-    def load(self, checkpoint: str) -> dict:
-        state = torch.load(checkpoint, weights_only=False)
+    def load(self, checkpoint: str, use_ema_as_weights: bool = False, load_ema: bool = True) -> dict[str, Any]:
+        "Load checkpoint."
+        state = torch.load(checkpoint, map_location=self.device, weights_only=False)
+
+        # Check if it is an EMA separate model
+        is_ema_model = state.get("is_ema_model", False)
+        if is_ema_model:
+            LOGGER.warning(f"Loading EMA model from {checkpoint}")
+            return self._load_ema_model(state)
 
         # cfg
         self._cfg = state["cfg"]  # include dataset, trainer
         self._dataset_cfg = self._cfg["data"].get("dataset", {})
         self._trainer_cfg = self._cfg["data"].get("trainer", {})
 
-        self.last_opt_step = state["last_opt_step"]
-        self.amp = state["amp"]
+        self.last_opt_step = state.get("last_opt_step", -1)
+        self.amp = state.get("amp", False)
 
         # load the nets' parameters
-        for key, val in self.nets.items():
-            val.load_state_dict(state["nets"][key])
-            val.to(self.device)
+        for key, net in self.nets.items():
+            if key not in state["nets"]:
+                LOGGER.warning(f"Network '{key}' not found in checkpoint, skipping.")
+                continue
+
+            net.load_state_dict(state["nets"][key], strict=True)
+            net.to(self.device)
+
+            ema_data = state.get("net_ema_states", {}).get(key, None)
+
+            if use_ema_as_weights and ema_data is not None:
+                shadow = ema_data["ema_state"]["shadow"]
+                with torch.no_grad():
+                    for name, param in net.named_parameters():
+                        if param.requires_grad and name in shadow:
+                            param.data.copy_(shadow[name].to(param.device))
+                # For reasoning purposes, EMA will no longer be maintained
+                if hasattr(net, "_ema"):
+                    net._ema = None
+                if hasattr(net, "_ema_enabled"):
+                    net._ema_enabled = False
+
+            elif load_ema and ema_data is not None and getattr(net, "ema_enabled", False):
+                net.load_state_dict(
+                    {
+                        "ema_state": ema_data.get("ema_state"),
+                        "ema_config": ema_data.get("ema_config"),
+                        "ema_enabled": ema_data.get("ema_enabled", True),
+                    },
+                    strict=False,
+                )
+                LOGGER.info(
+                    f"Loaded EMA state for network '{key}' "
+                    f"(updates: {ema_data.get('ema_state', {}).get('updates', 0)})."
+                )
 
         # load the optimizers' parameters
-        for key, val in self.optimizers.items():
-            val.load_state_dict(state["optimizers"][key])
+        for key, optimizer in self.optimizers.items():
+            if key in state.get("optimizers", {}):
+                try:
+                    optimizer.load_state_dict(state["optimizers"][key])
+                    LOGGER.debug(f"Loaded optimizer '{key}' state.")
+                except Exception as e:
+                    LOGGER.warning(f"Error loading optimizer '{key}': {e}.")
+            else:
+                LOGGER.warning(f"Optimizer '{key}' not found in checkpoint.")
 
         # load the schedulers' parameters
-        if hasattr(self, "schedulers"):
+        if hasattr(self, "schedulers") and "schedulers" in state:
             for key, scheduler in self.schedulers.items():
-                if key in state.get("schedulers", {}):
-                    scheduler.load_state_dict(state["schedulers"][key])
+                if key in state["schedulers"]:
+                    try:
+                        scheduler.load_state_dict(state["schedulers"][key])
+                        LOGGER.debug(f"Loaded scheduler '{key}' state.")
+                    except Exception as e:
+                        LOGGER.warning(f"Error loading scheduler '{key}': {e}.")
+                else:
+                    LOGGER.debug(f"Scheduler '{key}' not found in checkpoint.")
 
-        if self.amp:
-            if self.scaler is not None:
+        if "scaler" in state:
+            if self.amp:
                 self.scaler.load_state_dict(state["scaler"])
+                LOGGER.debug("Loaded AMP scaler state.")
             else:
-                LOGGER.warning("Enable AMP to overwrite the current Settings based on checkpoint configuration.")
+                LOGGER.warning("Checkpoint has AMP scaler but current AMP is disabled, ignoring scaler.")
+        elif self.amp:
+            LOGGER.warning("AMP enabled but checkpoint has no scaler, use new scaler.")
+            if self.scaler is None:
                 self.scaler = GradScaler()
-                self.scaler.load_state_dict(state["scaler"])
-        else:
-            if self.scaler is not None:
-                LOGGER.warning(
-                    "The checkpoint does not require AMP, overwrites its Settings and releases the current scaler."
-                )
-                self.scaler = None
+
+        if is_ema_model:
+            self.set_eval()
+            LOGGER.info("EMA model loaded, network set to evaluation mode.")
+
+        LOGGER.info(f"Successfully loaded checkpoint from {checkpoint}.")
+        if "epoch" in state:
+            LOGGER.info(f"Checkpoint epoch: {state['epoch']}.")
+        if "best_loss" in state:
+            LOGGER.info(f"Checkpoint best loss: {state['best_loss']:.4f}.")
 
         return state
