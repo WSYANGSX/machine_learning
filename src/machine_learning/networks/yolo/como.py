@@ -361,9 +361,6 @@ class COMONet(BaseNet):
         self._initialize_strides()
         self.head.bias_init()
 
-        if self.ema_enabled and self._ema is not None:
-            self._ema.update(self, False)
-
     def _initialize_strides(self):
         self.stride = torch.tensor(
             [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device

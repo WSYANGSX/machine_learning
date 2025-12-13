@@ -26,14 +26,12 @@ class BaseNet(nn.Module, ABC):
 
         self._ema_enabled = ema
         if self._ema_enabled:
-            LOGGER.info(f"EMA enabled of {self.__class__.__name__}.")
             self._ema = ModelEMA(
                 self,
                 decay=self._ema_config["decay"],
                 tau=self._ema_config["tau"],
             )
         else:
-            LOGGER.info(f"EMA disabled of {self.__class__.__name__}.")
             self._ema = None
 
     @property

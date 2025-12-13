@@ -34,7 +34,7 @@ class MMICNet(BaseNet):
             ir_shape (Sequence[int]): the shape of input ir image.
             num_classes (int): number of classes.
         """
-        super().__init__(args=args, kwargs=kwargs)
+        super().__init__(args=args, ema=ema, kwargs=kwargs)
 
         self.imgsz = imgsz
         self.nc = nc
@@ -293,6 +293,12 @@ class MMICNet(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
+    @property
+    def dummy_input(self) -> tuple[torch.Tensor]:
+        dummy_img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        dummy_ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        return dummy_img_input, dummy_ir_input
+
     def _forward_impl(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
@@ -381,14 +387,9 @@ class MMICNet(BaseNet):
         self._initialize_strides()
         self.head.bias_init()
 
-        if self.ema_enabled and self._ema is not None:
-            self._ema.update(self, False)
-
     def _initialize_strides(self):
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         self.stride = torch.tensor(
-            [self.imgsz / x.shape[-2] for x in self.forward(img_input, ir_input)], dtype=torch.int8, device=self.device
+            [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
         self.head.stride = self.stride
 
@@ -411,7 +412,7 @@ class MMICNet_with_v8_backbone(BaseNet):
             ir_shape (Sequence[int]): the shape of input ir image.
             num_classes (int): number of classes.
         """
-        super().__init__(args=args, kwargs=kwargs)
+        super().__init__(args=args, ema=ema, kwargs=kwargs)
 
         self.imgsz = imgsz
         self.nc = nc
@@ -685,6 +686,12 @@ class MMICNet_with_v8_backbone(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
+    @property
+    def dummy_input(self) -> tuple[torch.Tensor]:
+        dummy_img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        dummy_ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
+        return dummy_img_input, dummy_ir_input
+
     def _forward_impl(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
@@ -773,13 +780,8 @@ class MMICNet_with_v8_backbone(BaseNet):
         self._initialize_strides()
         self.head.bias_init()
 
-        if self.ema_enabled and self._ema is not None:
-            self._ema.update(self, False)
-
     def _initialize_strides(self):
-        img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
         self.stride = torch.tensor(
-            [self.imgsz / x.shape[-2] for x in self.forward(img_input, ir_input)], dtype=torch.int8, device=self.device
+            [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
         self.head.stride = self.stride

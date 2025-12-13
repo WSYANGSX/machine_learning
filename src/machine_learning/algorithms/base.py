@@ -75,7 +75,8 @@ class AlgorithmBase(ABC):
         train_cfg: dict[str, Any],
         dataset: str | Mapping[str, Any],
     ) -> None:
-        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the dataset_cfg and trainer_cfg are created here."""
+        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the
+        dataset cfg and trainer cfg are created here."""
         self._add_cfg("trainer", train_cfg)
         self._trainer_cfg = train_cfg
         self.epochs = train_cfg.get("epochs")
@@ -322,6 +323,11 @@ class AlgorithmBase(ABC):
             net.to(self._device)
             if self.cfg["net"]["initialize_weights"]:
                 net._initialize_weights()
+                if net.enable_ema and net.ema is not None:
+                    net.ema.update(net, record=False)
+                    LOGGER.info(f"EMA enabled of {net.__class__.__name__}.")
+                else:
+                    LOGGER.info(f"EMA disabled of {net.__class__.__name__}.")
             net.view_structure()
 
     def _init_amp(self, amp: bool | None = None) -> None:
@@ -533,7 +539,6 @@ class AlgorithmBase(ABC):
         # save the nets' parameters
         for key, net in self.nets.items():
             state["nets"][key] = net.state_dict(include_ema=True)  # include EMA
-            LOGGER.info(f"Saved EMA state for network {net.__class__.__name__}.")
 
         # save the optimizers' parameters
         for key, optimizer in self.optimizers.items():
@@ -624,10 +629,6 @@ class AlgorithmBase(ABC):
             LOGGER.warning("AMP enabled but checkpoint has no scaler, use new scaler.")
             if self.scaler is None:
                 self.scaler = GradScaler()
-
-        if is_ema_model:
-            self.set_eval()
-            LOGGER.info("EMA model loaded, network set to evaluation mode.")
 
         LOGGER.info(f"Successfully loaded checkpoint from {checkpoint}.")
         if "epoch" in state:
