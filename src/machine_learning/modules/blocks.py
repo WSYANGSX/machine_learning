@@ -721,20 +721,19 @@ class CMCAHyperACE(nn.Module):
         super().__init__()
         self.c = int(c2 * e1)
         self.cv1 = Conv(c1, 3 * self.c, 1, 1)
-        self.cv2 = Conv(c1, self.c, 1, 1)
-        self.cv3 = Conv((5 + n) * self.c, c2, 1)
+        self.cv2 = Conv((4 + n) * self.c, c2, 1)
         self.m = nn.ModuleList(
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
         self.cmca = CMCA(c1, c1)
-        self.fuse1 = ModalFuseGate(c1)
-        self.fuse2 = ModalFuseGate(c1)
+        self.fuse = ModalFuseGate(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
     def forward(self, X):
-        x = self.fuse2(X)
+        X_hat = self.cmca(X)
+        x = self.fuse(X_hat)
         y = list(self.cv1(x).chunk(3, 1))
         out1 = self.branch1(y[1])
         out2 = self.branch2(y[1])
@@ -742,11 +741,7 @@ class CMCAHyperACE(nn.Module):
         y[1] = out1
         y.append(out2)
 
-        X_hat = self.cmca(X)
-        out3 = self.cv2(self.fuse1(X_hat))
-        y.append(out3)
-
-        return self.cv3(torch.cat(y, 1))
+        return self.cv2(torch.cat(y, 1))
 
 
 class MMFullPAD_Tunnel(nn.Module):
