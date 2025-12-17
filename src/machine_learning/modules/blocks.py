@@ -593,8 +593,7 @@ class ModalFuseSE(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, X):
-        x0, x1 = X
+    def forward(self, x0, x1):
         x = torch.cat([x0, x1], dim=1)  # [B,2C,H,W]
         x = self.conv1x1(x)  # [B,C,H,W]
         w = self.attn(x)  # [B,C,1,1]
