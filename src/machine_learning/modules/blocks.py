@@ -581,10 +581,10 @@ class FullPAD_Tunnel(nn.Module):
 class ModalFuseSE(nn.Module):
     def __init__(self, c, reduction=16):
         super().__init__()
-        # 先 concat 成 2c，再用 1×1 Conv 压回 c 维
+        # Concat it to 2c, and then use 1×1 Conv to press it back to the c dimension
         self.conv1x1 = Conv(2 * c, c, k=1, s=1)
-        # 简单 SE 通道注意力
-        rc = max(c // reduction, 4)  # 防止太小
+        # Simple SE channel attention
+        rc = max(c // reduction, 4)  # Prevent it from being too small
         self.attn = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(c, rc, 1, 1, 0),
@@ -593,11 +593,12 @@ class ModalFuseSE(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, x_rgb, x_ir):
-        x = torch.cat([x_rgb, x_ir], dim=1)  # [B,2C,H,W]
+    def forward(self, X):
+        x0, x1 = X
+        x = torch.cat([x0, x1], dim=1)  # [B,2C,H,W]
         x = self.conv1x1(x)  # [B,C,H,W]
         w = self.attn(x)  # [B,C,1,1]
-        return x * w  # 通道重标定后的融合特征
+        return x * w  # The fusion features after channel recalibration
 
 
 class ModalFuseGate(nn.Module):
@@ -621,7 +622,7 @@ class ModalFuseGate(nn.Module):
         return out
 
 
-class CMCA(nn.Module):
+class M2CA(nn.Module):
     """Cross-modal channels attentation."""
 
     def __init__(self, c_in, c_out):
@@ -705,7 +706,7 @@ class CHyperACE(nn.Module):
         return self.cv2(torch.cat(y, 1))
 
 
-class CMCAHyperACE(nn.Module):
+class M2CAHyperACE(nn.Module):
     def __init__(
         self,
         c1,
@@ -726,7 +727,7 @@ class CMCAHyperACE(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
-        self.cmca = CMCA(c1, c1)
+        self.cmca = M2CA(c1, c1)
         self.fuse = ModalFuseGate(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)

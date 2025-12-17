@@ -7,7 +7,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
     CHyperACE,
-    CMCAHyperACE,
+    M2CAHyperACE,
     MMFullPAD_Tunnel,
     ModalFuseSE,
     HyperACE,
@@ -534,7 +534,7 @@ class MMICNet_with_v8_backbone(BaseNet):
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": CMCAHyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "CHyperACE": M2CAHyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
                     "Downsample_3": DownsampleConv(256),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
