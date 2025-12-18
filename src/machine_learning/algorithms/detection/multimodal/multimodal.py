@@ -26,8 +26,6 @@ from machine_learning.utils.detection import (
     rescale_bboxes,
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
-from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
-from machine_learning.utils.plots import plot_imgs
 
 
 class MultimodalDetection(AlgorithmBase):

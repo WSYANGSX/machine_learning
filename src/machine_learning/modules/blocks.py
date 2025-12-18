@@ -2,18 +2,14 @@ from typing import Sequence
 
 import math
 import torch
-import random
 import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.block import DSC3k, DSBottleneck
 from mamba_ssm.modules.mamba_simple import Mamba
 
-# ----------------------------------------------------------------------------------------------------------------------
-# ------------------------------------ The following is the local implementation  --------------------------------------
-# ----------------------------------------------------------------------------------------------------------------------
+from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.block import DSC3k, DSBottleneck
 
 
 class AttentionBlock(nn.Module):
@@ -107,39 +103,11 @@ class ResidualBlock(nn.Module):
         return self.conv2(self.conv1(x)) + x
 
 
-class MFD(nn.Module):
-    """Multimodal feature random shielding module"""
-
-    def __init__(self, p=0.15):
-        super().__init__()
-        self.p = p
-        self.alpha = 1.0 / (1.0 - 0.5 * self.p) if self.p > 0 else 1.0
-
-    def forward(self, X: Sequence[list[torch.Tensor]]):
-        if not self.training or self.p == 0:
-            return X
-
-        if torch.rand(1).item() < self.p:
-            drop_idx = random.randint(0, 1)
-            keep_idx = 1 - drop_idx
-
-            for i in range(len(X[drop_idx])):
-                X[drop_idx][i] = torch.zeros_like(X[drop_idx][i])
-
-            for i in range(len(X[keep_idx])):
-                X[keep_idx][i] = X[keep_idx][i] * self.alpha
-        else:
-            for modality in X:
-                for i in range(len(modality)):
-                    modality[i] = modality[i] * self.alpha
-
-        return X
-
-
 # --------------------------------------------- Hypergraph attentation  ------------------------------------------------
 class AdaHyperedgeGen(nn.Module):
     """
     Generates an adaptive hyperedge participation matrix from a set of vertex features.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This module implements the Adaptive Hyperedge Generation mechanism. It generates dynamic hyperedge prototypes
     based on the global context of the input nodes and calculates a continuous participation matrix (A)
@@ -216,6 +184,7 @@ class AdaHyperedgeGen(nn.Module):
 class AdaHGConv(nn.Module):
     """
     Performs the adaptive hypergraph convolution.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This module contains the two-stage message passing process of hypergraph convolution:
     1. Generates an adaptive participation matrix using AdaHyperedgeGen.
@@ -263,6 +232,7 @@ class AdaHGConv(nn.Module):
 class AdaHGComputation(nn.Module):
     """
     A wrapper module for applying adaptive hypergraph convolution to 4D feature maps.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This class makes the hypergraph convolution compatible with standard CNN architectures. It flattens a
     4D input tensor (B, C, H, W) into a sequence of vertices (tokens), applies the AdaHGConv layer to
@@ -305,6 +275,7 @@ class AdaHGComputation(nn.Module):
 class C3AH(nn.Module):
     """
     A CSP-style block integrating Adaptive Hypergraph Computation (C3AH).
+    Source: https://github.com/iMoonLab/yolov13.
 
     The input feature map is split into two paths.
     One path is processed by the AdaHGComputation module to model high-order correlations, while the other
@@ -348,6 +319,7 @@ class C3AH(nn.Module):
 class FuseModule(nn.Module):
     """
     A module to fuse multi-scale features for the HyperACE block.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This module takes a list of three feature maps from different scales, aligns them to a common
     spatial resolution by downsampling the first and upsampling the third, and then concatenates
@@ -387,66 +359,10 @@ class FuseModule(nn.Module):
         return out
 
 
-class FuseModuleSE(nn.Module):
-    """
-    A module to fuse multi-scale features for the HyperACE block.
-
-    This module takes a list of three feature maps from different scales, aligns them to a common
-    spatial resolution by downsampling the first and upsampling the third, and then concatenates
-    and fuses them with a convolution layer.
-
-    Attributes:
-        c_in (int): The number of channels of the input feature maps.
-        channel_adjust (bool): Whether to adjust the channel count of the concatenated features.
-
-    Methods:
-        forward: Fuses a list of three multi-scale feature maps.
-
-    Examples:
-        >>> import torch
-        >>> model = FuseModule(c_in=64, channel_adjust=False)
-        >>> # Input is a list of features from different backbone stages
-        >>> x_list = [torch.randn(2, 64, 64, 64), torch.randn(2, 64, 32, 32), torch.randn(2, 64, 16, 16)]
-        >>> output = model(x_list)
-        >>> print(output.shape)
-        torch.Size([2, 64, 32, 32])
-    """
-
-    def __init__(self, c_in, channel_adjust, reduction: int = 16):
-        super(FuseModuleSE, self).__init__()
-        self.downsample = nn.AvgPool2d(kernel_size=2)
-        self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
-        if channel_adjust:
-            self.conv_out = Conv(4 * c_in, c_in, 1)
-        else:
-            self.conv_out = Conv(3 * c_in, c_in, 1)
-
-        # simple SE
-        hidden = max(c_in // reduction, 4)
-        self.se = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(c_in, hidden, 1, bias=True),
-            nn.SiLU(inplace=True),
-            nn.Conv2d(hidden, c_in, 1, bias=True),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        x1_ds = self.downsample(x[0])
-        x3_up = self.upsample(x[2])
-        x_cat = torch.cat([x1_ds, x[1], x3_up], dim=1)
-        out = self.conv_out(x_cat)
-
-        # gate attentation
-        w = self.se(out)
-        out = out * w
-
-        return out
-
-
 class HyperACE(nn.Module):
     """
     Hypergraph-based Adaptive Correlation Enhancement (HyperACE).
+    Source: https://github.com/iMoonLab/yolov13.
 
     This is the core module of YOLOv13, designed to model both global high-order correlations and
     local low-order correlations. It first fuses multi-scale features, then processes them through parallel
@@ -498,7 +414,7 @@ class HyperACE(nn.Module):
             DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
             for _ in range(n)
         )
-        self.fuse = FuseModuleSE(c1, channel_adjust)
+        self.fuse = FuseSEModule(c1, channel_adjust)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
@@ -516,6 +432,7 @@ class HyperACE(nn.Module):
 class DownsampleConv(nn.Module):
     """
     A simple downsampling block with optional channel adjustment.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This module uses average pooling to reduce the spatial dimensions (H, W) by a factor of 2. It can
     optionally include a 1x1 convolution to adjust the number of channels, typically doubling them.
@@ -551,6 +468,7 @@ class DownsampleConv(nn.Module):
 class FullPAD_Tunnel(nn.Module):
     """
     A gated fusion module for the Full-Pipeline Aggregation-and-Distribution (FullPAD) paradigm.
+    Source: https://github.com/iMoonLab/yolov13.
 
     This module implements a gated residual connection used to fuse features. It takes two inputs: the original
     feature map and a correlation-enhanced feature map. It then computes `output = original + gate * enhanced`,
@@ -575,6 +493,63 @@ class FullPAD_Tunnel(nn.Module):
 
     def forward(self, x):
         out = x[0] + self.gate * x[1]
+        return out
+
+
+class FuseSEModule(nn.Module):
+    """
+    A module to fuse multi-scale features for the HyperACE block.
+
+    This module takes a list of three feature maps from different scales, aligns them to a common
+    spatial resolution by downsampling the first and upsampling the third, and then concatenates
+    and fuses them with a convolution layer.
+
+    Attributes:
+        c_in (int): The number of channels of the input feature maps.
+        channel_adjust (bool): Whether to adjust the channel count of the concatenated features.
+
+    Methods:
+        forward: Fuses a list of three multi-scale feature maps.
+
+    Examples:
+        >>> import torch
+        >>> model = FuseModule(c_in=64, channel_adjust=False)
+        >>> # Input is a list of features from different backbone stages
+        >>> x_list = [torch.randn(2, 64, 64, 64), torch.randn(2, 64, 32, 32), torch.randn(2, 64, 16, 16)]
+        >>> output = model(x_list)
+        >>> print(output.shape)
+        torch.Size([2, 64, 32, 32])
+    """
+
+    def __init__(self, c_in, channel_adjust, reduction: int = 16):
+        super().__init__()
+        self.downsample = nn.AvgPool2d(kernel_size=2)
+        self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+        if channel_adjust:
+            self.conv_out = Conv(4 * c_in, c_in, 1)
+        else:
+            self.conv_out = Conv(3 * c_in, c_in, 1)
+
+        # simple SE
+        hidden = max(c_in // reduction, 4)
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(c_in, hidden, 1, bias=True),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(hidden, c_in, 1, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        x1_ds = self.downsample(x[0])
+        x3_up = self.upsample(x[2])
+        x_cat = torch.cat([x1_ds, x[1], x3_up], dim=1)
+        out = self.conv_out(x_cat)
+
+        # gate attentation
+        w = self.se(out)
+        out = out * w
+
         return out
 
 
@@ -622,7 +597,7 @@ class ModalFuseGate(nn.Module):
 
 
 class M2CA(nn.Module):
-    """Cross-modal channels attentation."""
+    """Multi modal channels attentation."""
 
     def __init__(self, c_in, c_out):
         super().__init__()
@@ -742,6 +717,55 @@ class M2CAHyperACE(nn.Module):
         y.append(out2)
 
         return self.cv2(torch.cat(y, 1))
+
+
+class HierarchicalHyperedgeGen(nn.Module):
+    
+
+class IntraHyperEnhance(nn.Module):
+    def __init__(
+        self,
+        c1,
+        c2,
+        n=1,
+        num_hyperedges=8,
+        dsc3k=True,
+        shortcut=False,
+        e1=0.5,
+        e2=1,
+        context="both",
+    ):
+        super().__init__()
+        self.c = int(c2 * e1)
+        self.cv1 = Conv(c1, 3 * self.c, 1, 1)
+        self.cv2 = Conv((4 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(
+            DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
+            for _ in range(n)
+        )
+
+
+class IntreHyperFusion(nn.Module):
+    def __init__(
+        self,
+        c1,
+        c2,
+        n=1,
+        num_hyperedges=8,
+        dsc3k=True,
+        shortcut=False,
+        e1=0.5,
+        e2=1,
+        context="both",
+    ):
+        super().__init__()
+        self.c = int(c2 * e1)
+        self.cv1 = Conv(c1, 3 * self.c, 1, 1)
+        self.cv2 = Conv((4 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(
+            DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
+            for _ in range(n)
+        )
 
 
 class MMFullPAD_Tunnel(nn.Module):
