@@ -886,6 +886,8 @@ class SparseAdaHGConv(nn.Module):
         E = self.num_hyperedges
         k = edge_idx.size(-1)
 
+        # Ensure edge weights match feature dtype to avoid scatter_add dtype mismatch under AMP
+        edge_w = edge_w.to(dtype=X.dtype)
         idx = edge_idx.reshape(B, N * k)  # [B,Nk]
         contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
