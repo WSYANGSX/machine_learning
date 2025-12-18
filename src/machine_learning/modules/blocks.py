@@ -906,26 +906,35 @@ class SparseHGComputation(nn.Module):
     """
 
     def __init__(
-        self, embed_dim, num_hyperedges=16, num_heads=8, rank=16, sparse_ratio=0.5, dropout=0.1, context="both"
+        self,
+        embed_dim: int,
+        num_hyperedges: int = 16,
+        num_heads: int = 8,
+        sparse_ratio: float = 0.5,
+        dropout: float = 0.1,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
-        self.embed_dim = embed_dim
-        self.hgnn = SparseAdaHGConv(
-            embed_dim=embed_dim,
+        self.hgg = SparseAdaHyperedgeGen(
+            node_dim=embed_dim,
             num_hyperedges=num_hyperedges,
             num_heads=num_heads,
-            rank=rank,
-            sparse_ratio=sparse_ratio,
             dropout=dropout,
+            sparse_ratio=sparse_ratio,
             context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
         )
+        self.hgcnn = SparseAdaHGConv(embed_dim=embed_dim, num_hyperedges=num_hyperedges, dropout=dropout)
 
     def forward(self, x):
         B, C, H, W = x.shape
         tokens = x.flatten(2).transpose(1, 2)
-        tokens = self.hgnn(tokens)
-        x_out = tokens.transpose(1, 2).view(B, C, H, W)
-        return x_out
+        edge_idx, edge_w, _ = self.hgg(tokens)
+        tokens_out = self.hgcnn(tokens, edge_idx, edge_w)
+        return tokens_out.transpose(1, 2).view(B, C, H, W)
 
 
 class LowRankSparseHyperedgeGen(nn.Module):
@@ -955,8 +964,8 @@ class LowRankSparseHyperedgeGen(nn.Module):
         dropout: float = 0.1,
         context: Literal["mean", "max", "both"] = "both",
         sparse_ratio: float = 1.0,
-        select_mode: Literal["global", "node"] = "global",
-        node_chunk_size: int | None = None,
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
 
@@ -973,8 +982,8 @@ class LowRankSparseHyperedgeGen(nn.Module):
         self.head_dim = node_dim // num_heads
         self.context = context
         self.sparse_ratio = sparse_ratio
-        self.select_mode = select_mode
-        self.node_chunk_size = node_chunk_size
+        self.mode = mode
+        self.node_topk_chunk = node_topk_chunk
 
         # Low-rank parameters
         self.U = nn.Parameter(torch.empty(num_hyperedges, rank))  # [E,r]
@@ -1070,7 +1079,7 @@ class LowRankSparseHyperedgeGen(nn.Module):
             return edge_idx, edge_w, E
 
         # sparse: two modes
-        if self.select_mode == "global":
+        if self.mode == "global":
             topk_e = self._global_select_edges(V_dynamic, context_cat)  # [B,kE]
             kE = topk_e.size(1)
 
@@ -1090,7 +1099,7 @@ class LowRankSparseHyperedgeGen(nn.Module):
 
         # select_mode == "node": Each node selects kE independently (using block topk to avoid materializing [B, N, E])
         kE = max(1, int(E * self.sparse_ratio))
-        chunk = self.node_chunk_size or E
+        chunk = self.node_topk_chunk or E
 
         topv = X.new_full((B, N, kE), float("-inf"))  # [B,N,kE]
         topi = X.new_zeros((B, N, kE), dtype=torch.long)
@@ -1126,30 +1135,11 @@ class CompressAdaHGConv(nn.Module):
         self,
         embed_dim: int,
         num_hyperedges: int = 32,
-        rank: int = 16,
-        sparse_ratio: float = 0.5,
-        num_heads: int = 4,
         dropout: float = 0.1,
-        context: Literal["mean", "max", "both"] = "both",
-        select_mode: Literal["global", "node"] = "global",
-        node_chunk_size: int | None = 8,
     ):
         super().__init__()
 
         self.num_hyperedges = num_hyperedges
-
-        self.hyperedge_gen = LowRankSparseHyperedgeGen(
-            node_dim=embed_dim,
-            num_hyperedges=num_hyperedges,
-            rank=rank,
-            num_heads=num_heads,
-            dropout=dropout,
-            context=context,
-            sparse_ratio=sparse_ratio,
-            select_mode=select_mode,
-            node_chunk_size=node_chunk_size,
-        )
-
         self.edge_proj = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
@@ -1163,22 +1153,22 @@ class CompressAdaHGConv(nn.Module):
             nn.LayerNorm(embed_dim),
         )
 
-    def forward(self, X: torch.Tensor):
+    def forward(self, X: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor):
         """
         X: [B,N,D]
         """
         B, N, D = X.shape
-        edge_idx, edge_w, E = self.hyperedge_gen(X)  # edge_idx/edge_w: [B,N,kE]
-        kE = edge_idx.size(-1)
+        E = self.num_hyperedges
+        k = edge_idx.size(-1)
 
-        idx = edge_idx.reshape(B, N * kE)  # [B,Nk]
-        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * kE, D)  # [B,Nk,D]
+        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
         He = X.new_zeros(B, E, D)
         He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
         He = self.edge_proj(He)
 
-        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, kE, D)
+        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)
         X_new = (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)
         X_new = self.node_proj(X_new)
 
@@ -1191,29 +1181,82 @@ class CompressHGComputation(nn.Module):
     """
 
     def __init__(
-        self, embed_dim, num_hyperedges=16, num_heads=8, rank=16, sparse_ratio=0.5, dropout=0.1, context="both"
+        self,
+        embed_dim: int,
+        num_hyperedges: int = 16,
+        num_heads: int = 8,
+        sparse_ratio: float = 0.5,
+        dropout: float = 0.1,
+        rank: int = 8,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
         self.embed_dim = embed_dim
-        self.hgnn = CompressAdaHGConv(
-            embed_dim=embed_dim,
+        self.hgg = LowRankSparseHyperedgeGen(
+            node_dim=embed_dim,
             num_hyperedges=num_hyperedges,
             num_heads=num_heads,
             rank=rank,
-            sparse_ratio=sparse_ratio,
             dropout=dropout,
             context=context,
+            sparse_ratio=sparse_ratio,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
+        self.hgcnn = CompressAdaHGConv(
+            embed_dim=embed_dim,
+            num_hyperedges=num_hyperedges,
+            dropout=dropout,
         )
 
     def forward(self, x):
         B, C, H, W = x.shape
         tokens = x.flatten(2).transpose(1, 2)
-        tokens = self.hgnn(tokens)
-        x_out = tokens.transpose(1, 2).view(B, C, H, W)
-        return x_out
+        edge_idx, edge_w, _ = self.hgg(tokens)
+        tokens_out = self.hgcnn(tokens, edge_idx, edge_w)
+        return tokens_out.transpose(1, 2).view(B, C, H, W)
 
 
-class CompressedC3AH(nn.Module):
+class SparseC3AH(nn.Module):
+    """
+    A enhanced sparse C3AH block that has a strong modeling relationship and fewer parameters.
+    """
+
+    def __init__(
+        self,
+        c1,
+        c2,
+        e=1.0,
+        num_hyperedges=32,
+        rank: int = 16,
+        sparse_ratio: float = 0.5,
+        dropout: float = 0.1,
+        context: str = "both",
+    ):
+        super().__init__()
+        c_ = int(c2 * e)
+        assert c_ % 16 == 0, "Dimension of SparseHGComputation should be a multiple of 16."
+        num_heads = c_ // 16
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = Conv(c1, c_, 1, 1)
+        self.m = SparseHGComputation(
+            embed_dim=c_,
+            num_hyperedges=num_hyperedges,
+            rank=rank,
+            sparse_ratio=sparse_ratio,
+            num_heads=num_heads,
+            dropout=dropout,
+            context=context,
+        )
+        self.cv3 = Conv(2 * c_, c2, 1)
+
+    def forward(self, x):
+        return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1))
+
+
+class CompressC3AH(nn.Module):
     """
     A enhanced compressed C3AH block that has a strong modeling relationship and fewer parameters.
     """
@@ -1231,7 +1274,7 @@ class CompressedC3AH(nn.Module):
     ):
         super().__init__()
         c_ = int(c2 * e)
-        assert c_ % 16 == 0, "Dimension of AdaHGComputation should be a multiple of 16."
+        assert c_ % 16 == 0, "Dimension of CompressHGComputation should be a multiple of 16."
         num_heads = c_ // 16
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -1278,8 +1321,8 @@ class IntraHyperEnhance(nn.Module):
         )
 
         self.fuse = FuseSEModule(c1, channel_adjust)
-        self.branch1 = CompressedC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
-        self.branch2 = CompressedC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
+        self.branch1 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
+        self.branch2 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
 
     def forward(self, X):
         x = self.fuse(X)
@@ -1319,8 +1362,8 @@ class IntreHyperFusion(nn.Module):
 
         self.cmca = M2CA(c1, c1)
         self.fuse = ModalFuseGate(c1)
-        self.branch1 = CompressedC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
-        self.branch2 = CompressedC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
+        self.branch1 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
+        self.branch2 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
 
     def forward(self, X):
         X_hat = self.cmca(X)
@@ -1335,11 +1378,16 @@ class IntreHyperFusion(nn.Module):
         return self.cv2(torch.cat(y, 1))
 
 
-# TODO Whether to add an asymmetric prototype
-class CrossGraphHyperedgeGen(nn.Module):
+class CrossHyperedgeGen(nn.Module):
     """
-    The cross-graph hyperedge generator.
-    Builds the relationship between the nodes of feature map A and those of feature Map B.
+    Cross-modal hyperedge generator.
+
+    Each hyperedge e is simultaneously connected to A group of A nodes and a group of B nodes.
+
+    Returns:
+      edge_idx_A: [B,N_A,kE], edge_w_A: [B,N_A,kE]
+      edge_idx_B: [B,N_B,kE], edge_w_B: [B,N_B,kE]
+      E: int
     """
 
     def __init__(
@@ -1348,231 +1396,258 @@ class CrossGraphHyperedgeGen(nn.Module):
         num_hyperedges: int,
         num_heads: int = 4,
         dropout: float = 0.1,
-        temperature: float = 1.0,
         sparse_ratio: float = 1.0,
-        use_learnable_temperature: bool = False,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["node", "global"] = "node",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
-        assert 0 < sparse_ratio <= 1, f"sparse_ratio must be in (0, 1], got {sparse_ratio}"
+        assert 0 < sparse_ratio <= 1, f"sparse_ratio must be in (0,1], got {sparse_ratio}"
         assert node_dim % num_heads == 0, f"node_dim {node_dim} must be divisible by num_heads {num_heads}"
 
         self.node_dim = node_dim
-        self.num_hyperedges = num_hyperedges
-        self.num_heads = num_heads
-        self.head_dim = node_dim // num_heads
+        self.E = num_hyperedges
+        self.H = num_heads
+        self.d_h = node_dim // num_heads
+        self.scaling = math.sqrt(self.d_h)
         self.sparse_ratio = sparse_ratio
+        self.context = context
+        self.mode = mode
+        self.node_topk_chunk = node_topk_chunk
 
-        # Cross-graph prototype generation
-        self.cross_prototypes = nn.Parameter(torch.Tensor(num_hyperedges, node_dim))
-        nn.init.xavier_uniform_(self.cross_prototypes)
+        self.prototype_base = nn.Parameter(torch.empty(num_hyperedges, node_dim))
+        nn.init.xavier_uniform_(self.prototype_base)
 
-        # The bidirectional projection layer is prepared for the two feature maps respectively
+        # Generate "dynamic prototype offset" using cross-modal context
+        if context in ("mean", "max"):
+            in_dim = 2 * node_dim  # A_context + B_context
+        else:
+            in_dim = 4 * node_dim  # (A_mean,A_max,B_mean,B_max)
+        self.context_net = nn.Linear(in_dim, num_hyperedges * node_dim)
+
+        # Return the context to the D dimension when scoring (only required in the global mode)
+        self.score_proj = nn.Linear(in_dim, node_dim)
+
         self.proj_A = nn.Linear(node_dim, node_dim)
         self.proj_B = nn.Linear(node_dim, node_dim)
 
-        # Cross-graph attention weight generation
-        self.cross_attention_net = nn.Sequential(
-            nn.Linear(node_dim * 2, node_dim), nn.ReLU(), nn.Linear(node_dim, num_heads), nn.Softmax(dim=-1)
-        )
-
-        # Learnable temperature parameters
-        if use_learnable_temperature:
-            self.temperature = nn.Parameter(torch.tensor(temperature))
-        else:
-            self.temperature = temperature
-
         self.dropout = nn.Dropout(dropout)
-        self.scaling = math.sqrt(self.head_dim)
 
-    def forward(self, X_A: torch.Tensor, X_B: torch.Tensor) -> torch.Tensor:
+    def _ctx(self, X: torch.Tensor) -> torch.Tensor:
+        if self.context == "mean":
+            return X.mean(dim=1)  # [B,D]
+        if self.context == "max":
+            return X.max(dim=1).values  # [B,D]
+        m = X.mean(dim=1)
+        mx = X.max(dim=1).values
+        return torch.cat([m, mx], dim=-1)  # [B,2D]
+
+    def _build_prototypes(self, X_A: torch.Tensor, X_B: torch.Tensor) -> torch.Tensor:
+        # ctx_A: [B,D] or [B,2D], ctx_B same
+        ctx_A = self._ctx(X_A)
+        ctx_B = self._ctx(X_B)
+        ctx = torch.cat([ctx_A, ctx_B], dim=-1)  # [B, 2D] or [B,4D]
+        offsets = self.context_net(ctx).view(X_A.size(0), self.E, self.node_dim)  # [B,E,D]
+        return self.prototype_base.unsqueeze(0) + offsets  # [B,E,D]
+
+    def _node_edge_logits(self, X: torch.Tensor, prototypes: torch.Tensor, proj: nn.Linear) -> torch.Tensor:
         """
-        Construct the cross-graph hyperedge relationship from map A to map B.
-
-        Args:
-            X_A: [B, N_A, D] map A.
-            X_B: [B, N_B, D] map B.
-
-        Returns:
-            A_cross: [B, N_A, E, N_B] Cross-graph participation matrix.
+        X: [B,N,D], prototypes: [B,E,D] -> logits: [B,N,E]
         """
-        B, N_A, D = X_A.shape
+        B, N, D = X.shape
+        E = prototypes.size(1)
+
+        Xp = proj(X)  # [B,N,D]
+        Xh = Xp.view(B, N, self.H, self.d_h).transpose(1, 2).contiguous()  # [B,H,N,d_h]
+        Ph = prototypes.view(B, E, self.H, self.d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,E,d_h]
+
+        # [B,H,N,E]
+        logits = torch.einsum("bhnd,bhed->bhne", Xh, Ph) / self.scaling
+        logits = logits.mean(dim=1)  # [B,N,E]
+        return self.dropout(logits)
+
+    def _topk_over_E(self, logits: torch.Tensor, kE: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        logits: [B,N,E] -> edge_idx [B,N,kE], edge_w [B,N,kE]
+        """
+        topv, topi = torch.topk(logits, k=kE, dim=-1)  # [B,N,kE]
+        w = F.softmax(topv, dim=-1)  # [B,N,kE]
+        return topi.contiguous(), w
+
+    def _node_topk_chunked(self, X: torch.Tensor, prototypes: torch.Tensor, proj: nn.Linear, kE: int):
+        B, N, D = X.shape
+        E = prototypes.size(1)
+        H, d_h = self.H, self.d_h
+
+        Xp = proj(X)  # [B,N,D]
+        Xh = Xp.view(B, N, H, d_h).transpose(1, 2).contiguous()  # [B,H,N,d_h]
+
+        topv = X.new_full((B, N, kE), float("-inf"))
+        topi = X.new_zeros((B, N, kE), dtype=torch.long)
+
+        chunk = int(self.node_topk_chunk)
+        for e0 in range(0, E, chunk):
+            e1 = min(E, e0 + chunk)
+            P = prototypes[:, e0:e1, :]  # [B,chunk,D]
+            Ph = P.view(B, e1 - e0, H, d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,chunk,d_h]
+
+            logits_c = torch.einsum("bhnd,bhed->bhne", Xh, Ph) / self.scaling  # [B,H,N,chunk]
+            logits_c = logits_c.mean(dim=1)  # [B,N,chunk]
+            logits_c = self.dropout(logits_c)
+
+            idx_c = torch.arange(e0, e1, device=X.device).view(1, 1, e1 - e0).expand(B, N, -1)
+
+            catv = torch.cat([topv, logits_c], dim=-1)  # [B,N,kE+chunk]
+            cati = torch.cat([topi, idx_c], dim=-1)
+            newv, pos = torch.topk(catv, k=kE, dim=-1)
+            newi = cati.gather(-1, pos)
+
+            topv, topi = newv, newi
+
+        topv = self.dropout(topv)
+        w = F.softmax(topv, dim=-1)  # [B,N,kE]
+        return topi.contiguous(), w
+
+    def forward(self, X_A: torch.Tensor, X_B: torch.Tensor):
+        B, N_A, _ = X_A.shape
         _, N_B, _ = X_B.shape
-        H = self.num_heads
-        E = self.num_hyperedges
-        d_h = self.head_dim
+        E = self.E
 
-        X_A_proj = self.proj_A(X_A)  # [B, N_A, D]
-        X_B_proj = self.proj_B(X_B)  # [B, N_B, D]
+        prototypes = self._build_prototypes(X_A, X_B)  # [B,E,D]
 
-        # Calculate cross-graph similarity
-        # Decompose the feature map into multiple heads
-        X_A_heads = X_A_proj.view(B, N_A, H, d_h).transpose(1, 2)  # [B,H,N_A,d_h]
-        X_B_heads = X_B_proj.view(B, N_B, H, d_h).transpose(1, 2)  # [B,H,N_B,d_h]
+        # dense (But still returns the idx/w form for the convenience of conv unification)
+        if self.sparse_ratio >= 1:
+            logits_A = self._node_edge_logits(X_A, prototypes, self.proj_A)  # [B,N_A,E]
+            logits_B = self._node_edge_logits(X_B, prototypes, self.proj_B)  # [B,N_B,E]
+            wA = F.softmax(logits_A, dim=-1)
+            wB = F.softmax(logits_B, dim=-1)
+            idx = torch.arange(E, device=X_A.device).view(1, 1, E)
+            idxA = idx.expand(B, N_A, E).contiguous()
+            idxB = idx.expand(B, N_B, E).contiguous()
+            return idxA, wA, idxB, wB, E
 
-        # Dot product attention across graphs
-        cross_similarity = torch.matmul(X_A_heads, X_B_heads.transpose(-1, -2)) / self.scaling  # [B, H, N_A, N_B]
+        kE = max(1, int(E * self.sparse_ratio))
 
-        # Use cross-graph prototypes for hyperedge allocation
-        proto = self.cross_prototypes.view(E, H, d_h).permute(1, 0, 2)
+        if self.mode == "global":
+            # Share a set of hyperedges for the entire sample
+            # Select the topk e using cross-modal ctx scoring, then calculate the logits for all nodes only on this set
+            ctx_A = self._ctx(X_A)
+            ctx_B = self._ctx(X_B)
+            ctx = torch.cat([ctx_A, ctx_B], dim=-1)  # [B,2D] or [B,4D]
+            score_ctx = self.score_proj(ctx)  # [B,D]
+            scores = torch.bmm(score_ctx.unsqueeze(1), prototypes.transpose(1, 2)).squeeze(1)  # [B,E]
+            _, topk_e = torch.topk(scores, k=kE, dim=-1)  # [B,kE]
 
-        # Calculate the similarity of each node to the prototype
-        X_A_flat = X_A_heads.reshape(B * H, N_A, d_h)
-        proto_flat = proto.unsqueeze(0).expand(B, -1, -1, -1).reshape(B * H, E, d_h)
-        node_proto_sim = torch.bmm(X_A_flat, proto_flat.transpose(1, 2)).view(B, H, N_A, E)
+            prot_sel = prototypes.gather(1, topk_e.unsqueeze(-1).expand(-1, -1, self.node_dim))  # [B,kE,D]
+            logits_A = self._node_edge_logits(X_A, prot_sel, self.proj_A)  # [B,N_A,kE]
+            logits_B = self._node_edge_logits(X_B, prot_sel, self.proj_B)  # [B,N_B,kE]
 
-        # head weights: [B,H,1,1,1]
-        cross_context = torch.cat([X_A.mean(dim=1), X_B.mean(dim=1)], dim=-1)  # [B,2D]
-        cross_weights = self.cross_attention_net(cross_context).view(B, H, 1, 1, 1)
+            idxA = topk_e.unsqueeze(1).expand(-1, N_A, -1).contiguous()  # [B,N_A,kE]
+            idxB = topk_e.unsqueeze(1).expand(-1, N_B, -1).contiguous()  # [B,N_B,kE]
+            wA = F.softmax(logits_A, dim=-1)
+            wB = F.softmax(logits_B, dim=-1)
+            return idxA, wA, idxB, wB, E
 
-        if self.sparse_ratio < 1:
-            kB = max(1, int(N_B * self.sparse_ratio))
+        if self.mode == "node":
+            if (self.node_topk_chunk is not None) and (self.node_topk_chunk < self.E):
+                idxA, wA = self._node_topk_chunked(X_A, prototypes, self.proj_A, kE)
+                idxB, wB = self._node_topk_chunked(X_B, prototypes, self.proj_B, kE)
+                return idxA, wA, idxB, wB, self.E
 
-            # cross_sim_mean = cross_similarity.mean(dim=1)  # [B,N_A,N_B]
-            # _, topi = torch.topk(cross_sim_mean, k=kB, dim=-1)  # [B,N_A,kB]
-            cross_sim_weighted = (cross_similarity * cross_weights.squeeze(-1).squeeze(-1)).sum(dim=1)
-            _, topi = torch.topk(cross_sim_weighted, k=kB, dim=-1)
+            logits_A = self._node_edge_logits(X_A, prototypes, self.proj_A)  # [B,N_A,E]
+            logits_B = self._node_edge_logits(X_B, prototypes, self.proj_B)  # [B,N_B,E]
+            idxA, wA = self._topk_over_E(logits_A, kE)
+            idxB, wB = self._topk_over_E(logits_B, kE)
+            return idxA, wA, idxB, wB, self.E
 
-            gather_idx = topi.unsqueeze(1).expand(-1, H, -1, -1)
-            cross_sim_sparse = cross_similarity.gather(-1, gather_idx)
-
-            # logits_sparse: [B,H,N_A,E,kB]
-            logits_sparse = node_proto_sim.unsqueeze(-1) * cross_sim_sparse.unsqueeze(3)
-            logits_sparse = logits_sparse * cross_weights
-            logits_sparse = logits_sparse.sum(dim=1)
-
-            logits_sparse = logits_sparse / self.temperature
-            logits_sparse = self.dropout(logits_sparse)
-
-            # A_sparse [B,N_A,E,kB]
-            A_sparse = F.softmax(logits_sparse, dim=2)
-
-            # scatter dense: [B,N_A,E,N_B]（
-            A_cross = torch.zeros(B, N_A, E, N_B, dtype=A_sparse.dtype, device=A_sparse.device)
-            scatter_idx = topi.unsqueeze(2).expand(-1, -1, E, -1)  # [B,N_A,E,kB]
-            A_cross.scatter_(3, scatter_idx, A_sparse)
-            return A_cross
-
-        # logits [B,H,N_A,E,N_B] -> [B,N_A,E,N_B]
-        logits = node_proto_sim.unsqueeze(-1) * cross_similarity.unsqueeze(3)  # [B,H,N_A,E,N_B]
-        logits = logits * cross_weights
-        logits = logits.sum(dim=1)  # [B,N_A,E,N_B]
-
-        logits = logits / self.temperature
-        logits = self.dropout(logits)
-        return F.softmax(logits, dim=2)
+        raise ValueError(f"Unsupported mode: {self.mode}")
 
 
-class CrossGraphHyperConv(nn.Module):
+class CrossHyperConv(nn.Module):
     """
-    Cross-graph hypergraph convolution.
-    Performs message passing between feature map A and feature map B.
+    Cross-modal hypergraph conv.
+      -Node (A)->edge and node(B)->edge are respectively aggregated to the same set of hyperedges.
+      -edge ->node(A) is written back using B-side hyperedge features, and edge->node(B) is written back using A-side
+      hyperedge features.
     """
 
     def __init__(
         self,
         embed_dim: int,
         num_hyperedges: int = 16,
-        num_heads: int = 4,
         dropout: float = 0.1,
-        sparse_ratio=0.5,
         bidirectional: bool = True,
-        fusion_type: Literal["bilinear", "concatenate", "gate"] = "bilinear",
+        fusion_type: Literal["bilinear", "concatenate", "gate", "residual"] = "gate",
     ):
         super().__init__()
-        self.embed_dim = embed_dim
-        self.num_hyperedges = num_hyperedges
+        self.E = num_hyperedges
         self.bidirectional = bidirectional
         self.fusion_type = fusion_type
 
-        # Cross-graph hyperedge generator
-        self.cross_gen = CrossGraphHyperedgeGen(
-            node_dim=embed_dim,
-            num_hyperedges=num_hyperedges,
-            num_heads=num_heads,
-            dropout=dropout,
-            sparse_ratio=sparse_ratio,
-        )
+        self.A_to_B_proj = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.GELU(), nn.Dropout(dropout))
+        self.B_to_A_proj = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.GELU(), nn.Dropout(dropout))
 
-        # Message passing function
-        self.A_to_B_proj = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-        self.B_to_A_proj = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-
-        # Integrated access control
         if fusion_type == "gate":
             self.gate_A = nn.Sequential(nn.Linear(embed_dim * 2, embed_dim), nn.Sigmoid())
             self.gate_B = nn.Sequential(nn.Linear(embed_dim * 2, embed_dim), nn.Sigmoid())
         elif fusion_type == "bilinear":
-            self.bilinear_fusion = nn.Bilinear(embed_dim, embed_dim, embed_dim)
+            self.bilin = nn.Bilinear(embed_dim, embed_dim, embed_dim)
 
-    def forward(self, X_A: torch.Tensor, X_B: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    @staticmethod
+    def _node_to_edge(X: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor, E: int) -> torch.Tensor:
         """
-        Perform bidirectional cross-graph message passing
-
-        Args:
-            X_A: [B, N_A, D] map A.
-            X_B: [B, N_B, D] map B.
-
-        Returns:
-            X_A_new: [B, N_A, D] The updated feature map A.
-            X_B_new: [B, N_B, D] The updated feature map B.
+        X:[B,N,D], edge_idx:[B,N,k], edge_w:[B,N,k] -> He:[B,E,D]
         """
-        # A_cross: [B, N_A, E, N_B]
-        A_cross = self.cross_gen(X_A, X_B)
+        B, N, D = X.shape
+        k = edge_idx.size(-1)
+        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+        He = X.new_zeros(B, E, D)
+        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+        return He
 
-        # Aggregate the features of B to the hyperedge for each node in A
-        He_B = torch.einsum("bnem,bmd->bned", A_cross, X_B)  # [B, N_A, E, D]
-        He_B_transformed = self.A_to_B_proj(He_B)
+    @staticmethod
+    def _edge_to_node(He: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor) -> torch.Tensor:
+        """
+        He:[B,E,D], edge_idx:[B,N,k], edge_w:[B,N,k] -> X_new:[B,N,D]
+        """
+        B, E, D = He.shape
+        _, N, k = edge_idx.shape
+        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)  # [B,N,k,D]
+        return (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)  # [B,N,D]
 
-        A_node_edge = A_cross.sum(dim=3)  # [B, N_A, E]
-        A_node_edge = A_node_edge / (A_node_edge.sum(dim=2, keepdim=True) + 1e-6)  # sparse and then normalized
+    def forward(self, X_A, X_B, idxA, wA, idxB, wB, E):
+        He_A = self._node_to_edge(X_A, idxA, wA, E)  # A-side aggregate to the hyperedge
+        He_B = self._node_to_edge(X_B, idxB, wB, E)  # B-side aggregate to the hyperedge
 
-        # Propagate from the hyperedge to the node of A
-        X_A_from_B = torch.einsum("bne,bned->bnd", A_node_edge, He_B_transformed)  # [B, N_A, D]
+        He_A_t = self.B_to_A_proj(He_A)
+        He_B_t = self.A_to_B_proj(He_B)
 
-        # Bidirectional transmission: Message transmission from A to B
-        if self.bidirectional:
-            # Use the transposed participation matrix
-            A_cross_T = A_cross.transpose(1, 3)  # [B, N_B, E, N_A]
+        X_A_from_B = self._edge_to_node(
+            He_B_t, idxA, wA
+        )  # A reads B's information using the hyperedge it connects itself
+        X_B_from_A = self._edge_to_node(He_A_t, idxB, wB) if self.bidirectional else X_B
 
-            # Aggregate the features of A to the hyperedge for each node in B
-            He_A = torch.einsum("bnem,bmd->bned", A_cross_T, X_A)  # [B, N_B, E, D]
-            He_A_transformed = self.B_to_A_proj(He_A)
-
-            A_node_edge_T = A_cross_T.sum(dim=3)  # [B, N_B, E]
-            A_node_edge_T = A_node_edge_T / (A_node_edge_T.sum(dim=2, keepdim=True) + 1e-6)
-
-            # The node propagated from the hyperedge to B
-            X_B_from_A = torch.einsum("bne,bned->bnd", A_node_edge_T, He_A_transformed)  # [B, N_B, D]
-        else:
-            X_B_from_A = X_B  # If it is not two-way, keep it as it is
-
-        # Feature fusion
         if self.fusion_type == "concatenate":
             X_A_new = torch.cat([X_A, X_A_from_B], dim=-1)
             X_B_new = torch.cat([X_B, X_B_from_A], dim=-1)
-        elif self.fusion_type == "gate":
-            # Door control integration
-            gate_A = self.gate_A(torch.cat([X_A, X_A_from_B], dim=-1))
-            X_A_new = gate_A * X_A + (1 - gate_A) * X_A_from_B
-            gate_B = self.gate_B(torch.cat([X_B, X_B_from_A], dim=-1))
-            X_B_new = gate_B * X_B + (1 - gate_B) * X_B_from_A
         elif self.fusion_type == "bilinear":
-            X_A_new = self.bilinear_fusion(X_A, X_A_from_B)
-            X_B_new = self.bilinear_fusion(X_B, X_B_from_A)
-        else:
-            # Residual connection
+            X_A_new = self.bilin(X_A, X_A_from_B)
+            X_B_new = self.bilin(X_B, X_B_from_A)
+        elif self.fusion_type == "gate":
+            gA = self.gate_A(torch.cat([X_A, X_A_from_B], dim=-1))
+            X_A_new = gA * X_A + (1 - gA) * X_A_from_B
+            gB = self.gate_B(torch.cat([X_B, X_B_from_A], dim=-1))
+            X_B_new = gB * X_B + (1 - gB) * X_B_from_A
+        else:  # residual
             X_A_new = X_A + X_A_from_B
             X_B_new = X_B + X_B_from_A
 
-        return X_A_new, X_B_new, A_cross  # Return the participation matrix for visualization
+        # Return sparse "3D hyperedge relationships" for visualization/debugging
+        # Which hyperedges each node is connected to + weights (two modes share the same set of hyperedge ids)
+        cross_repr = (idxA, wA, idxB, wB, E)
+        return X_A_new, X_B_new, cross_repr
 
 
 class CorssHGComputation(nn.Module):
@@ -1584,18 +1659,29 @@ class CorssHGComputation(nn.Module):
         dropout=0.1,
         sparse_ratio=0.5,
         bidirectional=True,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["node", "global"] = "global",
+        node_topk_chunk: int | None = None,
         fusion_type: Literal["bilinear", "concatenate", "gate"] = "bilinear",
     ):
         super().__init__()
         self.embed_dim = embed_dim
-        self.hgnn = CrossGraphHyperConv(
-            embed_dim=embed_dim,
+        self.hgg = CrossHyperedgeGen(
+            node_dim=embed_dim,
             num_hyperedges=num_hyperedges,
             num_heads=num_heads,
             dropout=dropout,
+            sparse_ratio=sparse_ratio,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
+        self.hgcnn = CrossHyperConv(
+            embed_dim=embed_dim,
+            num_hyperedges=num_hyperedges,
+            dropout=dropout,
             bidirectional=bidirectional,
             fusion_type=fusion_type,
-            sparse_ratio=sparse_ratio,
         )
 
     def forward(self, X_A, X_B):
@@ -1605,11 +1691,12 @@ class CorssHGComputation(nn.Module):
         B2, C2, H2, W2 = X_B.shape
         tokens_2 = X_B.flatten(2).transpose(1, 2)
 
-        tokens_1, tokens_2, cross_A = self.hgnn(tokens_1, tokens_2)
-        x_a_out = tokens_1.transpose(1, 2).view(B1, C1, H1, W1)
-        x_b_out = tokens_2.transpose(1, 2).view(B2, C2, H2, W2)
+        idxA, wA, idxB, wB, E = self.hgg(tokens_1, tokens_2)
+        tokens_1_out, tokens_2_out, cross_repr = self.hgcnn(tokens_1, tokens_2, idxA, wA, idxB, wB, E)
+        x_a_out = tokens_1_out.transpose(1, 2).view(B1, C1, H1, W1)
+        x_b_out = tokens_2_out.transpose(1, 2).view(B2, C2, H2, W2)
 
-        return x_a_out, x_b_out, cross_A
+        return x_a_out, x_b_out, cross_repr
 
 
 class IntreHyperFusion_V2(nn.Module):
@@ -1642,7 +1729,7 @@ class IntreHyperFusion_V2(nn.Module):
 
     def forward(self, X):
         x0, x1 = X
-        x_a, x_b, cross_A = self.cross_hg_computation(x0, x1)
+        x_a, x_b, _ = self.cross_hg_computation(x0, x1)
         y = self.fuse((x_a, x_b))
         return self.cv(y)
 
