@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
-from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, MFD, FusionMamba, FourInputFusionBlock
+from machine_learning.modules.blocks import CHyperACE, MMFullPAD_Tunnel, FusionMamba, FourInputFusionBlock
 
 
 class SuperYoloNet(BaseNet):

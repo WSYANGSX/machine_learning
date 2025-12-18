@@ -7,6 +7,8 @@ from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
     CHyperACE,
+    IntraHyperEnhance,
+    IntreHyperFusion,
     M2CAHyperACE,
     MMFullPAD_Tunnel,
     ModalFuseSE,
@@ -788,7 +790,7 @@ class M2I2HANet_v8(BaseNet):
         self.head.stride = self.stride
 
 
-class M2I2HANet_v8_with_HierarchicalHyperedgeGen(BaseNet):
+class M2I2HANet_v8_Enhanced(BaseNet):
     def __init__(
         self,
         imgsz: int,
@@ -923,11 +925,11 @@ class M2I2HANet_v8_with_HierarchicalHyperedgeGen(BaseNet):
                     "ModalFuseSE_1": ModalFuseSE(256),
                     "ModalFuseSE_2": ModalFuseSE(256),
                     "ModalFuseSE_3": ModalFuseSE(512),
-                    "HyperACE_Img": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Img": IntraHyperEnhance(256, 256, 1, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_1": DownsampleConv(256),
-                    "HyperACE_Ir": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": M2CAHyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "CHyperACE": IntreHyperFusion(256, 256, 1, 32, True, True, 0.5, 1, context="both"),
                     "Downsample_3": DownsampleConv(256),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
