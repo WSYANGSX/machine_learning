@@ -886,8 +886,6 @@ class SparseAdaHGConv(nn.Module):
         E = self.num_hyperedges
         k = edge_idx.size(-1)
 
-        # Ensure edge weights match feature dtype to avoid scatter_add dtype mismatch under AMP
-        edge_w = edge_w.to(dtype=X.dtype)
         idx = edge_idx.reshape(B, N * k)  # [B,Nk]
         contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
@@ -1163,17 +1161,23 @@ class CompressAdaHGConv(nn.Module):
         E = self.num_hyperedges
         k = edge_idx.size(-1)
 
-        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
-        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+        idx = edge_idx.reshape(B, N * k).to(device=X.device, dtype=torch.long)  # [B, Nk]
+        with torch.amp.autocast(device_type=str(X.device), enabled=False):
+            X32 = X.float()  # [B,N,D]
+            w32 = edge_w.to(device=X.device).float()  # [B,N,k]
 
-        He = X.new_zeros(B, E, D)
-        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
-        He = self.edge_proj(He)
+            contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
-        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)
-        X_new = (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)
-        X_new = self.node_proj(X_new)
+            He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
+            He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
 
+            He = self.edge_proj(He)
+
+            He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)  # [B,N,k,D]
+            X_new = (w32.unsqueeze(-1) * He_sel).sum(dim=2)  # [B,N,D]
+            X_new = self.node_proj(X_new)  # fp32
+
+        X_new = X_new.to(dtype=X.dtype)
         return X_new + X
 
 
@@ -1603,10 +1607,17 @@ class CrossHyperConv(nn.Module):
         B, N, D = X.shape
         k = edge_idx.size(-1)
         idx = edge_idx.reshape(B, N * k)  # [B,Nk]
-        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
-        He = X.new_zeros(B, E, D)
-        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
-        return He
+
+        with torch.amp.autocast(device_type=str(X.device), enabled=False):
+            X32 = X.float()  # [B,N,D]
+            w32 = edge_w.to(device=X.device).float()  # [B,N,k]
+
+            contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+
+            He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
+            He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+
+        return He.to(dtype=X.dtype)
 
     @staticmethod
     def _edge_to_node(He: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor) -> torch.Tensor:
