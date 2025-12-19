@@ -1277,6 +1277,8 @@ class CompressC3AH(nn.Module):
         sparse_ratio: float = 0.5,
         dropout: float = 0.1,
         context: str = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
         c_ = int(c2 * e)
@@ -1292,6 +1294,8 @@ class CompressC3AH(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
         )
         self.cv3 = Conv(2 * c_, c2, 1)
 
@@ -1315,6 +1319,8 @@ class IntraHyperEnhance(nn.Module):
         dropout=0.1,
         context="both",
         channel_adjust=True,
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         """"""
         super().__init__()
@@ -1327,8 +1333,30 @@ class IntraHyperEnhance(nn.Module):
         )
 
         self.fuse = FuseSEModule(c1, channel_adjust)
-        self.branch1 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
-        self.branch2 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
+        self.branch1 = CompressC3AH(
+            c1=self.c,
+            c2=self.c,
+            e=e2,
+            num_hyperedges=num_hyperedges,
+            rank=rank,
+            sparse_ratio=sparse_ratio,
+            dropout=dropout,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
+        self.branch2 = CompressC3AH(
+            self.c,
+            self.c,
+            e=e2,
+            num_hyperedges=num_hyperedges,
+            rank=rank,
+            sparse_ratio=sparse_ratio,
+            dropout=dropout,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
 
     def forward(self, X):
         x = self.fuse(X)
@@ -1720,8 +1748,11 @@ class IntreHyperFusion_V2(nn.Module):
         num_hyperedges=8,
         sparse_ratio=0.5,
         dropout=0.1,
-        fusion_type="gate",
         bidirectional=True,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["node", "global"] = "global",
+        node_topk_chunk: int | None = None,
+        fusion_type: Literal["bilinear", "concatenate", "gate"] = "gate",
     ):
         super().__init__()
         assert c1 % 16 == 0, "Dimension of CorssHGComputation should be a multiple of 16."
@@ -1732,9 +1763,12 @@ class IntreHyperFusion_V2(nn.Module):
             num_hyperedges=num_hyperedges,
             num_heads=num_heads,
             dropout=dropout,
-            fusion_type=fusion_type,
-            bidirectional=bidirectional,
             sparse_ratio=sparse_ratio,
+            bidirectional=bidirectional,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+            fusion_type=fusion_type,
         )
 
         self.fuse = ModalFuseGate(c1)
