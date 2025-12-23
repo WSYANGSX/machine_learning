@@ -17,21 +17,23 @@ class ModelEMA:
         self.backup_buffers = {}
         self.updates = 0
 
+        self.init_shadow()
+
+    def init_shadow(self):
         # Initialize shadow weights
-        for name, param in model.named_parameters():
+        for name, param in self.model.named_parameters():
             if param.requires_grad:
                 self.shadow[name] = param.data.clone().detach()
 
         # Initialize shadow buffers (e.g. BatchNorm running stats)
-        for name, buffer in model.named_buffers():
+        for name, buffer in self.model.named_buffers():
             if buffer.dtype.is_floating_point:
                 self.shadow_buffers[name] = buffer.data.clone().detach()
 
-    def update(self, model=None, record: bool = True):
+    def update(self, model=None):
         """Update EMA weights."""
         model = model or self.model
-        if record:
-            self.updates += 1
+        self.updates += 1
         d = self.decay(self.updates)
 
         with torch.no_grad():

@@ -192,7 +192,7 @@ class BaseNet(nn.Module, ABC):
                 nn.init.constant_(module.bias, 0)
 
         if self.ema_enabled and self._ema is not None:
-            self._ema.update(self, False)
+            self._ema.init_shadow()
 
     def view_structure(self):
         LOGGER.info(f"Model summary for {self.__class__.__name__}:")

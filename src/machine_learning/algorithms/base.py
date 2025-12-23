@@ -324,7 +324,6 @@ class AlgorithmBase(ABC):
             if self.cfg["net"]["initialize_weights"]:
                 net._initialize_weights()
                 if net.enable_ema and net.ema is not None:
-                    net.ema.update(net, record=False)
                     LOGGER.info(f"EMA enabled of {net.__class__.__name__}.")
                 else:
                     LOGGER.info(f"EMA disabled of {net.__class__.__name__}.")

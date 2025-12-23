@@ -11,8 +11,6 @@ from mamba_ssm.modules.mamba_simple import Mamba
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.modules.block import DSC3k, DSBottleneck
 
-from machine_learning.utils.logger import LOGGER
-
 
 class AttentionBlock(nn.Module):
     def __init__(self, channels: int):
