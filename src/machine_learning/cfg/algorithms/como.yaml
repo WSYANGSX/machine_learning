@@ -27,19 +27,19 @@ algorithm:
   conf_thres_det: 0.25
 
 optimizer:
-  opt: "Adam"
-  lr: 1.0e-3
-  final_factor: 0.01
-  beta1: 0.937
-  beta2: 0.999
-  eps: 1.0e-8
-  weight_decay: 0.0005
-
-  # opt: "auto"
-  # lr: 0.01
+  # opt: "Adam"
+  # lr: 1.0e-3
   # final_factor: 0.01
-  # momentum: 0.937
+  # beta1: 0.937
+  # beta2: 0.999
+  # eps: 1.0e-8
   # weight_decay: 0.0005
+
+  opt: "auto"
+  lr: 0.01
+  final_factor: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
 
   grad_clip: 10.0
   warmup_epochs: 3.0 # (float) warmup epochs (fractions ok)
