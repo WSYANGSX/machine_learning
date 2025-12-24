@@ -1,11 +1,11 @@
-from machine_learning.networks.yolo.m2i2ha import M2I2HANet_v8, M2I2HANet_v8_Enhanced
+from machine_learning.networks.yolo.m2i2ha import M2I2HANet_v8
 from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
     # Step 0: build network (optional)
-    net = M2I2HANet_v8_Enhanced(640, nc=5, net_scale="s")
+    net = M2I2HANet_v8(640, nc=5, net_scale="s")
 
     # Step 1: Parse the data
     m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=True)
@@ -18,6 +18,7 @@ def main():
         log_interval=10,
         save_interval=10,
         save_best=True,
+        seed=24,
     )
     trainer = Trainer(trainer_cfg, m2i2ha, "drone_vehicle.yaml")
 

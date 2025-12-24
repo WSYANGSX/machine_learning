@@ -16,11 +16,9 @@ from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.detection import (
     resize,
-    visualize_img_bboxes,
     bbox_iou,
     xywh2xyxy,
     pad_to_square,
-    rescale_bboxes,
 )
 
 

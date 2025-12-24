@@ -137,28 +137,70 @@ def resize(img: Union[torch.Tensor, np.ndarray], size: int) -> Union[torch.Tenso
     return img
 
 
-def rescale_bboxes(
-    bboxes: Union[torch.Tensor, np.ndarray], img_size: int, org_img_w: int, org_img_h: int
-) -> Union[torch.Tensor, np.ndarray]:
+def rescale_boxes(
+    boxes: np.ndarray | torch.Tensor,
+    img_shape: tuple[int, int],
+    img0_shape: tuple[int, int],
+    ratio_pad=None,
+    padding=True,
+    xywh=False,
+):
     """
-    Convert the bounding box coordinates output by the object detection model from the coordinate system of the padded
-    square image back to the coordinate system of the original image.
+    Rescale bounding boxes from img1_shape to img0_shape.
+
+    Args:
+        img1_shape (tuple): The shape of the image that the bounding boxes are for, in the format of (height, width).
+        boxes (torch.Tensor): The bounding boxes of the objects in the image, in the format of (x1, y1, x2, y2).
+        img0_shape (tuple): The shape of the target image, in the format of (height, width).
+        ratio_pad (tuple): A tuple of (ratio, pad) for scaling the boxes. If not provided, the ratio and pad will be
+            calculated based on the size difference between the two images.
+        padding (bool): If True, assuming the boxes is based on image augmented by yolo style. If False then do regular
+            rescaling.
+        xywh (bool): The box format is xywh or not.
+
+    Returns:
+        (torch.Tensor): The scaled bounding boxes, in the format of (x1, y1, x2, y2).
     """
-    # calculate the increased pad and deal with the situation of expansion and contraction after the pad
-    pad_x = max(org_img_h - org_img_w, 0) * (img_size / max(org_img_w, org_img_h))
-    pad_y = max(org_img_w - org_img_h, 0) * (img_size / max(org_img_w, org_img_h))
+    if ratio_pad is None:  # calculate from img0_shape
+        gain = min(img_shape[0] / img0_shape[0], img_shape[1] / img0_shape[1])  # gain  = old / new
+        pad = (
+            round((img_shape[1] - img0_shape[1] * gain) / 2 - 0.1),
+            round((img_shape[0] - img0_shape[0] * gain) / 2 - 0.1),
+        )  # wh padding
+    else:
+        gain = ratio_pad[0][0]
+        pad = ratio_pad[1]
 
-    # the size after removing the pad
-    unpad_h = img_size - pad_y
-    unpad_w = img_size - pad_x
+    if padding:
+        boxes[..., 0] -= pad[0]  # x padding
+        boxes[..., 1] -= pad[1]  # y padding
+        if not xywh:
+            boxes[..., 2] -= pad[0]  # x padding
+            boxes[..., 3] -= pad[1]  # y padding
+    boxes[..., :4] /= gain
+    return clip_boxes(boxes, img0_shape)
 
-    # remap the bounding box
-    bboxes[:, 0] = ((bboxes[:, 0] - pad_x // 2) / unpad_w) * org_img_w
-    bboxes[:, 1] = ((bboxes[:, 1] - pad_y // 2) / unpad_h) * org_img_h
-    bboxes[:, 2] = ((bboxes[:, 2] - pad_x // 2) / unpad_w) * org_img_w
-    bboxes[:, 3] = ((bboxes[:, 3] - pad_y // 2) / unpad_h) * org_img_h
 
-    return bboxes
+def clip_boxes(boxes: np.ndarray | torch.Tensor, shape: tuple[int, int]):
+    """
+    Takes a list of bounding boxes and a shape (height, width) and clips the bounding boxes to the shape.
+
+    Args:
+        boxes (torch.Tensor | numpy.ndarray): The bounding boxes to clip.
+        shape (tuple): The shape of the image.
+
+    Returns:
+        (torch.Tensor | numpy.ndarray): The clipped boxes.
+    """
+    if isinstance(boxes, torch.Tensor):  # faster individually (WARNING: inplace .clamp_() Apple MPS bug)
+        boxes[..., 0] = boxes[..., 0].clamp(0, shape[1])  # x1
+        boxes[..., 1] = boxes[..., 1].clamp(0, shape[0])  # y1
+        boxes[..., 2] = boxes[..., 2].clamp(0, shape[1])  # x2
+        boxes[..., 3] = boxes[..., 3].clamp(0, shape[0])  # y2
+    else:  # np.array (faster grouped)
+        boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
+        boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
+    return boxes
 
 
 def box_iou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:

@@ -1,3 +1,4 @@
+import time
 from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
 
@@ -14,6 +15,7 @@ def main():
         log_interval=10,
         save_interval=10,
         save_best=True,
+        seed=int(time.time()),
     )
     trainer = Trainer(trainer_cfg, como, "drone_vehicle.yaml")
 

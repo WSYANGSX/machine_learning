@@ -23,7 +23,6 @@ from machine_learning.utils.detection import (
     ap_per_class,
     pad_to_square,
     visualize_img_bboxes,
-    rescale_bboxes,
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
