@@ -6,7 +6,12 @@ import torch.nn as nn
 
 
 class ModelEMA:
-    """Exponential Moving Average for model weights"""
+    """
+    Updated Exponential Moving Average (EMA) implementation.
+
+    Keeps a moving average of everything in the model state_dict (parameters and buffers).
+    For EMA details see References.
+    """
 
     def __init__(self, model: nn.Module, decay: float = 0.9999, tau: int = 2000):
         self.model = model

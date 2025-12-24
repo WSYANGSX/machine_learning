@@ -23,6 +23,7 @@ from machine_learning.utils.detection import (
     ap_per_class,
     pad_to_square,
     visualize_img_bboxes,
+    rescale_boxes
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
@@ -243,15 +244,12 @@ class YoloV13(AlgorithmBase):
 
             for si, detection in enumerate(detections):
                 metrics["images"] += 1
-                # get the real frame of the current image (img_id, class_id, x1, y1, x2, y2)
-                labels = targets_abs[targets_abs[:, 0] == si, 1:]
-
-                # extract the category and coordinates of the real box
-                tcls = labels[:, 0] if len(labels) > 0 else torch.empty(0, device=self.device)
-                tbox = labels[:, 1:5] if len(labels) > 0 else torch.empty(0, 4, device=self.device)
+                # get the original frame of the current image (img_id, class_id, x1, y1, x2, y2)
+                pbatch = self.prepare_batch(si, batch)
+                tcls, tbox = pbatch.pop("cls"), pbatch.pop("bbox")
 
                 if len(detection) == 0:
-                    if len(labels):
+                    if len(tcls):
                         stats.append(
                             (
                                 torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
@@ -263,6 +261,8 @@ class YoloV13(AlgorithmBase):
                     continue
 
                 # Prediction box format: [x1, y1, x2, y2, conf, class]
+                detection = self.prepare_pred(detection, pbatch)
+                detection = detection[detection[:, 4].argsort(descending=True)]
                 pred_boxes = detection[:, :4]
                 pred_scores = detection[:, 4]
                 pred_classes = detection[:, 5]
@@ -302,6 +302,40 @@ class YoloV13(AlgorithmBase):
             self.pbar_log("val", pbar, **metrics)
 
         return metrics
+
+    def prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
+        """
+        Prepare a batch of images and annotations for validation.
+        """
+        idx = (batch["batch_idx"] == si).to(self.device)
+        cls = batch["cls"].to(self.device)[idx].squeeze(-1)
+        bbox = batch["bboxes"].to(self.device)[idx]
+        ori_shape = batch["ori_shape"][si]
+        imgsz = batch["img"].shape[2:]
+        ratio_pad = batch["ratio_pad"][si]
+        if len(cls):
+            bbox = (
+                xywh2xyxy(bbox) * torch.tensor(imgsz, device=self.device, dtype=torch.float32)[[1, 0, 1, 0]]
+            )  # target boxes
+            bbox = rescale_boxes(bbox, imgsz, ori_shape, ratio_pad=ratio_pad)  # native-space labels
+        return {"cls": cls, "bbox": bbox, "ori_shape": ori_shape, "imgsz": imgsz, "ratio_pad": ratio_pad}
+
+    def prepare_pred(self, pred: torch.Tensor, pbatch: dict[str, Any]) -> torch.Tensor:
+        """
+        Prepare predictions for evaluation against ground truth.
+
+        Args:
+            pred (torch.Tensor): Model predictions.
+            pbatch (dict): Prepared batch information.
+
+        Returns:
+            (torch.Tensor): Prepared predictions in native space.
+        """
+        predn = pred.clone()
+        predn[:, :4] = rescale_boxes(
+            predn[:, :4], pbatch["imgsz"], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
+        )  # native-space pred
+        return predn
 
     def decode_preds(self, preds: torch.Tensor, img_size: int) -> torch.Tensor:
         # decode preds
