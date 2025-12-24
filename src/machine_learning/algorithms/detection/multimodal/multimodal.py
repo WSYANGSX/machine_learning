@@ -50,7 +50,7 @@ class MultimodalDetection(AlgorithmBase):
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
             ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp)
+        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
 
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]
