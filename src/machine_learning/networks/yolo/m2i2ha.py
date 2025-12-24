@@ -8,9 +8,7 @@ from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
     CHyperACE,
     IntraHyperEnhance,
-    IntreHyperFusion,
     IntreHyperFusion_V2,
-    M2CAHyperACE,
     MMFullPAD_Tunnel,
     ModalFuseSE,
     HyperACE,
