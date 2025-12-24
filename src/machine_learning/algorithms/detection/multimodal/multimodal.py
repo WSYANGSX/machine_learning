@@ -36,6 +36,7 @@ class MultimodalDetection(AlgorithmBase):
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = False,
+        ema: bool = True,
     ) -> None:
         """
         Implementation of Multimodal object detection algorithm
@@ -47,6 +48,7 @@ class MultimodalDetection(AlgorithmBase):
             device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
+            ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
         """
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp)
 
@@ -218,7 +220,8 @@ class MultimodalDetection(AlgorithmBase):
                 self.device
             )  # (img_ids, class_ids, bboxes)
 
-            preds = self.net(imgs, irs)
+            net = self.net if not self.ema_enable else self.emas["net"].ema
+            preds = net(imgs, irs)
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # metrics

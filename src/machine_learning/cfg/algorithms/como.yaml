@@ -57,9 +57,6 @@ net:
   initialize_weights: True
   channel: 3
   net_scale: "s"
-  ema: True
-  decay: 0.9999
-  tau: 2000
 
 data:
   augment: True

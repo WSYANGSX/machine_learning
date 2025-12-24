@@ -2,49 +2,18 @@ from typing import Any
 from abc import ABC, abstractmethod
 
 import torch
-import contextlib
 import torch.nn as nn
 
 from machine_learning.utils.logger import LOGGER
-from machine_learning.utils.torch_utils import ModelEMA
 
 
 class BaseNet(nn.Module, ABC):
     def __init__(
         self,
-        ema: bool | None = None,
         *args,
         **kwargs,
     ):
         super().__init__()
-
-        # EMA basic config (can be re-enabled later)
-        self._ema_config = {
-            "decay": kwargs.get("ema_decay", 0.9999),
-            "tau": kwargs.get("ema_tau", 2000),
-        }
-
-        self._ema_enabled = ema
-        if self._ema_enabled:
-            self._ema = ModelEMA(
-                self,
-                decay=self._ema_config["decay"],
-                tau=self._ema_config["tau"],
-            )
-        else:
-            self._ema = None
-
-    @property
-    def ema(self) -> ModelEMA | None:
-        return self._ema
-
-    @property
-    def ema_enabled(self) -> bool:
-        return self._ema_enabled if self._ema_enabled is not None else False
-
-    @property
-    def ema_config(self) -> dict[str, Any]:
-        return self._ema_config.copy()
 
     @property
     def device(self) -> torch.device:
@@ -54,119 +23,6 @@ class BaseNet(nn.Module, ABC):
     @abstractmethod
     def dummy_input(self) -> Any:
         pass
-
-    def ema_update(self) -> None:
-        """Update EMA weights."""
-        if self.ema_enabled:
-            self.ema.update()
-
-    def enable_ema(self, decay: float | None = None, tau: int | None = None) -> None:
-        """(Re)enable EMA tracking with optional new hyperparameters."""
-        self._ema_enabled = True
-        if decay is not None:
-            self._ema_config["decay"] = decay
-        if tau is not None:
-            self._ema_config["tau"] = tau
-
-        self._ema = ModelEMA(
-            self,
-            decay=self._ema_config["decay"],
-            tau=self._ema_config["tau"],
-        )
-        LOGGER.info(
-            f"EMA enabled for {self.__class__.__name__} (decay={self._ema_config['decay']}, tau={self._ema_config['tau']})."
-        )
-
-    def disable_ema(self) -> None:
-        """Disable EMA tracking."""
-        self._ema_enabled = False
-        self._ema = None
-        LOGGER.info(f"EMA disabled for {self.__class__.__name__}.")
-
-    @contextlib.contextmanager
-    def ema_scope(self):
-        """EMA context manager."""
-        if not self.ema_enabled:
-            yield
-            return
-
-        self._ema.apply_shadow()
-        try:
-            yield
-        finally:
-            self._ema.restore()
-
-    def forward(self, *args, use_ema: bool | None = None, **kwargs):
-        """
-        Forward propagation, optionally using EMA weights.
-        """
-        if use_ema is None:
-            use_ema = (not self.training) and self.ema_enabled
-
-        if use_ema:
-            with self.ema_scope():
-                return self._forward_impl(*args, **kwargs)
-
-        else:
-            return self._forward_impl(*args, **kwargs)
-
-    @abstractmethod
-    def _forward_impl(self, *args, **kwargs):
-        raise NotImplementedError("The current class does not implement _forward_impl() method.")
-
-    def state_dict(self, *args, include_ema: bool = True, **kwargs):
-        """
-        Obtain the state dictionary.
-
-        Args:
-           include_ema (bool): Whether to include the EMA state.
-
-        """
-        state = super().state_dict(*args, **kwargs)
-
-        if include_ema and self.ema_enabled:
-            state["ema_state"] = self._ema.state_dict()
-            state["ema_config"] = self._ema_config
-            state["ema_enabled"] = self._ema_enabled
-
-        return state
-
-    def load_state_dict(self, state_dict, strict: bool = True):
-        """
-        Load status dictionary.
-
-        Args:
-            strict (bool): whether to strictly match the key.
-            load_ema (bool): whether to load the EMA state.
-        """
-        state_dict = dict(state_dict)
-
-        # Separate the EMA-related states
-        ema_state = state_dict.pop("ema_state", None)
-        ema_config = state_dict.pop("ema_config", None)
-        _ = state_dict.pop("ema_enabled", None)
-
-        # First, load the network weights
-        result = super().load_state_dict(state_dict, strict=strict)
-
-        if not self.ema_enabled:
-            return result
-
-        # Process EMA state
-        if ema_config is not None:
-            self._ema_config.update(ema_config)
-            LOGGER.info(f"Overwriting ema_config of {self.__class__.__name__} by cpkt.")
-
-            self._ema = ModelEMA(
-                self,
-                decay=self.ema_config["decay"],
-                tau=self.ema_config["tau"],
-            )
-
-        if ema_state is not None:
-            self.ema.load_state_dict(ema_state)
-
-        return result
 
     def _initialize_weights(self):
         LOGGER.info(f"Initializing weights of {self.__class__.__name__} with Kaiming normal...")
@@ -190,9 +46,6 @@ class BaseNet(nn.Module, ABC):
             elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
-
-        if self.ema_enabled and self._ema is not None:
-            self._ema.init_shadow()
 
     def view_structure(self):
         LOGGER.info(f"Model summary for {self.__class__.__name__}:")

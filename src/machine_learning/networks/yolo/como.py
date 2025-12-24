@@ -21,7 +21,6 @@ class COMONet(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "m", "l", "x"] = "n",
-        ema: bool = True,
         *args: tuple[Any, ...],
         **kwargs: dict[str, Any],
     ):
@@ -34,7 +33,7 @@ class COMONet(BaseNet):
             nc (int): number of classes.
             net_scale: The scale of the net.
         """
-        super().__init__(args=args, ema=ema, kwargs=kwargs)
+        super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
         self.nc = nc
@@ -367,7 +366,7 @@ class COMONet(BaseNet):
         )
         self.head.stride = self.stride
 
-    def _forward_impl(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
+    def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
         # The channel annotation takes "n" net scale as an example
         # backbone
         p3_rgb, p4_rgb, p5_rgb = self._rgb_forward_backbone(imgs)  # (64, 128, 256)

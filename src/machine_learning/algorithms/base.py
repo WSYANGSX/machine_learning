@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.networks import BaseNet, NET_MAPS
+from machine_learning.utils.torch_utils import ModelEMA
 from machine_learning.utils import get_gpu_mem, load_cfg
 from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
 from machine_learning.data.dataset import ParserBase, PARSER_MAPS, build_dataset, build_dataloader
@@ -27,16 +28,18 @@ class AlgorithmBase(ABC):
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool | None = None,
+        ema: bool | None = False,
     ):
-        """Base class of all algorithms
+        """Base class of all algorithms.
 
         Args:
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             net (BaseNet): Neural neural required by the algorithm, provided by other algorithms externally.
             name (str, optional): Name of the algorithm. Defaults to None.
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
+            ema (bool): Whether to enable Exponential Moving Average. Defaults to False.
         """
         super().__init__()
 
@@ -67,6 +70,9 @@ class AlgorithmBase(ABC):
         # net
         self.provided_net = net
 
+        # ema
+        self.ema_enable = ema
+
         # amp
         self._init_amp(amp)
 
@@ -75,8 +81,14 @@ class AlgorithmBase(ABC):
         train_cfg: dict[str, Any],
         dataset: str | Mapping[str, Any],
     ) -> None:
-        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the
-        dataset cfg and trainer cfg are created here."""
+        """
+        Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the
+        dataset cfg and trainer cfg are created here.
+
+        Args:
+            train_cfg (Mapping[str, Any]): Configuration of the trainer.
+            dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
+        """
         self._add_cfg("trainer", train_cfg)
         self._trainer_cfg = train_cfg
         self.epochs = train_cfg.get("epochs")
@@ -89,11 +101,23 @@ class AlgorithmBase(ABC):
         self._build_net(self.provided_net)
         self._init_nets()
 
+        # init ema
+        if self.ema_enable:
+            self._init_ema()
+
         # init opts and schedulers
         self._init_optimizers()
         self._init_schedulers()
 
     def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any], use_dataset: bool) -> None:
+        """
+        Initialize the evaluation dataset, dataloader, net, and load the checkpoint weights.
+
+        Args:
+            ckpt (FilePath): Checkpoint file path.
+            dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
+            use_dataset (bool): Whether to use the dataset provided by the evaluator.
+        """
         # init test dataset and test dataloader
         if use_dataset:
             self._init_eval_dataset(dataset)
@@ -104,81 +128,110 @@ class AlgorithmBase(ABC):
 
         # build net
         self._build_net(self.provided_net)
-        self.load(ckpt)
+
+        # load net weights from ema
+        self.load(ckpt, load_ema=True)
+
+        self.ema_enable = False  # disable ema for evaluation
+        self.set_eval()
 
     @property
     def train_dataset(self) -> None | Dataset:
+        """Return the training dataset if initialized."""
         return self._train_dataset if hasattr(self, "_train_dataset") else None
 
     @property
     def val_dataset(self) -> None | Dataset:
+        """Return the validation dataset if initialized."""
         return self._val_dataset if hasattr(self, "_val_dataset") else None
 
     @property
     def test_dataset(self) -> None | Dataset:
+        """Return the test dataset if initialized."""
         return self._test_dataset if hasattr(self, "_test_dataset") else None
 
     @property
     def train_loader(self) -> None | DataLoader:
+        """Return the training dataloader if initialized."""
         return self._train_loader if hasattr(self, "_train_loader") else None
 
     @property
     def val_loader(self) -> None | DataLoader:
+        """Return the validation dataloader if initialized."""
         return self._val_loader if hasattr(self, "_val_loader") else None
 
     @property
     def test_loader(self) -> None | DataLoader:
+        """Return the test dataloader if initialized."""
         return self._test_loader if hasattr(self, "_test_loader") else None
 
     @property
     def train_batches(self) -> int:
+        """Return the number of training batches if initialized."""
         return self._train_batches if hasattr(self, "_train_batches") else None
 
     @property
     def val_batches(self) -> int:
+        """Return the number of validation batches if initialized."""
         return self._val_batches if hasattr(self, "_val_batches") else None
 
     @property
     def test_batches(self) -> int:
-        return self._val_batches if hasattr(self, "_test_batches") else None
+        """Return the number of test batches if initialized."""
+        return self._test_batches if hasattr(self, "_test_batches") else None
 
     @property
     def name(self) -> str:
+        """Return the name of the algorithm."""
         return self._name
 
     @property
     def nets(self) -> dict[str, BaseNet]:
+        """Return the networks of the algorithm."""
         return self._nets
 
     @property
     def optimizers(self) -> dict[str, BaseNet]:
+        """Return the optimizers of the algorithm."""
         return self._optimizers
 
     @property
     def schedulers(self) -> dict[str, BaseNet]:
+        """Return the schedulers of the algorithm."""
         return self._schedulers
 
     @property
     def cfg(self) -> dict:
+        """Return the configuration of the algorithm."""
         return self._cfg
 
     @property
     def flatten_cfg(self) -> dict:
+        """Return the flattened configuration of the algorithm."""
         return self._flatten_cfg
 
     @property
     def dataset_cfg(self) -> dict:
+        """Return the dataset configuration of the algorithm."""
         return self._dataset_cfg
 
     @property
     def trainer_cfg(self) -> dict:
+        """Return the trainer configuration of the algorithm."""
         return self._trainer_cfg
 
     @property
     def device(self) -> torch.device:
+        """Return the running device of the algorithm."""
         return self._device
 
     def _load_config(self, cfg: str | Mapping[str, Any]) -> dict:
+        """
+        Load configuration from file path or dict.
+
+        Args:
+            cfg (FilePath | Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
+        """
         if isinstance(cfg, str):
             cfg = os.path.join(ALGOCFG_PATH, cfg)
         cfg = load_cfg(cfg)
@@ -186,6 +239,12 @@ class AlgorithmBase(ABC):
         return cfg
 
     def _load_datasetcfg(self, cfg: str | Mapping[str, Any]) -> dict:
+        """
+        Load dataset configuration from file path or dict.
+
+        Args:
+            cfg (FilePath | Mapping[str, Any]): Dataset configuration of the algorithm (yaml file path or cfg dict).
+        """
         if isinstance(cfg, str):
             cfg = os.path.join(DATACFG_PATH, cfg)
         cfg = load_cfg(cfg)
@@ -193,6 +252,12 @@ class AlgorithmBase(ABC):
         return cfg
 
     def _build_net(self, net: BaseNet) -> None:
+        """
+        Build the network of the algorithm.
+
+        Args:
+            net (BaseNet): Neural neural required by the algorithm, provided externally.
+        """
         LOGGER.info(f"Building network of {self.name}...")
 
         if net is not None:
@@ -203,42 +268,82 @@ class AlgorithmBase(ABC):
                 if key in self.net.__dict__:
                     self.cfg["net"][key] = self.net.__dict__[key]
         else:
-            LOGGER.info("No outside net provided, building net from default configuration...")
+            LOGGER.info(f"No outside nets provided, building nets of {self.name} from default configuration...")
             if issubclass(NET_MAPS[self.name], BaseNet):
-                LOGGER.info(f"Adding network {net.__class__.__name__}...")
                 self.net = NET_MAPS[self.name](**self.flatten_cfg)
                 self._add_net("net", self.net)
 
     def _add_cfg(self, name, cfg: dict[str, Any]) -> None:
-        """add additional configuration parameters."""
+        """
+        Add additional configuration parameters.
+
+        Args:
+            name (str): The name of the configuration section.
+            cfg (Mapping[str, Any]): The configuration dictionary to add.
+        """
         if name not in self.cfg:
             self.cfg[name] = cfg
         else:
             self.cfg[name].update(cfg)
 
     def _add_net(self, name: str, net: BaseNet) -> None:
+        """
+        Add a network to the algorithm.
+
+        Args:
+            name (str): The name of the network.
+            net (BaseNet): The network instance to add.
+        """
+        LOGGER.info(f"Adding network {net.__class__.__name__}...")
         self._nets.update({name: net})
 
     def _add_optimizer(self, name: str, optimizer: Optimizer) -> None:
+        """
+        Add an optimizer to the algorithm.
+
+        Args:
+            name (str): The name of the optimizer.
+            optimizer (Optimizer): The optimizer instance to add.
+        """
         self._optimizers.update({name: optimizer})
 
     def _add_scheduler(self, name: str, scheduler: LRScheduler) -> None:
+        """
+        Add a scheduler to the algorithm.
+
+        Args:
+            name (str): The name of the scheduler.
+            scheduler (LRScheduler): The scheduler instance to add.
+        """
         self._schedulers.update({name: scheduler})
 
     def _configure_device(self, device: str) -> torch.device:
+        """
+        Configure the running device of the algorithm.
+
+        Args:
+            device (str): The device to run the algorithm on.
+        """
         if device == "auto":
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device)
 
     def _validate_config(self):
-        """Validate the config of the algorithm"""
+        """
+        Validate the necessary config of the algorithm.
+        """
         required_sections = ["algorithm", "net", "optimizer", "scheduler", "data"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
 
     def parse_dataset(self, dataset: str | Mapping[str, Any]) -> tuple:
-        """Parse dataset info by configuration."""
+        """
+        Parse dataset info by configuration.
+
+        Args:
+            dataset (str | Mapping[str, Any]): The dataset configuration.
+        """
         LOGGER.info("Parsing dataset cfg...")
         dataset_cfg = self._load_datasetcfg(dataset)
         self._add_cfg("data", {"dataset": dataset_cfg})
@@ -256,6 +361,16 @@ class AlgorithmBase(ABC):
             raise ValueError("The data type must be provided for Dataset mapping.")
 
         return type, trian_parsing, val_parsing, test_parsing
+
+    def _init_ema(self) -> None:
+        """
+        Initialize Exponential Moving Average (EMA) for the networks.
+        """
+        LOGGER.info(f"Initializing EMA for the networks of {self.name}...")
+        self.emas = {}
+
+        for key, net in self.nets.items():
+            self.emas[key] = ModelEMA(net)
 
     def _init_train_datasets(self, dataset: str | Mapping[str, Any]) -> None:
         """Initialize train and val datasets of the algorithm."""
@@ -323,10 +438,7 @@ class AlgorithmBase(ABC):
             net.to(self._device)
             if self.cfg["net"]["initialize_weights"]:
                 net._initialize_weights()
-                if net.enable_ema and net.ema is not None:
-                    LOGGER.info(f"EMA enabled of {net.__class__.__name__}.")
-                else:
-                    LOGGER.info(f"EMA disabled of {net.__class__.__name__}.")
+
             net.view_structure()
 
     def _init_amp(self, amp: bool | None = None) -> None:
@@ -500,8 +612,9 @@ class AlgorithmBase(ABC):
             else:
                 self.optimizer.step()
 
-            for net in self.nets.values():
-                net.ema_update()  # Update EMA on the Internet by itself
+            if self.ema_enable:
+                for key, ema in self.emas.items():
+                    ema.update(self.nets[key])  # Update EMA
 
             self.optimizer.zero_grad()
             self.last_opt_step = batches
@@ -530,6 +643,7 @@ class AlgorithmBase(ABC):
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
             "ckpt_dir": ckpt_dir,
+            "emas": None,
         }
 
         for key, val in val_info.items():
@@ -537,7 +651,7 @@ class AlgorithmBase(ABC):
 
         # save the nets' parameters
         for key, net in self.nets.items():
-            state["nets"][key] = net.state_dict(include_ema=True)  # include EMA
+            state["nets"][key] = net.state_dict()
 
         # save the optimizers' parameters
         for key, optimizer in self.optimizers.items():
@@ -551,11 +665,29 @@ class AlgorithmBase(ABC):
         if self.scaler is not None:
             state["scaler"] = self.scaler.state_dict()
 
+        # save ema
+        if self.ema_enable:
+            emas = {}
+            for key, ema in self.emas.items():
+                emas[key] = {
+                    "model_state": ema.ema.state_dict(),
+                    "updates": ema.updates,
+                }
+            state["emas"] = emas
+
         torch.save(state, save_path)
         LOGGER.info(f"Saved checkpoint to {save_path}.")
 
-    def load(self, checkpoint: str, use_ema_as_weights: bool = False, load_ema: bool = True) -> dict[str, Any]:
-        "Load checkpoint."
+    def load(self, checkpoint: str, load_ema: bool = False) -> dict[str, Any]:
+        """
+        Load checkpoint.
+
+        Args:
+            checkpoint (str): The path of checkpoint.
+            load_ema (bool): Whether to load ema parameters to nets for eval mode. Defaults to False.
+        Returns:
+            dict: The state dict loaded from checkpoint.
+        """
         state = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
         # cfg
@@ -567,33 +699,25 @@ class AlgorithmBase(ABC):
         self.amp = state.get("amp", False)
 
         # load the nets' parameters
-        for key, net in self.nets.items():
-            if key not in state["nets"]:
-                LOGGER.warning(f"Network '{key}' not found in checkpoint, skipping.")
-                continue
-
-            net_state = dict(state["nets"][key])
-            ema_state = net_state.get("ema_state", None)
-
-            if not load_ema:
-                net_state.pop("ema_state", None)
-                net_state.pop("ema_config", None)
-                net_state.pop("ema_enabled", None)
-
-            net.load_state_dict(state["nets"][key], strict=True)
-            net.to(self.device)
-
-            if use_ema_as_weights and ema_state is not None:
-                shadow = ema_state.get("shadow", {})
-                with torch.no_grad():
-                    for name, param in net.named_parameters():
-                        if param.requires_grad and name in shadow:
-                            param.data.copy_(shadow[name].to(param.device))
-                # For reasoning purposes, EMA will no longer be maintained
-                if hasattr(net, "_ema"):
-                    net._ema = None
-                if hasattr(net, "_ema_enabled"):
-                    net._ema_enabled = False
+        if load_ema and state.get("emas") is not None:
+            for key, net in self.nets.items():
+                if key in state["emas"]:
+                    ema_state = state["emas"][key]
+                    if isinstance(ema_state, dict) and "model_state" in ema_state:
+                        net.load_state_dict(ema_state["model_state"], strict=True)
+                        LOGGER.debug(f"Loaded EMA parameters into network '{key}' for evaluation.")
+                    else:
+                        LOGGER.warning(f"Invalid EMA state format for network '{key}', loading normal weights.")
+                        if key in state["nets"]:
+                            net.load_state_dict(state["nets"][key], strict=True)
+                else:
+                    LOGGER.warning(f"EMA for network '{key}' not found in checkpoint, loading normal weights.")
+                    if key in state["nets"]:
+                        net.load_state_dict(state["nets"][key], strict=True)
+        else:
+            for key, net in self.nets.items():
+                net.load_state_dict(state["nets"][key], strict=True)
+                net.to(self.device)
 
         # load the optimizers' parameters
         for key, optimizer in self.optimizers.items():
@@ -628,6 +752,20 @@ class AlgorithmBase(ABC):
             LOGGER.warning("AMP enabled but checkpoint has no scaler, use new scaler.")
             if self.scaler is None:
                 self.scaler = GradScaler()
+
+        # load ema
+        if self.ema_enable:
+            if state.get("emas") is None:
+                LOGGER.warning("EMA enabled but checkpoint has no EMA states, Creating new EMAs.")
+                self._init_ema()
+            else:
+                for key, ema in self.emas.items():
+                    if key in state["emas"]:
+                        ema_state = state["emas"][key]
+                        # restore ema state
+                        ema.ema.load_state_dict(ema_state["model_state"])
+                        ema.updates = ema_state.get("updates", 0)
+                        LOGGER.info(f"Loaded EMA for network '{key}' (updates: {ema.updates}).")
 
         LOGGER.info(f"Successfully loaded checkpoint from {checkpoint}.")
         if "epoch" in state:
