@@ -1,3 +1,4 @@
+import time
 from machine_learning.networks.yolo.m2i2ha import M2I2HANet_v8
 from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
@@ -18,7 +19,7 @@ def main():
         log_interval=10,
         save_interval=10,
         save_best=True,
-        seed=24,
+        seed=int(time.time()),
     )
     trainer = Trainer(trainer_cfg, m2i2ha, "drone_vehicle.yaml")
 
