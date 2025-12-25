@@ -589,9 +589,15 @@ class AlgorithmBase(ABC):
         elif mode == "val":
             print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
 
-    def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int) -> dict[str, float]:
-        """Train a single epoch"""
+    def train_epoch(
+        self, epoch: int, writer: SummaryWriter, log_interval: int
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Returns training metrics and info dict for the epoch."""
         self.set_train()
+
+    def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Returns val metrics and info dict for the epoch."""
+        self.set_eval()
 
     def backward(self, loss: torch.Tensor) -> None:
         if self.scaler:
@@ -618,10 +624,6 @@ class AlgorithmBase(ABC):
 
             self.optimizer.zero_grad()
             self.last_opt_step = batches
-
-    def validate(self) -> dict[str, float]:
-        """Validate after a single train epoch"""
-        self.set_eval()
 
     @abstractmethod
     def eval(self, *args, **kwargs) -> None:

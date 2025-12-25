@@ -23,7 +23,7 @@ from machine_learning.utils.detection import (
     ap_per_class,
     pad_to_square,
     visualize_img_bboxes,
-    rescale_boxes
+    rescale_boxes,
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
@@ -184,7 +184,7 @@ class YoloV13(AlgorithmBase):
             # log
             self.pbar_log("train", pbar, epoch, **metrics)
 
-        return metrics
+        return metrics, {}
 
     def close_dataloader_mosaic(self) -> None:
         if hasattr(self.train_loader.dataset, "close_mosaic"):
@@ -209,6 +209,7 @@ class YoloV13(AlgorithmBase):
             "mAP.75": None,
             "mAP.5-.95": None,
         }
+        info = {}
         self.print_metric_titles("val", metrics)
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
@@ -284,6 +285,17 @@ class YoloV13(AlgorithmBase):
                         *stats, plot=self.plot, save_dir=self.trainer_cfg["log_dir"], names=self.class_names
                     )
                     ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
+                    
+                    # AP value for each category
+                    info["ap_per_class"] = {}
+                    for idx, class_idx in enumerate(ap_class):
+                        class_name = (
+                            self.class_names[class_idx]
+                            if hasattr(self, "class_names") and self.class_names
+                            else f"Class {class_idx}"
+                        )
+                        info["ap_per_class"][class_name] = (ap50[idx], ap75[idx], ap[idx])
+                    
                     mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
                     nt = np.bincount(
                         stats[3].cpu().numpy().astype(np.int64), minlength=self.nc

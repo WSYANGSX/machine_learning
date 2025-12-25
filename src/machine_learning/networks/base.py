@@ -1,4 +1,5 @@
 from typing import Any
+from copy import deepcopy
 from abc import ABC, abstractmethod
 
 import torch
@@ -49,16 +50,6 @@ class BaseNet(nn.Module, ABC):
 
     def view_structure(self):
         LOGGER.info(f"Model summary for {self.__class__.__name__}:")
-
-        # Check if thop is available
-        try:
-            from thop import profile, clever_format
-            from copy import deepcopy
-
-            thop_available = True
-        except ImportError:
-            thop_available = False
-            LOGGER.warning("Please install 'thop' for FLOPs calculation: pip install thop")
 
         records = []
         tensor_to_idx: dict[int, int] = {}  # id(tensor) -> layer_idx
@@ -237,47 +228,71 @@ class BaseNet(nn.Module, ABC):
         # Statistics of total parameters
         total_params = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(
+            f"Total params: {total_params:,} | Trainable params: {trainable:,}"
+            f" | Non-trainable params: {total_params - trainable:,}"
+        )
 
-        # Safely calculate FLOPs
-        if thop_available and hasattr(self, "dummy_input"):
-            try:
-                # Note: The inputs parameter of thop needs to be a tuple.
-                dummy_input = self.dummy_input
-                if isinstance(dummy_input, tuple):
-                    inputs_for_thop = dummy_input
-                elif isinstance(dummy_input, dict):
-                    inputs_for_thop = tuple(dummy_input.values())
-                else:
-                    inputs_for_thop = (dummy_input,)
+        try:
+            macs, flops = self.get_flops()
+            print(f"MACs (Multiply-Accumulates): {macs} | FLOPs (estimated): {flops}")
 
-                macs, params = profile(
-                    deepcopy(self),
-                    inputs=inputs_for_thop,
-                    verbose=False,
-                    custom_ops={
-                        nn.LayerNorm: None,
-                        nn.GroupNorm: None,
-                        nn.InstanceNorm1d: None,
-                        nn.InstanceNorm2d: None,
-                        nn.InstanceNorm3d: None,
-                    },
-                )
-                macs_formatted, params_formatted = clever_format([macs, params], "%.3f")
-                # 估算FLOPs（MACs × 2）
-                flops = macs * 2
-                flops_formatted, _ = clever_format([flops, params], "%.3f")
+        except ImportError as e:
+            LOGGER.warning(f"{e} Skipping FLOPs calculation.")
+        except (AttributeError, ValueError, RuntimeError) as e:
+            LOGGER.warning(f"FLOPs calculation skipped: {e}")
+        except Exception as e:
+            LOGGER.warning(f"Unexpected error during FLOPs calculation: {e}")
 
-                print(f"\nTotal params: {total_params:,}")
-                print(f"Trainable params: {trainable:,}")
-                print(f"Non-trainable params: {total_params - trainable:,}")
-                print(f"MACs (Multiply-Accumulates): {macs_formatted}")
-                print(f"FLOPs (estimated): {flops_formatted}.")
+    def get_flops(self):
+        """Return this model's FLOPs."""
+        # Check if thop is available
+        try:
+            from thop import profile, clever_format
 
-            except Exception as e:
-                print(f"\nTotal params: {total_params:,}, Trainable params: {trainable:,}")
-                print(f"MACs/FLOPs calculation failed: {e}.")
+        except ImportError:
+            raise ImportError("Please install 'thop' for FLOPs calculation: pip install thop.")
 
-        else:
-            print(f"\nTotal params: {total_params:,}, Trainable params: {trainable:,}")
-            if not thop_available:
-                print("Install 'thop' for MACs calculation: pip install thop.")
+        if not hasattr(self, "dummy_input"):
+            raise AttributeError(
+                f"Model {self.__class__.__name__} has no 'dummy_input' attribute. "
+                "Please define dummy_input property for FLOPs calculation."
+            )
+
+        dummy_input = self.dummy_input
+        try:
+            # Note: The inputs parameter of thop needs to be a tuple.
+            if isinstance(dummy_input, tuple):
+                inputs_for_thop = dummy_input
+            elif isinstance(dummy_input, dict):
+                inputs_for_thop = tuple(dummy_input.values())
+            else:
+                inputs_for_thop = (dummy_input,)
+        except Exception as e:
+            raise ValueError(f"Failed to process dummy_input: {e}. dummy_input should be torch.Tensor, tuple, or dict.")
+
+        # Calculate FLOPs
+        try:
+            macs, params = profile(
+                deepcopy(self),
+                inputs=inputs_for_thop,
+                verbose=False,
+                custom_ops={
+                    nn.LayerNorm: None,
+                    nn.GroupNorm: None,
+                    nn.InstanceNorm1d: None,
+                    nn.InstanceNorm2d: None,
+                    nn.InstanceNorm3d: None,
+                },
+            )
+            macs_formatted, params_formatted = clever_format([macs, params], "%.3f")
+            # Estimate FLOPs (MACs × 2)
+            flops = macs * 2
+            flops_formatted, _ = clever_format([flops, params], "%.3f")
+
+            return macs_formatted, flops_formatted
+
+        except Exception as e:
+            raise RuntimeError(
+                f"FLOPs calculation failed: {e}. This could be due to unsupported operations or input format."
+            )

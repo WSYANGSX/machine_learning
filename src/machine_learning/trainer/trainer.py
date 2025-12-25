@@ -77,8 +77,8 @@ class Trainer:
         self._setup_train()
 
         for epoch in range(start_epoch, self.cfg.epochs):
-            train_metrics = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
-            val_metrics = self.algorithm.validate()
+            train_metrics, train_info = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+            val_metrics, val_info = self.algorithm.validate()
 
             # adjust the learning rate
             if len(self.algorithm.schedulers) == 1:  # single net, single optimizer
@@ -150,20 +150,20 @@ class Trainer:
     def epoch_info(
         self,
         epoch: int,
-        trian_metrics: dict[Any] | None = None,
-        val_metrics: dict[Any] | None = None,
+        trian_info: dict[Any] | None = None,
+        val_info: dict[Any] | None = None,
     ) -> None:
         log_table = PrettyTable()
         log_table.title = f"Epoch info: {epoch + 1}"
         log_table.field_names = ["metrics", "Value"]
 
         rows = []
-        if trian_metrics:
-            for key, val in trian_metrics.items():
+        if trian_info:
+            for key, val in trian_info.items():
                 rows.append([f"train: {key}", val])
-        if val_metrics:
-            for key, val in val_metrics.items():
-                rows.append([f"train: {key}", val])
+        if val_info:
+            for key, val in val_info.items():
+                rows.append([f"val: {key}", val])
         for key, opt in self._algorithm._optimizers.items():
             rows.append([f"{key} lr", opt.param_groups[0]["lr"]])
 
