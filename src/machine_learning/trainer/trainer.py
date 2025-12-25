@@ -121,10 +121,10 @@ class Trainer:
                 self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=False)
 
             # print epoch information
-            if epoch != self.epochs:
-                self.epoch_info(epoch=epoch)
+            if epoch == self.epochs - 1:
+                self.epoch_info(epoch=epoch, val_info=val_info)
             else:
-                self.epoch_info(epoch=epoch, val_metrics=val_metrics)
+                self.epoch_info(epoch=epoch)
 
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)

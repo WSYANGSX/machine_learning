@@ -20,7 +20,7 @@ def main():
     trainer = Trainer(trainer_cfg, como, "drone_vehicle.yaml")
 
     # Step 3: Train the model
-    trainer.train()
+    trainer.train_from_checkpoint("/home/yangxf/WorkSpace/machine_learning/checkpoints/como/1/checkpoint_epoch_140.pth")
 
 
 if __name__ == "__main__":

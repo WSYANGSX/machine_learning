@@ -3,11 +3,7 @@ from typing import Literal, Any
 import torch
 import torch.nn as nn
 
-try:
-    from thop import profile  # pip install thop
-except ImportError:
-    profile = None
-
+from copy import deepcopy
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import FusionMamba, FourInputFusionBlock

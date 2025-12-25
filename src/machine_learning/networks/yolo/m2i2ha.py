@@ -3,6 +3,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
+from copy import deepcopy
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (

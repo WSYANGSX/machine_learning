@@ -694,8 +694,8 @@ class AlgorithmBase(ABC):
 
         # cfg
         self._cfg = state["cfg"]  # include dataset, trainer
-        self._dataset_cfg = self._cfg["data"].get("dataset", {})
-        self._trainer_cfg = self._cfg["data"].get("trainer", {})
+        self._dataset_cfg = self._cfg.get("dataset", {})
+        self._trainer_cfg = self._cfg.get("trainer", {})
 
         self.last_opt_step = state.get("last_opt_step", -1)
         self.amp = state.get("amp", False)

@@ -287,7 +287,7 @@ class BaseNet(nn.Module, ABC):
             )
             macs_formatted, params_formatted = clever_format([macs, params], "%.3f")
             # Estimate FLOPs (MACs × 2)
-            flops = macs * 2
+            flops = macs * 2  # use real input size for FLOPs estimation
             flops_formatted, _ = clever_format([flops, params], "%.3f")
 
             return macs_formatted, flops_formatted
