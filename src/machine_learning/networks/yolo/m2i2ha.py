@@ -25,18 +25,18 @@ class M2I2HANet_v8(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
-        ema: bool = True,
         *args,
         **kwargs,
     ):
-        """Multimodal object detection network.
+        """M2I2HA multi-modal object detection network with yolov8 FENs.
 
         Args:
-            img_shape (Sequence[int]): the shape of input rgb image.
-            ir_shape (Sequence[int]): the shape of input ir image.
-            num_classes (int): number of classes.
+            imgsz (int): the size of input images.
+            channels (int): number of input channels.
+            nc (int): number of classes.
+            net_scale (Literal["n", "s", "l", "x"]): scale of the network.
         """
-        super().__init__(args=args, ema=ema, kwargs=kwargs)
+        super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
         self.nc = nc
@@ -88,8 +88,8 @@ class M2I2HANet_v8(BaseNet):
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 12, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": IntreHyperFusion_V2(128, 128, 16, 0.5),
-                    "Downsample_3": DownsampleConv(128),
+                    "CHyperACE": IntreHyperFusion_V2(256, 128, 16, 0.5),
+                    "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
@@ -288,18 +288,18 @@ class M2I2HANet_v13(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
-        ema: bool = True,
         *args,
         **kwargs,
     ):
-        """Multimodal object detection network.
+        """M2I2HA multi-modal object detection network with yolov13 FENs.
 
         Args:
-            img_shape (Sequence[int]): the shape of input rgb image.
-            ir_shape (Sequence[int]): the shape of input ir image.
-            num_classes (int): number of classes.
+            imgsz (int): the size of input images.
+            channels (int): number of input channels.
+            nc (int): number of classes.
+            net_scale (Literal["n", "s", "l", "x"]): scale of the network.
         """
-        super().__init__(args=args, ema=ema, kwargs=kwargs)
+        super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
         self.nc = nc
@@ -436,130 +436,10 @@ class M2I2HANet_v13(BaseNet):
             self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
         elif self.net_scale == "l":
-            # img backbone
-            self.img_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
-                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
-                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
-                }
-            )
-            # ir backbone
-            self.ir_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 64, 3, 2),  # 0 P1/2 (3, 640, 640) -> (64, 320, 320)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # 1 P2/4 (64, 320, 320) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # 2 (P2) (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # 3 P3/8 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # 4 (P3) (256, 80, 80) -> (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # 5 P4/16 (512, 80, 80) -> (512, 40, 40)
-                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # 6 (P4) (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # 7 P5/32 (512, 40, 40) -> (512, 20, 20)
-                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # 8 (P5) (512, 20, 20)
-                }
-            )
-            # neck
-            self.neck = nn.ModuleDict(
-                {
-                    # uable to train
-                    "Upsample": nn.Upsample(None, 2, "nearest"),
-                    "Cat": Concat(1),
-                    # able to train
-                    "HyperACE_Img": HyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both", False),
-                    "Downsample_1": DownsampleConv(512, False),
-                    "HyperACE_Ir": HyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both", False),
-                    "Downsample_2": DownsampleConv(512, False),
-                    "CHyperACE": CHyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both"),
-                    "Downsample_3": DownsampleConv(512, False),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "DSC3k2_1": DSC3k2(1024, 512, 2, True),
-                    "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
-                    "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1_1": Conv(512, 256, 1, 1),
-                    "Conv_1_2": Conv(512, 256, 1, 1),
-                    "Conv_1_3": Conv(512, 256, 1, 1),
-                    "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
-                    "Conv_2": Conv(256, 256, 3, 2),
-                    "DSC3k2_3": DSC3k2(768, 512, 2, True),
-                    "MMFullPAD_Tunnel_6": MMFullPAD_Tunnel(),
-                    "Conv_3": Conv(512, 512, 3, 2),
-                    "DSC3k2_4": DSC3k2(1024, 512, 2, True),
-                    "MMFullPAD_Tunnel_7": MMFullPAD_Tunnel(),
-                }
-            )
-            # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
+            raise NotImplementedError("M2I2HANet_v13 'l' scale is not implemented yet.")
 
         else:
-            # img backbone
-            self.img_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 96, 3, 2),  # 0 P1/2  (3, 640, 640) -> (96, 320, 320)
-                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # 1 P2/4 (96, 320, 320) -> (192, 160, 160)
-                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # 2 (P2) (192, 160, 160) -> (384, 160, 160)
-                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # 3 P3/8 (384, 160, 160) -> (384, 80, 80)
-                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # 4 (P3) (384, 80, 80) -> (768, 80, 80)
-                    "DSConv_1": DSConv(768, 768, 3, 2),  # 5 P4/16 (768, 80, 80) -> (768, 40, 40)
-                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # 6 (P4) (768, 40, 40)
-                    "DSConv_2": DSConv(768, 768, 3, 2),  # 7 P5/32 (768, 40, 40) -> (768, 20, 20)
-                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
-                }
-            )
-            # ir backbone
-            self.ir_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 96, 3, 2),  # 0 P1/2  (3, 640, 640) -> (96, 320, 320)
-                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # 1 P2/4 (96, 320, 320) -> (192, 160, 160)
-                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # 2 (P2) (192, 160, 160) -> (384, 160, 160)
-                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # 3 P3/8 (384, 160, 160) -> (384, 80, 80)
-                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # 4 (P3) (384, 80, 80) -> (768, 80, 80)
-                    "DSConv_1": DSConv(768, 768, 3, 2),  # 5 P4/16 (768, 80, 80) -> (768, 40, 40)
-                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # 6 (P4) (768, 40, 40)
-                    "DSConv_2": DSConv(768, 768, 3, 2),  # 7 P5/32 (768, 40, 40) -> (768, 20, 20)
-                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # 8 (P5) (768, 20, 20)
-                }
-            )
-            # neck
-            self.neck = nn.ModuleDict(
-                {
-                    # uable to train
-                    "Upsample": nn.Upsample(None, 2, "nearest"),
-                    "Cat": Concat(1),
-                    # able to train
-                    "HyperACE_Img": HyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both", False),
-                    "Downsample_1": DownsampleConv(768, False),
-                    "HyperACE_Ir": HyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both", False),
-                    "Downsample_2": DownsampleConv(768, False),
-                    "CHyperACE": CHyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both"),
-                    "Downsample_3": DownsampleConv(768, False),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "DSC3k2_1": DSC3k2(1536, 768, 1, True),
-                    "MMFullPAD_Tunnel_4": MMFullPAD_Tunnel(),
-                    "DSC3k2_2": DSC3k2(1536, 384, 1, True),
-                    "Conv_1_1": Conv(768, 384, 1, 1),
-                    "Conv_1_2": Conv(768, 384, 1, 1),
-                    "Conv_1_3": Conv(768, 384, 1, 1),
-                    "MMFullPAD_Tunnel_5": MMFullPAD_Tunnel(),
-                    "Conv_2": Conv(384, 384, 3, 2),
-                    "DSC3k2_3": DSC3k2(1152, 768, 1, True),
-                    "MMFullPAD_Tunnel_6": MMFullPAD_Tunnel(),
-                    "Conv_3": Conv(768, 768, 3, 2),
-                    "DSC3k2_4": DSC3k2(1536, 768, 1, True),
-                    "MMFullPAD_Tunnel_7": MMFullPAD_Tunnel(),
-                }
-            )
-            # head
-            self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
+            raise NotImplementedError("M2I2HANet_v13 'x' scale is not implemented yet.")
 
     @property
     def dummy_input(self) -> tuple[torch.Tensor]:
