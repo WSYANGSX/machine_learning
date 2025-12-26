@@ -84,9 +84,9 @@ class M2I2HANet_v8(BaseNet):
                     "ModalFuseSE_1": ModalFuseSE(128),
                     "ModalFuseSE_2": ModalFuseSE(128),
                     "ModalFuseSE_3": ModalFuseSE(256),
-                    "HyperACE_Img": IntraHyperEnhance(128, 128, 2, 12, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Img": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_1": DownsampleConv(128),
-                    "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 12, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
                     "CHyperACE": IntreHyperFusion_V2(256, 128, 16, 0.5),
                     "Conv_0": Conv(128, 256, 1, 1),
@@ -153,11 +153,11 @@ class M2I2HANet_v8(BaseNet):
                     "ModalFuseSE_1": ModalFuseSE(256),
                     "ModalFuseSE_2": ModalFuseSE(256),
                     "ModalFuseSE_3": ModalFuseSE(512),
-                    "HyperACE_Img": IntraHyperEnhance(256, 256, 1, 8, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Img": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_1": DownsampleConv(256),
-                    "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 8, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusion_V2(512, 256, 8, 0.5),
+                    "CHyperACE": IntreHyperFusion_V2(512, 256, 12, 0.5),
                     "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -214,25 +214,18 @@ class M2I2HANet_v8(BaseNet):
         img_h1 = self.neck.Upsample(img_h2)
         ir_h1 = self.neck.Upsample(ir_h2)
 
-        img_enhanced.append(img_h1)
-        ir_enhanced.append(ir_h1)
-        img_enhanced.append(img_h2)
-        ir_enhanced.append(ir_h2)
-
         img_h3 = self.neck.Downsample_1(img_h2)
         ir_h3 = self.neck.Downsample_2(ir_h2)
 
-        img_enhanced.append(img_h3)
-        ir_enhanced.append(ir_h3)
+        img_enhanced.extend([img_h1, img_h2, img_h3])
+        ir_enhanced.extend([ir_h1, ir_h2, ir_h3])
 
         # Cross HyerACE
         fuse_enhanced = []
         fuse_h3 = self.neck.CHyperACE([img_enhanced[2], ir_enhanced[2]])
         fuse_h2 = self.neck.Upsample(fuse_h3)
         fuse_h1 = self.neck.Upsample(fuse_h2)
-        fuse_enhanced.append(fuse_h1)
-        fuse_enhanced.append(fuse_h2)
-        fuse_enhanced.append(self.neck.Conv_0(fuse_h3))
+        fuse_enhanced.extend([fuse_h1, fuse_h2, self.neck.Conv_0(fuse_h3)])
 
         f1 = self.neck.FullPAD_Tunnel_1([features_fuse[0], fuse_enhanced[0]])
         f2 = self.neck.FullPAD_Tunnel_2([features_fuse[1], fuse_enhanced[1]])
@@ -342,12 +335,15 @@ class M2I2HANet_v13(BaseNet):
                     "Upsample": nn.Upsample(None, 2, "nearest"),
                     "Cat": Concat(1),
                     # able to train
-                    "HyperACE_Img": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
+                    "ModalFuseSE_1": ModalFuseSE(128),
+                    "ModalFuseSE_2": ModalFuseSE(128),
+                    "ModalFuseSE_3": ModalFuseSE(256),
+                    "HyperACE_Img": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_1": DownsampleConv(128),
-                    "HyperACE_Ir": HyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": CHyperACE(128, 128, 2, 8, True, True, 0.5, 1, "both"),
-                    "Downsample_3": DownsampleConv(128),
+                    "CHyperACE": IntreHyperFusion_V2(256, 128, 16, 0.5),
+                    "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
@@ -408,12 +404,12 @@ class M2I2HANet_v13(BaseNet):
                     "ModalFuseSE_1": ModalFuseSE(256),
                     "ModalFuseSE_2": ModalFuseSE(256),
                     "ModalFuseSE_3": ModalFuseSE(512),
-                    "HyperACE_Img": IntraHyperEnhance(256, 256, 1, 8, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Img": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_1": DownsampleConv(256),
-                    "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 8, True, True, 0.5, 1, 8, context="both"),
+                    "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusion_V2(256, 256, 8, 0.5),
-                    "Downsample_3": DownsampleConv(256),
+                    "CHyperACE": IntreHyperFusion_V2(512, 256, 12, 0.5),
+                    "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_3": FullPAD_Tunnel(),
@@ -462,7 +458,7 @@ class M2I2HANet_v13(BaseNet):
             if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
                 ir_skips.append(irs)
 
-        pixels_fuse = [img_skips[i] + ir_skips[i] for i in range(len(img_skips))]
+        features_fuse = [self.neck[f"ModalFuseSE_{i + 1}"](img_skips[i], ir_skips[i]) for i in range(len(img_skips))]
 
         # ----- neck -----
         # Inter HyperACE
@@ -475,29 +471,22 @@ class M2I2HANet_v13(BaseNet):
         img_h1 = self.neck.Upsample(img_h2)
         ir_h1 = self.neck.Upsample(ir_h2)
 
-        img_enhanced.append(img_h1)
-        ir_enhanced.append(ir_h1)
-        img_enhanced.append(img_h2)
-        ir_enhanced.append(ir_h2)
-
         img_h3 = self.neck.Downsample_1(img_h2)
-        ir_h3 = self.neck.Downsample_3(ir_h2)
+        ir_h3 = self.neck.Downsample_2(ir_h2)
 
-        img_enhanced.append(img_h3)
-        ir_enhanced.append(ir_h3)
+        img_enhanced.extend([img_h1, img_h2, img_h3])
+        ir_enhanced.extend([ir_h1, ir_h2, ir_h3])
 
         # Cross HyerACE
         fuse_enhanced = []
-        fuse_h2 = self.neck.CHyperACE([img_enhanced[1], ir_enhanced[1]])
+        fuse_h3 = self.neck.CHyperACE([img_enhanced[2], ir_enhanced[2]])
+        fuse_h2 = self.neck.Upsample(fuse_h3)
         fuse_h1 = self.neck.Upsample(fuse_h2)
-        fuse_h3 = self.neck.Downsample_3(fuse_h2)
-        fuse_enhanced.append(fuse_h1)
-        fuse_enhanced.append(fuse_h2)
-        fuse_enhanced.append(fuse_h3)
+        fuse_enhanced.extend([fuse_h1, fuse_h2, self.neck.Conv_0(fuse_h3)])
 
-        f1 = self.neck.FullPAD_Tunnel_1([pixels_fuse[0], fuse_enhanced[0]])
-        f2 = self.neck.FullPAD_Tunnel_2([pixels_fuse[1], fuse_enhanced[1]])
-        f3 = self.neck.FullPAD_Tunnel_3([pixels_fuse[2], fuse_enhanced[2]])
+        f1 = self.neck.FullPAD_Tunnel_1([features_fuse[0], fuse_enhanced[0]])
+        f2 = self.neck.FullPAD_Tunnel_2([features_fuse[1], fuse_enhanced[1]])
+        f3 = self.neck.FullPAD_Tunnel_3([features_fuse[2], fuse_enhanced[2]])
 
         # Full_Tunnel
         d1 = self.neck.DSC3k2_1(self.neck.Cat([self.neck.Upsample(f3), f2]))
@@ -507,7 +496,7 @@ class M2I2HANet_v13(BaseNet):
         det1 = f4 = self.neck.MMFullPAD_Tunnel_4(
             [
                 d2,
-                self.neck.Conv_1_1(img_enhanced[0]),  # 是否分开Conv？
+                self.neck.Conv_1_1(img_enhanced[0]),
                 self.neck.Conv_1_2(ir_enhanced[0]),
                 self.neck.Conv_1_3(fuse_enhanced[0]),
             ]
