@@ -28,25 +28,25 @@ from machine_learning.utils.detection import (
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloV13(AlgorithmBase):
+class YoloV8(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
         net: BaseNet | None = None,
-        name: str | None = "yolo_v13",
+        name: str | None = "yolo_v8",
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
     ) -> None:
         """
-        Implementation of YoloV13 object detection algorithm
+        Implementation of YoloV8 object detection algorithm
 
         Args:
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
-            net (BaseNet): Models required by the YoloV13 algorithm.
-            name (str): Name of the algorithm. Defaults to "yolo_v13".
-            device (Literal[&quot;cuda&quot;, &quot;cpu&quot;, &quot;auto&quot;], optional): Running device. Defaults to
+            net (BaseNet): Models required by the YoloV8 algorithm.
+            name (str): Name of the algorithm. Defaults to "yolo_v8".
+            device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
         """
