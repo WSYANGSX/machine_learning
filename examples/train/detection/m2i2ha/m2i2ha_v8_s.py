@@ -1,12 +1,12 @@
 import time
-from machine_learning.networks.yolo.m2i2ha import M2I2HANet_v8, M2I2HANet_v13
+from machine_learning.networks.yolo.m2i2ha import M2I2HANet_v8
 from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
     # Step 0: build network (optional)
-    net = M2I2HANet_v13(640, nc=5, net_scale="s")
+    net = M2I2HANet_v8(640, nc=5, net_scale="s")
 
     # Step 1: Parse the data
     m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=True)
@@ -24,7 +24,9 @@ def main():
     trainer = Trainer(trainer_cfg, m2i2ha, "drone_vehicle.yaml")
 
     # Step 3: Train the model
-    trainer.train()
+    trainer.train_from_checkpoint(
+        "/home/yangxf/WorkSpace/machine_learning/checkpoints/m2i2ha/m2i2ha-v8-s/checkpoint_epoch_140.pth"
+    )
 
 
 if __name__ == "__main__":
