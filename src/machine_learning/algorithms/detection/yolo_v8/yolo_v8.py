@@ -11,8 +11,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks import BaseNet
-from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import (
     resize,
@@ -237,11 +237,11 @@ class YoloV8(AlgorithmBase):
                 agnostic=self.single_cls,
             )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
 
-            # prepare targets
-            scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
-            targets_abs = targets.clone()
-            bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
-            targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
+            # # prepare targets
+            # scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
+            # targets_abs = targets.clone()
+            # bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
+            # targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
 
             for si, detection in enumerate(detections):
                 metrics["images"] += 1
