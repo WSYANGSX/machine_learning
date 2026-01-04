@@ -19,15 +19,17 @@ class V13Net(BaseNet):
         *args,
         **kwargs,
     ):
-        """multimodal object detection network.
+        """Yolov13 object detection network.
 
         Args:
-            img_size (Sequence[int]): the shape of input rgb image.
-            num_classes (int): number of classes.
-            net_scale (str): the scale of the net.
+            imgsz (int): the size of input images.
+            channels (int): number of input channels.
+            nc (int): number of classes.
+            net_scale (Literal["n", "s", "l", "x"]): scale of the network.
         """
         super().__init__(args=args, kwargs=kwargs)
-        self.img_size = imgsz  # (3, height, width)
+
+        self.imgsz = imgsz
         self.nc = nc
         self.net_scale = net_scale
         self.in_channels = channel
@@ -216,8 +218,9 @@ class V13Net(BaseNet):
             # head
             self.head = DetectV8(nc=self.nc, ch=(384, 768, 768))
 
-        # init stride
-        self._initialize_strides()
+    @property
+    def dummy_input(self) -> torch.Tensor:
+        return torch.randn(1, self.in_channels, self.imgsz, self.imgsz, device=self.device)
 
     def forward(self, imgs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
@@ -258,14 +261,6 @@ class V13Net(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def view_structure(self) -> None:
-        super().view_structure()
-
-        from torchinfo import summary
-
-        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
-        summary(self, input_data=img_input)
-
     def _initialize_weights(self):
         """Initialize model weights to random values."""
         for m in self.modules():
@@ -278,9 +273,11 @@ class V13Net(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
+        self._initialize_strides()
         self.head.bias_init()
 
     def _initialize_strides(self):
-        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
-        self.stride = torch.tensor([self.img_size / x.shape[-2] for x in self.forward(img_input)])
+        self.stride = torch.tensor(
+            [self.imgsz / x.shape[-2] for x in self.forward(self.dummy_input)], dtype=torch.int8, device=self.device
+        )
         self.head.stride = self.stride

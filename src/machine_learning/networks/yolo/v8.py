@@ -6,7 +6,7 @@ import torch.nn as nn
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 
-from ultralytics.nn.modules import Conv, DSC3k2, DSConv, A2C2f, HyperACE, DownsampleConv, Concat, FullPAD_Tunnel
+from ultralytics.nn.modules import Conv, C2f, SPPF, Concat
 
 
 class V8Net(BaseNet):
@@ -19,15 +19,17 @@ class V8Net(BaseNet):
         *args,
         **kwargs,
     ):
-        """multimodal object detection network.
+        """Yolov8 object detection network.
 
         Args:
-            img_size (Sequence[int]): the shape of input rgb image.
-            num_classes (int): number of classes.
-            net_scale (str): the scale of the net.
+            imgsz (int): the size of input images.
+            channels (int): number of input channels.
+            nc (int): number of classes.
+            net_scale (Literal["n", "s", "l", "x"]): scale of the network.
         """
         super().__init__(args=args, kwargs=kwargs)
-        self.img_size = imgsz  # (3, height, width)
+
+        self.imgsz = imgsz
         self.nc = nc
         self.net_scale = net_scale
         self.in_channels = channel
@@ -37,42 +39,30 @@ class V8Net(BaseNet):
             self.backbone = nn.ModuleDict(
                 {
                     "Conv_1": Conv(self.in_channels, 16, 3, 2),  # layer 0  (3, 640, 640) -> (16, 319, 319)
-                    "Conv_2": Conv(16, 32, 3, 2, 1, 2),  # layer 1 (16, 319, 319) -> (32, 160, 160)
-                    "DSC3k2_1": DSC3k2(32, 64, 1, False, 0.25),  # layer 2 (32, 160, 160) -> (64, 160, 160)
-                    "Conv_3": Conv(64, 64, 3, 2, 1, 4),  # layer 3 (64, 160, 160) -> (64, 80, 80)
-                    "DSC3k2_2": DSC3k2(64, 128, 1, False, 0.25),  # layer 4 b1-out (128, 80, 80)
-                    "DSConv_1": DSConv(128, 128, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(128, 128, 2, True, 4),  # layer 6 b2-out (128, 40, 40)
-                    "DSConv_2": DSConv(128, 256, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(256, 256, 2, True, 1),  # layer 8 b3-out (256, 20, 20)
+                    "Conv_2": Conv(16, 32, 3, 2),  # layer 1 (16, 319, 319) -> (32, 160, 160)
+                    "C2f_1": C2f(32, 32, 1, True),  # layer 2 (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(32, 64, 3, 2),  # layer 3 (64, 160, 160) -> (64, 80, 80)
+                    "C2f_2": C2f(64, 64, 2, True),  # layer 4 b1-out (64, 80, 80)
+                    "Conv_4": Conv(64, 128, 3, 2),  # layer 5
+                    "C2f_3": C2f(128, 128, 2, True),  # layer 6 b2-out (128, 40, 40)
+                    "Conv_5": Conv(128, 256, 3, 2),  # layer 7
+                    "C2f_4": C2f(256, 256, 1, True),  # layer 8 b3-out (256, 20, 20)
+                    "SPPF": SPPF(256, 256, k=5),  # layer 9 (256, 20, 20)
                 }
             )
             # neck
             self.neck = nn.ModuleDict(
                 {
-                    "HyperACE": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample": DownsampleConv(128),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Cat_1": Concat(1),
-                    "DSC3k2_1": DSC3k2(384, 128, 1, False),
-                    "FullPAD_Tunnel_4": FullPAD_Tunnel(),
-                    "Upsample_3": nn.Upsample(None, 2, "nearest"),
-                    "Cat_2": Concat(1),
-                    "DSC3k2_2": DSC3k2(256, 64, 1, False),
-                    "Conv_1": Conv(128, 64, 1, 1),
-                    "FullPAD_Tunnel_5": FullPAD_Tunnel(),
-                    "Conv_2": Conv(64, 64, 3, 2),
-                    "Cat_3": Concat(1),
-                    "DSC3k2_3": DSC3k2(192, 128, 1, False),
-                    "FullPAD_Tunnel_6": FullPAD_Tunnel(),
-                    "Conv_3": Conv(128, 128, 3, 2),
-                    "Cat_4": Concat(1),
-                    "DSC3k2_4": DSC3k2(384, 256, 1, False),
-                    "FullPAD_Tunnel_7": FullPAD_Tunnel(),
+                    # common ops
+                    "Upsample": nn.Upsample(None, 2, "nearest"),
+                    "Cat": Concat(1),
+                    # trainable modules
+                    "c2f_1": C2f(384, 128, 1, False),
+                    "c2f_2": C2f(192, 64, 1, False),
+                    "Conv_1": Conv(64, 64, 3, 2),
+                    "c2f_3": C2f(192, 128, 1, False),
+                    "Conv_2": Conv(128, 128, 3, 2),
+                    "c2f_4": C2f(384, 256, 1, False),
                 }
             )
             # head
@@ -82,189 +72,174 @@ class V8Net(BaseNet):
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.in_channels, 32, 3, 2),  # layer 0  (3, 640, 640) -> (32, 319, 319)
-                    "Conv_2": Conv(32, 64, 3, 2, 1, 2),  # layer 1 (32, 319, 319) -> (64, 160, 160)
-                    "DSC3k2_1": DSC3k2(64, 128, 1, False, 0.25),  # layer 2 (64, 160, 160) -> (128, 160, 160)
-                    "Conv_3": Conv(128, 128, 3, 2, 1, 4),  # layer 3 (128, 160, 160) -> (128, 80, 80)
-                    "DSC3k2_2": DSC3k2(128, 256, 1, False, 0.25),  # layer 4 b1-out (256, 80, 80)
-                    "DSConv_1": DSConv(256, 256, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(256, 256, 2, True, 4),  # layer 6 b2-out (256, 40, 40)
-                    "DSConv_2": DSConv(256, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 2, True, 1),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.in_channels, 32, 3, 2),  # layer 0  (3, 640, 640) -> (16, 319, 319)
+                    "Conv_2": Conv(32, 64, 3, 2),  # layer 1 (16, 319, 319) -> (32, 160, 160)
+                    "C2f_1": C2f(64, 64, 1, True),  # layer 2 (32, 160, 160) -> (64, 160, 160)
+                    "Conv_3": Conv(64, 128, 3, 2),  # layer 3 (64, 160, 160) -> (128, 80, 80)
+                    "C2f_2": C2f(128, 128, 2, True),  # layer 4 b1-out (128, 80, 80)
+                    "Conv_4": Conv(128, 256, 3, 2),  # layer 5
+                    "C2f_3": C2f(256, 256, 2, True),  # layer 6 b2-out (256, 40, 40)
+                    "Conv_5": Conv(256, 512, 3, 2),
+                    "C2f_4": C2f(512, 512, 1, True),  # layer 8 (512, 20, 20)
+                    "SPPF": SPPF(512, 512, k=5),  # layer 9 b3-out (512, 20, 20)
                 }
             )
             # neck
             self.neck = nn.ModuleDict(
                 {
-                    "HyperACE": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample": DownsampleConv(256),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Cat_1": Concat(1),
-                    "DSC3k2_1": DSC3k2(768, 256, 1, False),
-                    "FullPAD_Tunnel_4": FullPAD_Tunnel(),
-                    "Upsample_3": nn.Upsample(None, 2, "nearest"),
-                    "Cat_2": Concat(1),
-                    "DSC3k2_2": DSC3k2(512, 128, 1, False),
-                    "Conv_1": Conv(256, 128, 1, 1),
-                    "FullPAD_Tunnel_5": FullPAD_Tunnel(),
-                    "Conv_2": Conv(128, 128, 3, 2),
-                    "Cat_3": Concat(1),
-                    "DSC3k2_3": DSC3k2(384, 256, 1, False),
-                    "FullPAD_Tunnel_6": FullPAD_Tunnel(),
-                    "Conv_3": Conv(256, 256, 3, 2),
-                    "Cat_4": Concat(1),
-                    "DSC3k2_4": DSC3k2(768, 512, 1, False),
-                    "FullPAD_Tunnel_7": FullPAD_Tunnel(),
+                    # common ops
+                    "Upsample": nn.Upsample(None, 2, "nearest"),
+                    "Cat": Concat(1),
+                    # trainable modules
+                    "c2f_1": C2f(768, 256, 1, False),
+                    "c2f_2": C2f(384, 128, 1, False),
+                    "Conv_1": Conv(128, 128, 3, 2),
+                    "c2f_3": C2f(384, 256, 1, False),
+                    "Conv_2": Conv(256, 256, 3, 2),
+                    "c2f_4": C2f(768, 512, 1, False),
                 }
             )
             # head
             self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
 
-        elif self.net_scale == "l":
+        elif self.net_scale == "m":
             # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.in_channels, 64, 3, 2),  # layer 0  (3, 640, 640) -> (64, 319, 319)
-                    "Conv_2": Conv(64, 128, 3, 2, 1, 2),  # layer 1 (64, 319, 319) -> (128, 160, 160)
-                    "DSC3k2_1": DSC3k2(128, 256, 2, True, 0.25),  # layer 2 (128, 160, 160) -> (256, 160, 160)
-                    "Conv_3": Conv(256, 256, 3, 2, 1, 4),  # layer 3 (256, 160, 160) -> (256, 80, 80)
-                    "DSC3k2_2": DSC3k2(256, 512, 2, True, 0.25),  # layer 4 b1-out (512, 80, 80)
-                    "DSConv_1": DSConv(512, 512, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(512, 512, 4, True, 4, True, 1.5),  # layer 6 b2-out (512, 40, 40)
-                    "DSConv_2": DSConv(512, 512, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(512, 512, 4, True, 1, True, 1.5),  # layer 8 b3-out (512, 20, 20)
+                    "Conv_1": Conv(self.in_channels, 48, 3, 2),
+                    "Conv_2": Conv(48, 96, 3, 2),
+                    "C2f_1": C2f(96, 96, 2, True),
+                    "Conv_3": Conv(96, 192, 3, 2),
+                    "C2f_2": C2f(192, 192, 4, True),
+                    "Conv_4": Conv(192, 384, 3, 2),
+                    "C2f_3": C2f(384, 384, 4, True),
+                    "Conv_5": Conv(384, 768, 3, 2),
+                    "C2f_4": C2f(768, 768, 2, True),
+                    "SPPF": SPPF(768, 768, k=5),
                 }
             )
             # neck
             self.neck = nn.ModuleDict(
                 {
-                    "HyperACE": HyperACE(512, 512, 2, 8, True, True, 0.5, 1, "both", False),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample": DownsampleConv(512, False),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Cat_1": Concat(1),
-                    "DSC3k2_1": DSC3k2(1024, 512, 2, True),
-                    "FullPAD_Tunnel_4": FullPAD_Tunnel(),
-                    "Upsample_3": nn.Upsample(None, 2, "nearest"),
-                    "Cat_2": Concat(1),
-                    "DSC3k2_2": DSC3k2(1024, 256, 2, True),
-                    "Conv_1": Conv(512, 256, 1, 1),
-                    "FullPAD_Tunnel_5": FullPAD_Tunnel(),
-                    "Conv_2": Conv(256, 256, 3, 2),
-                    "Cat_3": Concat(1),
-                    "DSC3k2_3": DSC3k2(768, 512, 2, True),
-                    "FullPAD_Tunnel_6": FullPAD_Tunnel(),
-                    "Conv_3": Conv(512, 512, 3, 2),
-                    "Cat_4": Concat(1),
-                    "DSC3k2_4": DSC3k2(1024, 512, 2, True),
-                    "FullPAD_Tunnel_7": FullPAD_Tunnel(),
+                    # common ops
+                    "Upsample": nn.Upsample(None, 2, "nearest"),
+                    "Cat": Concat(1),
+                    # trainable modules
+                    "c2f_1": C2f(1152, 384, 2, False),
+                    "c2f_2": C2f(576, 192, 2, False),
+                    "Conv_1": Conv(192, 192, 3, 2),
+                    "c2f_3": C2f(576, 384, 2, False),
+                    "Conv_2": Conv(384, 384, 3, 2),
+                    "c2f_4": C2f(1152, 768, 2, False),
                 }
             )
-            # head
+            self.head = DetectV8(nc=self.nc, ch=(192, 384, 768))
+
+        elif self.net_scale == "l":
+            self.backbone = nn.ModuleDict(
+                {
+                    "Conv_1": Conv(self.in_channels, 64, 3, 2),
+                    "Conv_2": Conv(64, 128, 3, 2),
+                    "C2f_1": C2f(128, 128, 3, True),
+                    "Conv_3": Conv(128, 256, 3, 2),
+                    "C2f_2": C2f(256, 256, 6, True),
+                    "Conv_4": Conv(256, 512, 3, 2),
+                    "C2f_3": C2f(512, 512, 6, True),
+                    "Conv_5": Conv(512, 512, 3, 2),
+                    "C2f_4": C2f(512, 512, 3, True),
+                    "SPPF": SPPF(512, 512, k=5),
+                }
+            )
+            self.neck = nn.ModuleDict(
+                {
+                    # common ops
+                    "Upsample": nn.Upsample(None, 2, "nearest"),
+                    "Cat": Concat(1),
+                    # trainable modules
+                    "c2f_1": C2f(1024, 512, 3, False),
+                    "c2f_2": C2f(768, 256, 3, False),
+                    "Conv_1": Conv(256, 256, 3, 2),
+                    "c2f_3": C2f(768, 512, 3, False),
+                    "Conv_2": Conv(512, 512, 3, 2),
+                    "c2f_4": C2f(1024, 512, 3, False),
+                }
+            )
             self.head = DetectV8(nc=self.nc, ch=(256, 512, 512))
 
         elif self.net_scale == "x":
-            # backbone
             self.backbone = nn.ModuleDict(
                 {
-                    "Conv_1": Conv(self.in_channels, 96, 3, 2),  # layer 0  (3, 640, 640) -> (96, 319, 319)
-                    "Conv_2": Conv(96, 192, 3, 2, 1, 2),  # layer 1 (96, 319, 319) -> (192, 160, 160)
-                    "DSC3k2_1": DSC3k2(192, 384, 2, True, 0.25),  # layer 2 (192, 160, 160) -> (384, 160, 160)
-                    "Conv_3": Conv(384, 384, 3, 2, 1, 4),  # layer 3 (384, 160, 160) -> (384, 80, 80)
-                    "DSC3k2_2": DSC3k2(384, 768, 2, True, 0.25),  # layer 4 b1-out (768, 80, 80)
-                    "DSConv_1": DSConv(768, 768, 3, 2),  # layer 5
-                    "A2C2f_1": A2C2f(768, 768, 4, True, 4, True, 1.5),  # layer 6 b2-out (768, 40, 40)
-                    "DSConv_2": DSConv(768, 768, 3, 2),  # layer 7
-                    "A2C2f_2": A2C2f(768, 768, 4, True, 1, True, 1.5),  # layer 8 b3-out (768, 20, 20)
+                    "Conv_1": Conv(self.in_channels, 80, 3, 2),
+                    "Conv_2": Conv(80, 160, 3, 2),
+                    "C2f_1": C2f(160, 160, 3, True),
+                    "Conv_3": Conv(160, 320, 3, 2),
+                    "C2f_2": C2f(320, 320, 6, True),
+                    "Conv_4": Conv(320, 512, 3, 2),
+                    "C2f_3": C2f(512, 512, 6, True),
+                    "Conv_5": Conv(512, 512, 3, 2),
+                    "C2f_4": C2f(512, 512, 3, True),
+                    "SPPF": SPPF(512, 512, k=5),
                 }
             )
-            # neck
             self.neck = nn.ModuleDict(
                 {
-                    "HyperACE": HyperACE(768, 768, 2, 12, True, True, 0.5, 1, "both", False),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample": DownsampleConv(768, False),
-                    "FullPAD_Tunnel_1": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_2": FullPAD_Tunnel(),
-                    "FullPAD_Tunnel_3": FullPAD_Tunnel(),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Cat_1": Concat(1),
-                    "DSC3k2_1": DSC3k2(1536, 768, 1, True),
-                    "FullPAD_Tunnel_4": FullPAD_Tunnel(),
-                    "Upsample_3": nn.Upsample(None, 2, "nearest"),
-                    "Cat_2": Concat(1),
-                    "DSC3k2_2": DSC3k2(1536, 384, 1, True),
-                    "Conv_1": Conv(768, 384, 1, 1),
-                    "FullPAD_Tunnel_5": FullPAD_Tunnel(),
-                    "Conv_2": Conv(384, 384, 3, 2),
-                    "Cat_3": Concat(1),
-                    "DSC3k2_3": DSC3k2(1152, 768, 1, True),
-                    "FullPAD_Tunnel_6": FullPAD_Tunnel(),
-                    "Conv_3": Conv(768, 768, 3, 2),
-                    "Cat_4": Concat(1),
-                    "DSC3k2_4": DSC3k2(1536, 768, 1, True),
-                    "FullPAD_Tunnel_7": FullPAD_Tunnel(),
+                    "Upsample": nn.Upsample(None, 2, "nearest"),
+                    "Cat": Concat(1),
+                    "c2f_1": C2f(1024, 512, 3, False),
+                    "c2f_2": C2f(832, 320, 3, False),
+                    "Conv_1": Conv(320, 320, 3, 2),
+                    "c2f_3": C2f(832, 512, 3, False),
+                    "Conv_2": Conv(512, 512, 3, 2),
+                    "c2f_4": C2f(1024, 512, 3, False),
                 }
             )
-            # head
-            self.head = DetectV8(nc=self.nc, ch=(384, 768, 768))
+            self.head = DetectV8(nc=self.nc, ch=(320, 512, 512))
 
-        # init stride
-        self._initialize_strides()
+        else:
+            raise ValueError(f"Unsupported net_scale '{self.net_scale}' for YOLOv8 network.")
+
+    @property
+    def dummy_input(self) -> torch.Tensor:
+        return torch.randn(1, self.in_channels, self.imgsz, self.imgsz, device=self.device)
 
     def forward(self, imgs: torch.Tensor) -> tuple[torch.Tensor]:
         # img backbone
         img_skips = []
         for key, layer in self.backbone.items():
             imgs = layer(imgs)
-            if key in ["DSC3k2_2", "A2C2f_1", "A2C2f_2"]:
+            if key in ["C2f_2", "C2f_3", "SPPF"]:
                 img_skips.append(imgs)
 
         # ----- neck -----
-        # HyperACE
-        img_enhanced = []
+        p3 = img_skips[0]  # P3/8
+        p4 = img_skips[1]  # P4/16
+        p5 = img_skips[2]  # P5/32
 
-        img_h2 = self.neck.HyperACE(img_skips)
-        img_h1 = self.neck.Upsample_1(img_h2)
-        img_h3 = self.neck.Downsample(img_h2)
+        # The first upsampling branch: starting from P5
+        # Upsample P5, concatenate with P4
+        x = self.neck.Upsample(p5)
+        x = self.neck.Cat([x, p4])
+        x = self.neck.c2f_1(x)
 
-        img_enhanced.append(img_h1)
-        img_enhanced.append(img_h2)
-        img_enhanced.append(img_h3)
+        # The second upsampling branch: continue upsampling, concatenate with P3
+        y = self.neck.Upsample(x)
+        y = self.neck.Cat([y, p3])
+        y = self.neck.c2f_2(y)
+        det1 = y  # P3/8-small
 
-        f1 = self.neck.FullPAD_Tunnel_1([img_skips[0], img_enhanced[0]])
-        f2 = self.neck.FullPAD_Tunnel_2([img_skips[1], img_enhanced[1]])
-        f3 = self.neck.FullPAD_Tunnel_3([img_skips[2], img_enhanced[2]])
+        # The first downsampling branch: from P3-small downsample, concatenate with middle layer
+        z = self.neck.Conv_1(y)
+        z = self.neck.Cat([z, x])
+        z = self.neck.c2f_3(z)
+        det2 = z  # P4/16-medium
 
-        # Full_Tunnel
-        d1 = self.neck.DSC3k2_1(self.neck.Cat_1([self.neck.Upsample_2(f3), f2]))
-        f5 = self.neck.FullPAD_Tunnel_5([d1, img_enhanced[1]])
-        d2 = self.neck.DSC3k2_2(self.neck.Cat_2([self.neck.Upsample_3(d1), f1]))
-        # det1
-        det1 = f4 = self.neck.FullPAD_Tunnel_4([d2, self.neck.Conv_1(img_enhanced[0])])
-        d3 = self.neck.DSC3k2_3(self.neck.Cat_3([self.neck.Conv_2(f4), f5]))
-        # det2
-        det2 = self.neck.FullPAD_Tunnel_6([d3, img_enhanced[1]])
-        # det3
-        d4 = self.neck.DSC3k2_4(self.neck.Cat_4([self.neck.Conv_3(d3), f3]))
-        det3 = self.neck.FullPAD_Tunnel_7([d4, img_enhanced[2]])
+        # The second downsampling branch: from P4-medium downsample, concatenate with P5
+        w = self.neck.Conv_2(z)
+        w = self.neck.Cat([w, p5])
+        w = self.neck.c2f_4(w)
+        det3 = w  # P5/32-large
 
         return self.head([det1, det2, det3])
-
-    def view_structure(self) -> None:
-        super().view_structure()
-
-        from torchinfo import summary
-
-        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
-        summary(self, input_data=img_input)
 
     def _initialize_weights(self):
         """Initialize model weights to random values."""
@@ -278,9 +253,11 @@ class V8Net(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
+        self._initialize_strides()
         self.head.bias_init()
 
     def _initialize_strides(self):
-        img_input = torch.randn(1, self.in_channels, self.img_size, self.img_size, device=self.device)
-        self.stride = torch.tensor([self.img_size / x.shape[-2] for x in self.forward(img_input)])
+        self.stride = torch.tensor(
+            [self.imgsz / x.shape[-2] for x in self.forward(self.dummy_input)], dtype=torch.int8, device=self.device
+        )
         self.head.stride = self.stride

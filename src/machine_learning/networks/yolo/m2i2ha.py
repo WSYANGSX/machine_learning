@@ -6,12 +6,10 @@ import torch.nn as nn
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
-    CHyperACE,
     IntraHyperEnhance,
     IntreHyperFusion_V2,
     MMFullPAD_Tunnel,
     ModalFuseSE,
-    HyperACE,
     DownsampleConv,
     FullPAD_Tunnel,
 )
