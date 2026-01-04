@@ -36,6 +36,7 @@ class YoloV8(AlgorithmBase):
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
+        ema: bool = True,
     ) -> None:
         """
         Implementation of YoloV8 object detection algorithm
@@ -49,8 +50,9 @@ class YoloV8(AlgorithmBase):
             device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
+            ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp)
+        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
 
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]

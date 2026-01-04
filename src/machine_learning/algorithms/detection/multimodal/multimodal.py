@@ -1,31 +1,26 @@
-from typing import Literal, Mapping, Any, Sequence
+from typing import Literal, Mapping, Any
 
 import cv2
-import math
 import torch
 import numpy as np
-import torch.nn as nn
 from tqdm import tqdm
 from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks import BaseNet
-from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.types.aliases import FilePath
-from machine_learning.algorithms import YoloV8
+from ..yolo_v8 import YoloV8
 from machine_learning.utils.detection import (
     resize,
     non_max_suppression,
     box_iou,
-    xywh2xyxy,
     match_predictions,
     ap_per_class,
     pad_to_square,
     visualize_img_bboxes,
     rescale_boxes,
 )
-from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
 class MultimodalDetection(YoloV8):
@@ -56,7 +51,7 @@ class MultimodalDetection(YoloV8):
         self, epoch: int, writer: SummaryWriter, log_interval: int = 10
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Returns training metrics and info dict for the epoch."""
-        super().train_epoch(epoch, writer, log_interval)
+        super(YoloV8, self).train_epoch(epoch, writer, log_interval)
 
         # close mosaic
         if epoch == int(self.close_mosaic_epoch * self.epochs):
@@ -112,7 +107,7 @@ class MultimodalDetection(YoloV8):
 
     @torch.no_grad()
     def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        super().validate()
+        super(YoloV8, self).validate()
 
         # log metrics
         stats = []
