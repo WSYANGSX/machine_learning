@@ -2,7 +2,7 @@ from .base import BaseNet
 from .auto_encoder import AENet
 from .diffusion.unet import UNet
 from .gan import Generator, Discriminator
-from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v13, SuperYoloNet, COMONet, HyperMambaNet
+from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v13, COMONet
 
 __all__ = [
     "BaseNet",
@@ -14,9 +14,7 @@ __all__ = [
     "M2I2HANet_v13",
     "V8Net",
     "V13Net",
-    "SuperYoloNet",
     "COMONet",
-    "HyperMambaNet",
 ]
 
 NET_MAPS = {
@@ -26,7 +24,5 @@ NET_MAPS = {
     "yolo_v8": V8Net,
     "yolo_v13": V13Net,
     "m2i2ha": M2I2HANet_v13,
-    "super_yolo": SuperYoloNet,
     "como": COMONet,
-    "hyper_mamba": HyperMambaNet,
 }
