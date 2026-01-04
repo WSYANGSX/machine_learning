@@ -1,10 +1,10 @@
-from machine_learning.algorithms.detection import YoloV13
+from machine_learning.algorithms.detection import YoloV8
 from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
     # Step 1: Parse the data
-    yolo_v13 = YoloV13("yolo_v13.yaml", amp=False)
+    yolo_v13 = YoloV8("yolo_v13.yaml", amp=False)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(

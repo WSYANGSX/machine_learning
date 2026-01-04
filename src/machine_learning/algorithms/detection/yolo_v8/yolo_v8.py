@@ -33,7 +33,7 @@ class YoloV8(AlgorithmBase):
         self,
         cfg: FilePath | Mapping[str, Any],
         net: BaseNet | None = None,
-        name: str | None = "yolo_v8",
+        name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
     ) -> None:
@@ -45,7 +45,7 @@ class YoloV8(AlgorithmBase):
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
             net (BaseNet): Models required by the YoloV8 algorithm.
-            name (str): Name of the algorithm. Defaults to "yolo_v8".
+            name (str): Name of the algorithm, it can be instantiated as v8, v9, v10, v11, v13 by cfg. Defaults to None.
             device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
