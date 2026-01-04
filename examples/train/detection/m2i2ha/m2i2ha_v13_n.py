@@ -24,9 +24,7 @@ def main():
     trainer = Trainer(trainer_cfg, m2i2ha, "drone_vehicle.yaml")
 
     # Step 3: Train the model
-    trainer.train_from_checkpoint(
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/m2i2ha/2025-12-26_03-06/checkpoint_epoch_140.pth"
-    )
+    trainer.train()
 
 
 if __name__ == "__main__":
