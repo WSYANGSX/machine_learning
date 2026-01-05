@@ -55,6 +55,8 @@ class YoloV8(AlgorithmBase):
         """
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
 
+        self.modality = modality
+
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]
         self.imgsz = self.cfg["algorithm"]["imgsz"]
@@ -152,7 +154,7 @@ class YoloV8(AlgorithmBase):
             self.warmup(batches, epoch)
 
             # Load data
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
@@ -217,7 +219,7 @@ class YoloV8(AlgorithmBase):
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, batch in pbar:
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255
+            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
