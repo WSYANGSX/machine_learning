@@ -1,6 +1,6 @@
 algorithm: 
   # common
-  name: "yolo_v13"
+  name: "yolo_v8"
   task: "detect"
   imgsz: 640
   
@@ -57,7 +57,7 @@ scheduler:
 net:
   initialize_weights: True
   channel: 3
-  net_scale: "n"
+  net_scale: "s"
 
 data:
   fraction: 1

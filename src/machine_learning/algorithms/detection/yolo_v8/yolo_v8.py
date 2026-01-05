@@ -315,7 +315,7 @@ class YoloV8(AlgorithmBase):
 
             self.pbar_log("val", pbar, **metrics)
 
-        return metrics
+        return metrics, info
 
     def prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
         """
