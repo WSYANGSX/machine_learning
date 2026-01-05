@@ -37,6 +37,7 @@ class YoloV8(AlgorithmBase):
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
         ema: bool = True,
+        modality: str = "rgb",
     ) -> None:
         """
         Implementation of YoloV8 object detection algorithm
