@@ -9,7 +9,7 @@ def main():
     net = M2I2HANet_v13(640, nc=5, net_scale="s")
 
     # Step 1: Parse the data
-    m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=True)
+    m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=False)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
