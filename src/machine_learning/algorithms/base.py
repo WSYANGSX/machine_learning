@@ -103,6 +103,7 @@ class AlgorithmBase(ABC):
 
         # init ema
         if self.ema_enable:
+            LOGGER.info("EMA is enabled.")
             self._init_ema()
 
         # init opts and schedulers
