@@ -4,7 +4,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 def main():
     # Step 1: Parse the data
-    yolo_v13 = YoloV8("yolo_v13.yaml", amp=False)
+    yolo_v13 = YoloV8("yolo_v13.yaml", amp=True)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(

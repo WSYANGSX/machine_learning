@@ -299,7 +299,7 @@ class YoloV8(AlgorithmBase):
                             if hasattr(self, "class_names") and self.class_names
                             else f"Class {class_idx}"
                         )
-                        info["ap_per_class"][class_name] = (ap50[idx], ap75[idx], ap[idx])
+                        info["ap_per_class"][class_name] = (float(ap50[idx]), float(ap75[idx]), float(ap[idx]))
 
                     mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
                     nt = np.bincount(

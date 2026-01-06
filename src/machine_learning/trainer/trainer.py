@@ -1,9 +1,9 @@
 from typing import Any, Mapping
 
 import os
+import json
 import torch
 from datetime import datetime
-from prettytable import PrettyTable
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
 
@@ -11,6 +11,11 @@ from .trianer_cfg import TrainerCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
 from machine_learning.utils import set_seed, cfg2dict, print_cfg
+
+from rich import box
+from rich.json import JSON
+from rich.table import Table
+from rich.console import Console
 
 
 class Trainer:
@@ -150,22 +155,67 @@ class Trainer:
     def epoch_info(
         self,
         epoch: int,
-        trian_info: dict[Any] | None = None,
+        train_metrics: dict[str, Any] | None = None,
+        val_metrics: dict[str, Any] | None = None,
+        train_info: dict[Any] | None = None,
         val_info: dict[Any] | None = None,
     ) -> None:
-        log_table = PrettyTable()
-        log_table.title = f"Epoch info: {epoch + 1}"
-        log_table.field_names = ["metrics", "Value"]
+        """
+        Print the information of the current epoch using Rich Table.
+        """
+        console = Console()
 
-        rows = []
-        if trian_info:
-            for key, val in trian_info.items():
-                rows.append([f"train: {key}", val])
+        table = Table(
+            title=f"Epoch info: {epoch + 1} Summary",
+            header_style="bold magenta",
+            show_header=True,
+            box=box.ROUNDED,
+            show_lines=True,
+            title_style="bold blue not italic",
+        )
+
+        table.add_column("Category", style="cyan", justify="center", vertical="middle")
+        table.add_column("Item", style="dim", justify="center", vertical="middle")
+        table.add_column("Value", justify="center", vertical="middle")
+
+        def _format_value(val):
+            if isinstance(val, (float, int)):
+                # if the float is very small, use scientific notation
+                if isinstance(val, float) and (val < 1e-4 and val > 0):
+                    return f"{val:.4e}"
+                if isinstance(val, float):
+                    return f"{val:.8f}"
+                return str(val)
+            elif isinstance(val, (dict, list)):
+                return JSON(json.dumps(val))
+            else:
+                return str(val)
+
+        if hasattr(self._algorithm, "optimizers"):
+            for name, opt in self._algorithm.optimizers.items():
+                for i, param_group in enumerate(opt.param_groups):
+                    lr_val = param_group.get("lr", "N/A")
+                    table.add_row("lr", f"{name}/(pg{i})", _format_value(lr_val))
+
+        if train_metrics:
+            for k, v in train_metrics.items():
+                table.add_row("Train Metric", k, _format_value(v))
+
+        if val_metrics:
+            for k, v in val_metrics.items():
+                style = "bold green" if k == "save_best" else None
+                val_str = _format_value(v)
+                if style:
+                    pass
+                table.add_row("Val Metric", k, val_str)
+
+        if train_info:
+            for k, v in train_info.items():
+                table.add_row("Train Info", k, _format_value(v))
+
         if val_info:
-            for key, val in val_info.items():
-                rows.append([f"val: {key}", val])
-        for key, opt in self._algorithm._optimizers.items():
-            rows.append([f"{key} lr", opt.param_groups[0]["lr"]])
+            for k, v in val_info.items():
+                table.add_row("Val Info", k, _format_value(v))
 
-        log_table.add_rows(rows)
-        LOGGER.info("\n" + log_table.get_string())
+        print("\n")
+        console.print(table)
