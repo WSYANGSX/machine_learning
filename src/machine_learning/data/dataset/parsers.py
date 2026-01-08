@@ -116,36 +116,28 @@ class FlirAlignedParser(ParserBase):
     def __init__(self, dataset_cfg: dict[str, Any]):
         super().__init__(dataset_cfg)
 
-        self.train = self.dataset_cfg["train"]
-        self.val = self.dataset_cfg["val"]
+        self.train_imgs_dir = self.dataset_cfg["train_imgs_dir"]
+        self.train_irs_dir = self.dataset_cfg["train_irs_dir"]
+        self.val_imgs_dir = self.dataset_cfg["val_imgs_dir"]
+        self.val_irs_dir = self.dataset_cfg["val_irs_dir"]
+
+        self.train_labels_dir = self.dataset_cfg["train_labels_dir"]
+        self.val_labels_dir = self.dataset_cfg["val_labels_dir"]
+
+        self.train_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.train_imgs_dir))
+        self.val_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.val_imgs_dir))
 
     def parse(self) -> dict[str, Any]:
-        # relative paths
-        train_irs = list_from_txt(os.path.join(self.dataset_path, self.train))
-        val_irs = list_from_txt(os.path.join(self.dataset_path, self.val))
+        # train path
+        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpeg" for id in self.train_ids]
+        train_irs = [os.path.join(self.dataset_path, self.train_irs_dir) + f"/{id}.jpeg" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.txt" for id in self.train_ids]
 
-        train_irs = [ir + ".jpeg" for ir in train_irs]
-        val_irs = [ir + ".jpeg" for ir in train_irs]
+        # val path
+        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpeg" for id in self.val_ids]
+        val_irs = [os.path.join(self.dataset_path, self.val_irs_dir) + f"/{id}.jpeg" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.txt" for id in self.val_ids]
 
-        train_imgs = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in train_irs]
-        val_imgs = [f.rsplit("_", maxsplit=1)[0] + "_RGB.jpg" for f in val_irs]
-
-        train_labels = [
-            f.replace("JPEGImages", "Annotations", 1).rsplit("_", maxsplit=1)[0] + ".txt" for f in train_irs
-        ]
-        val_labels = [f.replace("JPEGImages", "Annotations", 1).rsplit("_", maxsplit=1)[0] + ".txt" for f in val_irs]
-
-        # abs path
-        train_irs = [os.path.join(self.dataset_path, ir.split("/", 1)[1]) for ir in train_irs]
-        val_irs = [os.path.join(self.dataset_path, ir.split("/", 1)[1]) for ir in val_irs]
-
-        train_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in train_imgs]
-        val_imgs = [os.path.join(self.dataset_path, img.split("/", 1)[1]) for img in val_imgs]
-
-        train_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in train_labels]
-        val_labels = [os.path.join(self.dataset_path, label.split("/", 1)[1]) for label in val_labels]
-
-        # Multi modal names should be uniformly in the singular form for convenience
         return {
             "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
             "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},

@@ -29,7 +29,7 @@ __all__ = [
 PARSER_MAPS = {
     "minist": MinistParser,
     "coco-2017": CocoParser,
-    "flir": FlirAlignedParser,
+    "flir_aligned": FlirAlignedParser,
     "vedai": VedaiParser,
     "vedai_1024": VedaiParser,
     "drone_vehicle": DVParser,
