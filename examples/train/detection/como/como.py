@@ -5,7 +5,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 def main():
     # Step 1: Parse the data
-    como = MultimodalDetection("como.yaml", amp=True)
+    como = MultimodalDetection("como.yaml", amp=False)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
@@ -17,7 +17,7 @@ def main():
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, como, "drone_vehicle.yaml")
+    trainer = Trainer(trainer_cfg, como, "flir_aligned.yaml")
 
     # Step 3: Train the model
     trainer.train()

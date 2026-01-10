@@ -6,10 +6,10 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 def main():
     # Step 0: build network (optional)
-    net = M2I2HANet_v13(640, nc=5, net_scale="n")
+    net = M2I2HANet_v13(640, nc=3, net_scale="n")
 
     # Step 1: Parse the data
-    m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=True)
+    m2i2ha = MultimodalDetection("m2i2ha.yaml", net=net, amp=False)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
@@ -21,7 +21,7 @@ def main():
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, m2i2ha, "drone_vehicle.yaml")
+    trainer = Trainer(trainer_cfg, m2i2ha, "flir_aligned.yaml")
 
     # Step 3: Train the model
     trainer.train()

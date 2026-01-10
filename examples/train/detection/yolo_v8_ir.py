@@ -15,7 +15,7 @@ def main():
         save_interval=10,
         save_best=True,
     )
-    trainer = Trainer(trainer_cfg, yolo_v8, "drone_vehicle.yaml")
+    trainer = Trainer(trainer_cfg, yolo_v8, "flir_aligned.yaml")
 
     # Step 3: Train the model
     trainer.train()

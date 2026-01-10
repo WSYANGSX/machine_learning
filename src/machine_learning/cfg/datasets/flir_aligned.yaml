@@ -17,6 +17,6 @@ val_labels_dir: labels/test
 # Classes
 nc: 3
 class_names:
-  - bicycle
-  - car
   - person
+  - car
+  - bicycle

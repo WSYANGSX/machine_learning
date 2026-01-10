@@ -57,7 +57,7 @@ scheduler:
 net:
   initialize_weights: True
   channel: 3
-  net_scale: "n"
+  net_scale: "s"
 
 data:
   augment: True

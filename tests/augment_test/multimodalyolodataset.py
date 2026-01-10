@@ -8,18 +8,16 @@ from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 from machine_learning.utils.ops import img_tensor2np
 
-# data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/flir_aligned.yaml")
-# parser = FlirAlignedParser(data_cfg)
+data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/flir_aligned.yaml")
+parser = FlirAlignedParser(data_cfg)
 
-data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/drone_vehicle.yaml")
-parser = DVParser(data_cfg)
+# data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/drone_vehicle.yaml")
+# parser = DVParser(data_cfg)
 
 # data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/vedai_1024.yaml")
 # parser = VedaiParser(data_cfg)
 
 res = parser.parse()
-# imgs = res["train"]["data"]
-# irs = res["train"]["data"]
 # res["train"]["data"] = {"imgs": imgs, "irs": irs}
 
 hyp = {

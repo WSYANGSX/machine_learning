@@ -129,12 +129,12 @@ class FlirAlignedParser(ParserBase):
 
     def parse(self) -> dict[str, Any]:
         # train path
-        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpeg" for id in self.train_ids]
+        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpg" for id in self.train_ids]
         train_irs = [os.path.join(self.dataset_path, self.train_irs_dir) + f"/{id}.jpeg" for id in self.train_ids]
         train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.txt" for id in self.train_ids]
 
         # val path
-        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpeg" for id in self.val_ids]
+        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
         val_irs = [os.path.join(self.dataset_path, self.val_irs_dir) + f"/{id}.jpeg" for id in self.val_ids]
         val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.txt" for id in self.val_ids]
 
