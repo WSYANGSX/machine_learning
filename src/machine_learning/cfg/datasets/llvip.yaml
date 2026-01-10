@@ -15,8 +15,6 @@ train_labels_dir: labels/train
 val_labels_dir: labels/test
 
 # Classes
-nc: 3
+nc: 1
 class_names:
   - person
-  - car
-  - bicycle
