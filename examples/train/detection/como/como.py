@@ -11,13 +11,13 @@ def main():
     trainer_cfg = TrainerCfg(
         log_dir="/home/yangxf/WorkSpace/machine_learning/logs/como/",
         ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/como/",
-        epochs=150,
+        epochs=60,
         log_interval=10,
         save_interval=10,
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, como, "flir_aligned.yaml")
+    trainer = Trainer(trainer_cfg, como, "llvip.yaml")
 
     # Step 3: Train the model
     trainer.train()

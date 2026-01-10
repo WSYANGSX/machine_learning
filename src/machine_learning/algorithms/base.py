@@ -635,7 +635,7 @@ class AlgorithmBase(ABC):
         """
         pass
 
-    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str, ckpt_dir: str) -> None:
+    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str, ckpt_dir: str, log_dir: str) -> None:
         """Save checkpoint."""
         state = {
             "epoch": epoch,
@@ -646,6 +646,7 @@ class AlgorithmBase(ABC):
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
             "ckpt_dir": ckpt_dir,
+            "log_dir": log_dir,
             "emas": None,
         }
 

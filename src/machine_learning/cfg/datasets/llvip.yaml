@@ -1,5 +1,5 @@
-name: flir_aligned
-path: /home/yangxf/WorkSpace/datasets/..datasets/FLIR-align-3class
+name: llvip
+path: /home/yangxf/WorkSpace/datasets/..datasets/LLVIP
 dataset_type: YoloMultiModalDataset
 modals:
   - img

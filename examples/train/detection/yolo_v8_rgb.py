@@ -10,12 +10,12 @@ def main():
     trainer_cfg = TrainerCfg(
         log_dir="/home/yangxf/WorkSpace/machine_learning/logs/yolo_v8/",
         ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v8/",
-        epochs=150,
+        epochs=60,
         log_interval=10,
         save_interval=10,
         save_best=True,
     )
-    trainer = Trainer(trainer_cfg, yolo_v8, "flir_aligned.yaml")
+    trainer = Trainer(trainer_cfg, yolo_v8, "llvip.yaml")
 
     # Step 3: Train the model
     trainer.train()
