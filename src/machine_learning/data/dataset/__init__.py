@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MultiModalDatasetBase
 from .datasets import ClassificationDataset, YoloDataset, YoloMultiModalDataset
-from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser, DVParser
+from .parsers import ParserBase, MinistParser, CocoParser, FlirAlignedParser, VedaiParser, DVParser, LLVIPParser
 
 from machine_learning.utils.logger import LOGGER
 
@@ -23,6 +23,7 @@ __all__ = [
     "FlirAlignedParser",
     "VedaiParser",
     "DVParser",
+    "LLVIPParser",
 ]
 
 # parser maps
@@ -33,6 +34,7 @@ PARSER_MAPS = {
     "vedai": VedaiParser,
     "vedai_1024": VedaiParser,
     "drone_vehicle": DVParser,
+    "llvip": LLVIPParser,
 }
 
 

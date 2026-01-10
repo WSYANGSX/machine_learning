@@ -1,0 +1,22 @@
+name: flir_aligned
+path: /home/yangxf/WorkSpace/datasets/..datasets/FLIR-align-3class
+dataset_type: YoloMultiModalDataset
+modals:
+  - img
+  - ir
+
+# Directories
+train_imgs_dir: visible/train
+train_irs_dir: infrared/train
+val_imgs_dir: visible/test
+val_irs_dir: infrared/test
+
+train_labels_dir: labels/train
+val_labels_dir: labels/test
+
+# Classes
+nc: 3
+class_names:
+  - person
+  - car
+  - bicycle

@@ -216,6 +216,40 @@ class DVParser(ParserBase):
         }
 
 
+class LLVIPParser(ParserBase):
+    r"""LLVIP data set parser."""
+
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
+
+        self.train_imgs_dir = self.dataset_cfg["train_imgs_dir"]
+        self.train_irs_dir = self.dataset_cfg["train_irs_dir"]
+        self.val_imgs_dir = self.dataset_cfg["val_imgs_dir"]
+        self.val_irs_dir = self.dataset_cfg["val_irs_dir"]
+
+        self.train_labels_dir = self.dataset_cfg["train_labels_dir"]
+        self.val_labels_dir = self.dataset_cfg["val_labels_dir"]
+
+        self.train_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.train_imgs_dir))
+        self.val_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.val_imgs_dir))
+
+    def parse(self) -> dict[str, Any]:
+        # train path
+        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_irs = [os.path.join(self.dataset_path, self.train_irs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.txt" for id in self.train_ids]
+
+        # val path
+        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_irs = [os.path.join(self.dataset_path, self.val_irs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.txt" for id in self.val_ids]
+
+        return {
+            "train": {"data": {"imgs": train_imgs, "irs": train_irs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs, "irs": val_irs}, "labels": val_labels},
+        }
+
+
 """Helper functions.
 """
 
