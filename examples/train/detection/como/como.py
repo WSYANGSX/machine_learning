@@ -1,6 +1,6 @@
 import time
-from machine_learning.algorithms.detection import MultimodalDetection
 from machine_learning.trainer import Trainer, TrainerCfg
+from machine_learning.algorithms.detection import MultimodalDetection
 
 
 def main():
