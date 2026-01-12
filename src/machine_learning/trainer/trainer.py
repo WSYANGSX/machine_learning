@@ -84,6 +84,7 @@ class Trainer:
     def train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
         LOGGER.info(f"Start training for {self.epochs - start_epoch} epochs...")
+        strat_time = datetime.now()
 
         self._setup_train()
 
@@ -134,6 +135,12 @@ class Trainer:
             # print epoch information
             if epoch == self.epochs - 1:
                 self.epoch_info(epoch=epoch, val_info=val_info)
+
+                # Print training completion time
+                total_time = datetime.now() - strat_time
+                total_hours = total_time.total_seconds() / 3600
+                LOGGER.info(f"Training completed in: {total_hours:.2f} hours.")
+
             else:
                 self.epoch_info(epoch=epoch)
 
