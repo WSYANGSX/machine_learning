@@ -1,3 +1,4 @@
+import time
 from machine_learning.algorithms.detection import YoloV8
 from machine_learning.trainer import Trainer, TrainerCfg
 
@@ -10,12 +11,13 @@ def main():
     trainer_cfg = TrainerCfg(
         log_dir="/home/yangxf/WorkSpace/machine_learning/logs/yolo_v8/",
         ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v8/",
-        epochs=60,
+        epochs=300,
         log_interval=10,
         save_interval=10,
         save_best=True,
+        seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, yolo_v8, "llvip.yaml")
+    trainer = Trainer(trainer_cfg, yolo_v8, "vedai.yaml")
 
     # Step 3: Train the model
     trainer.train()

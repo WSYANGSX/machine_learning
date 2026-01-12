@@ -228,7 +228,7 @@ class YoloV8(AlgorithmBase):
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # metrics
-            metrics["save_best"] = metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
+            metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
 
             # prepare preds
             detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
@@ -315,7 +315,7 @@ class YoloV8(AlgorithmBase):
                     nt = np.zeros(1, dtype=np.uint8)
 
                 metrics["labels"] = nt.sum()
-
+                metrics["save_best"] = metrics["mAP.5-.95"]
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info

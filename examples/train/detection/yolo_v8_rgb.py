@@ -15,7 +15,7 @@ def main():
         save_interval=10,
         save_best=True,
     )
-    trainer = Trainer(trainer_cfg, yolo_v8, "llvip.yaml")
+    trainer = Trainer(trainer_cfg, yolo_v8, "vedai.yaml")
 
     # Step 3: Train the model
     trainer.train()

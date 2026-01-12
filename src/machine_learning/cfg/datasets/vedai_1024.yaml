@@ -1,12 +1,12 @@
 name: vedai_1024
-path: /home/yangxf/WorkSpace/datasets/..datasets/vedai_1024
+path: /home/yangxf/WorkSpace/datasets/..datasets/VEDAI_1024
 dataset_type: YoloMultiModalDataset
 modals:
   - img
   - ir
 
 train_ids: train_ids.txt
-val_ids: val_ids.txt
+val_ids: test_ids.txt
 
 # Classes
 nc: 8

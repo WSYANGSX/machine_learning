@@ -150,20 +150,18 @@ class VedaiParser(ParserBase):
     def __init__(self, dataset_cfg: dict[str, Any]):
         super().__init__(dataset_cfg)
 
-        self.train_dir = os.path.join(self.dataset_path, self.dataset_cfg["train_dir"])
-        self.val_dir = os.path.join(self.dataset_path, self.dataset_cfg["val_dir"])
         self.train_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["train_ids"]))
         self.val_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["val_ids"]))
 
     def parse(self) -> dict[str, Any]:
         # trian paths
-        train_imgs = [os.path.join(self.train_dir, "images") + f"/{id}_co.png" for id in self.train_ids]
-        train_irs = [os.path.join(self.train_dir, "images") + f"/{id}_ir.png" for id in self.train_ids]
-        train_labels = [os.path.join(self.train_dir, "labels") + f"/{id}.txt" for id in self.train_ids]
+        train_imgs = [os.path.join(self.dataset_path, "images") + f"/{id}_co.png" for id in self.train_ids]
+        train_irs = [os.path.join(self.dataset_path, "images") + f"/{id}_ir.png" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, "labels") + f"/{id}.txt" for id in self.train_ids]
         # label paths
-        val_imgs = [os.path.join(self.val_dir, "images") + f"/{id}_co.png" for id in self.val_ids]
-        val_irs = [os.path.join(self.val_dir, "images") + f"/{id}_ir.png" for id in self.val_ids]
-        val_labels = [os.path.join(self.val_dir, "labels") + f"/{id}.txt" for id in self.val_ids]
+        val_imgs = [os.path.join(self.dataset_path, "images") + f"/{id}_co.png" for id in self.val_ids]
+        val_irs = [os.path.join(self.dataset_path, "images") + f"/{id}_ir.png" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, "labels") + f"/{id}.txt" for id in self.val_ids]
 
         # Multi modal names should be uniformly in the singular form for convenience
         return {
