@@ -1,5 +1,5 @@
-name: vedai_1024
-path: /home/yangxf/WorkSpace/datasets/..datasets/vedai_1024
+name: vedai
+path: /home/yangxf/WorkSpace/datasets/..datasets/vedai
 dataset_type: YoloMultiModalDataset
 modals:
   - img
