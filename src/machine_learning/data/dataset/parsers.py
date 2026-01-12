@@ -157,12 +157,12 @@ class VedaiParser(ParserBase):
 
     def parse(self) -> dict[str, Any]:
         # trian paths
-        train_imgs = [os.path.join(self.train_dir, "images") + f"/{id}.png" for id in self.train_ids]
-        train_irs = [os.path.join(self.train_dir, "irs") + f"/{id}.png" for id in self.train_ids]
+        train_imgs = [os.path.join(self.train_dir, "images") + f"/{id}_co.png" for id in self.train_ids]
+        train_irs = [os.path.join(self.train_dir, "images") + f"/{id}_ir.png" for id in self.train_ids]
         train_labels = [os.path.join(self.train_dir, "labels") + f"/{id}.txt" for id in self.train_ids]
         # label paths
-        val_imgs = [os.path.join(self.val_dir, "images") + f"/{id}.png" for id in self.val_ids]
-        val_irs = [os.path.join(self.val_dir, "irs") + f"/{id}.png" for id in self.val_ids]
+        val_imgs = [os.path.join(self.val_dir, "images") + f"/{id}_co.png" for id in self.val_ids]
+        val_irs = [os.path.join(self.val_dir, "images") + f"/{id}_ir.png" for id in self.val_ids]
         val_labels = [os.path.join(self.val_dir, "labels") + f"/{id}.txt" for id in self.val_ids]
 
         # Multi modal names should be uniformly in the singular form for convenience
