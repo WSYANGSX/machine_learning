@@ -35,7 +35,7 @@ optimizer:
   # eps: 1.0e-8
   # weight_decay: 0.0005
 
-  opt: "auto"
+  opt: "SGD"
   lr: 0.01
   final_factor: 0.01
   momentum: 0.937

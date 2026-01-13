@@ -208,11 +208,11 @@ class YoloV8(AlgorithmBase):
             "vloss": 0.0,
             "save_best": 0.0,
             "labels": 0,
-            "precision": None,
-            "recall": None,
-            "mAP.5": None,
-            "mAP.75": None,
-            "mAP.5-.95": None,
+            "precision": 0.0,
+            "recall": 0.0,
+            "mAP.5": 0.0,
+            "mAP.75": 0.0,
+            "mAP.5-.95": 0.0,
         }
         info = {}
         self.print_metric_titles("val", metrics)
@@ -316,6 +316,7 @@ class YoloV8(AlgorithmBase):
 
                 metrics["labels"] = nt.sum()
                 metrics["save_best"] = metrics["mAP.5-.95"]
+            
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
@@ -455,7 +456,8 @@ class YoloV8(AlgorithmBase):
             b, a, c = pred_dist.shape  # batch, anchors, channels
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
-
+    
+    # FIXME: need to be improved
     @torch.no_grad()
     def eval(
         self,

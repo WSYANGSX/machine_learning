@@ -11,13 +11,13 @@ def main():
     trainer_cfg = TrainerCfg(
         log_dir="/home/yangxf/WorkSpace/machine_learning/logs/como/",
         ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/como/",
-        epochs=60,
+        epochs=300,
         log_interval=10,
         save_interval=10,
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, como, "llvip.yaml")
+    trainer = Trainer(trainer_cfg, como, "vedai.yaml")
 
     # Step 3: Train the model
     trainer.train()

@@ -117,11 +117,11 @@ class MultimodalDetection(YoloV8):
             "vloss": 0.0,
             "save_best": 0.0,
             "labels": 0,
-            "precision": None,
-            "recall": None,
-            "mAP.5": None,
-            "mAP.75": None,
-            "mAP.5-.95": None,
+            "precision": 0.0,
+            "recall": 0.0,
+            "mAP.5": 0.0,
+            "mAP.75": 0.0,
+            "mAP.5-.95": 0.0,
         }
         info = {}
         self.print_metric_titles("val", metrics)
@@ -139,7 +139,7 @@ class MultimodalDetection(YoloV8):
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # metrics
-            metrics["save_best"] = metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
+            metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
 
             # prepare preds
             detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
@@ -221,11 +221,13 @@ class MultimodalDetection(YoloV8):
                     nt = np.zeros(1, dtype=np.uint8)
 
                 metrics["labels"] = nt.sum()
+                metrics["save_best"] = metrics["mAP.5-.95"]
 
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
 
+    # FIXME: need to be improved
     @torch.no_grad()
     def eval(
         self,
