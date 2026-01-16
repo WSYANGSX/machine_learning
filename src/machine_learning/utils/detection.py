@@ -9,10 +9,12 @@ import torch.nn.functional as F
 
 from pathlib import Path
 from copy import deepcopy
+from PIL import ImageColor
 from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
+from machine_learning.utils.constants import CSS_COLORS
 
 
 def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
@@ -581,8 +583,10 @@ def class_maps(classes: list[str]) -> dict[int, str]:
 def add_bbox(
     img: np.ndarray,
     bbox: np.ndarray,
+    conf: np.ndarray | Sequence[float] | None = None,
     class_name: str | None = None,
     color: tuple[int] = (255, 0, 0),
+    tag_size: float = 0.5,
     thickness: int = 2,
 ) -> np.ndarray:
     """Add a single bounding box with class name to the image.
@@ -590,8 +594,10 @@ def add_bbox(
     Args:
         img (np.ndarray): The image to which a bounding box is to be added.
         bbox (np.ndarray): The bounding box parameters with voc format (x_min, y_min, x_max, y_max).
+        conf (Sequence[float] | np.ndarray): The conf of objects.
         class_name (str): The category name of the object in the bounding box.
         color (tuple[int]): The color of the bounding box. Default to red.
+        tag_size (float): The size of category tag.
         thickness (int): The thickness of the bounding box. Default to 2.
 
     Returns:
@@ -604,38 +610,96 @@ def add_bbox(
     # Add bbox
     cv2.rectangle(img=img_copy, pt1=(x_min, y_min), pt2=(x_max, y_max), color=color, thickness=thickness)
 
-    if class_name is not None:
+    if class_name is not None or conf is not None:
+        # Build the displayed text
+        display_text = ""
+        if class_name is not None:
+            display_text += str(class_name)
+
+        if conf is not None:
+            display_text += f":{float(conf):.2f}"
+
         # Obtain the text size
-        ((text_width, text_height), _) = cv2.getTextSize(class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
-        label_height = int(1.3 * text_height)
+        if display_text:
+            font_scale = tag_size
+            font_thickness = max(1, int(tag_size))
+
+            # Get Text Size (including baseline)
+            (text_width, text_height), baseline = cv2.getTextSize(
+                display_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness
+            )
+
+            # Calculate Label Height (Consider baseline)
+            label_height = text_height + baseline + int(2 * tag_size)
+            label_width = text_width + int(4 * tag_size)  # Add some margins
 
         # Intelligently adjust the label position (to prevent exceeding the image boundary)
         if y_min - label_height < 0:  # Insufficient space at the top
-            # Place the label at the bottom inside the bounding box
-            label_y_top = y_min
-            label_y_bottom = label_y_top + label_height
-            text_y = label_y_top + label_height - int(0.3 * text_height)
-        else:  # Normal condition
-            # Place the label at the top of the bounding box
-            label_y_top = y_min - label_height
+            # Place it at the bottom of the frame
+            if y_max + label_height > h:  # Insufficient space at the bottom
+                # Place it on the right side of the box
+                if x_max + label_width > w:  # Insufficient space on the right side
+                    # Place it on the left side of the box
+                    if x_min - label_width < 0:  # Insufficient space on the left side
+                        # Place it in the upper left corner of the box
+                        label_x_left = x_min
+                        label_x_right = label_x_left + label_width
+                        label_y_top = y_min
+                        label_y_bottom = label_y_top + label_height
+                        text_x = label_x_left + int(2 * tag_size)
+                        text_y = label_y_bottom - int(2 * tag_size) - baseline
+                    else:
+                        # Place it on the left side outside the frame
+                        label_x_left = max(0, x_min - label_width)
+                        label_x_right = x_min
+                        label_y_top = max(0, y_min)
+                        label_y_bottom = min(h, label_y_top + label_height)
+                        text_x = label_x_left + int(2 * tag_size)
+                        text_y = label_y_bottom - int(2 * tag_size) - baseline
+                else:
+                    # Place it on the right side outside the frame
+                    label_x_left = x_max
+                    label_x_right = min(w, x_max + label_width)
+                    label_y_top = max(0, y_min)
+                    label_y_bottom = min(h, label_y_top + label_height)
+                    text_x = label_x_left + int(2 * tag_size)
+                    text_y = label_y_bottom - int(2 * tag_size) - baseline
+            else:
+                # Place it at the bottom outside the frame
+                label_x_left = x_min
+                label_x_right = min(w, label_x_left + label_width)
+                label_y_top = y_max
+                label_y_bottom = min(h, label_y_top + label_height)
+                text_x = label_x_left + int(2 * tag_size)
+                text_y = label_y_bottom - int(2 * tag_size) - baseline
+        else:
+            # Under normal circumstances: Placed at the top outside the frame
+            label_x_left = x_min
+            label_x_right = min(w, label_x_left + label_width)
+            label_y_top = max(0, y_min - label_height)
             label_y_bottom = y_min
-            text_y = y_min - int(0.3 * text_height)
+            text_x = label_x_left + int(2 * tag_size)
+            text_y = label_y_bottom - int(2 * tag_size) - baseline
 
-        # Make sure the label does not extend beyond the bottom of the image
-        if label_y_bottom > h:
-            label_y_top = max(0, h - label_height)
-            label_y_bottom = h
-            text_y = label_y_bottom - int(0.3 * text_height)
+        # Make sure the coordinates do not exceed the range of the image
+        label_x_left = max(0, label_x_left)
+        label_x_right = min(w, label_x_right)
+        label_y_top = max(0, label_y_top)
+        label_y_bottom = min(h, label_y_bottom)
 
         # Draw the label background and text
-        cv2.rectangle(img_copy, (x_min, label_y_top), (x_min + text_width, label_y_bottom), color, -1)
+        cv2.rectangle(img_copy, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, -1)
+        cv2.rectangle(
+            img_copy, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, max(1, thickness // 2)
+        )
         cv2.putText(
             img_copy,
-            text=class_name,
-            org=(x_min, text_y),
+            text=display_text,
+            org=(text_x, text_y),
             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-            fontScale=0.35,
-            color=(255, 255, 255),
+            fontScale=font_scale,
+            color=(255, 255, 255),  # white color
+            thickness=font_thickness,
             lineType=cv2.LINE_AA,
         )
 
@@ -646,8 +710,10 @@ def visualize_img_bboxes(
     img: np.ndarray,
     bboxes: np.ndarray,
     class_ids: np.ndarray | Sequence[int] | None = None,
+    conf: np.ndarray | Sequence[float] | None = None,
     class_maps: Sequence[str] | Mapping[int, str] | None = None,
-    color: tuple[int, int, int] = (255, 0, 0),
+    color: str = "auto",
+    tag_size: float = 0.5,
     thickness: int = 2,
     cmap: str | None = None,
 ) -> None:
@@ -657,29 +723,68 @@ def visualize_img_bboxes(
         img (np.ndarray): The image to which bounding boxes are to be added.
         bboxes (np.ndarray): The Bounding boxes parameters with voc format (x_min, y_min, x_max, y_max).
         class_ids (Sequence[int] | np.ndarray): The class numbers of objects in the bounding box.
+        conf (Sequence[float] | np.ndarray): The conf of objects.
         class_maps (Sequence[str] | Mapping[int, str]): The names corresponding to the class numbers of objects.
-        color (tuple[int, int, int]): The color of the bboxes. Default to (255, 0, 0).
+        color (str): The color of the bboxes. Default to "auto", one color for each class.
+        tag_size (float): The size of category tag.
         thickness (int): The thickness of the bboxes lines. Default to 2.
         cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot',
         rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any
         color mapping, such as cmap='viridis r'.
     """
+
+    # deal with color
+    color_ls = []
     if class_ids is None:
-        for bbox in bboxes:
-            img = add_bbox(img=img, bbox=bbox, color=color, thickness=thickness)
+        color_ls.append(ImageColor.getrgb(color if color != "auto" else "red"))
     else:
-        if len(class_ids) != len(bboxes):
-            raise ValueError("The length of bboxes and class_ids must be the same.")
+        for i in class_ids:
+            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i)]))
+
+    # deal with conf
+    if conf is None:
+        conf = [None] * len(bboxes)
+
+    if class_ids is None:
+        for bbox, cf in zip(bboxes, conf):
+            img = add_bbox(
+                img=img,
+                bbox=bbox,
+                conf=cf,
+                color=color_ls[0],
+                tag_size=tag_size,
+                thickness=thickness,
+            )
+    else:
+        assert len(class_ids) == len(bboxes) and len(class_ids) == len(conf), (
+            "The length of bboxes, conf and class_ids must be the same."
+        )
 
         if class_maps is not None:
-            for bbox, class_id in zip(bboxes, class_ids):
+            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
                 class_name = class_maps[class_id]
-                img = add_bbox(img=img, bbox=bbox, class_name=class_name, color=color, thickness=thickness)
+                img = add_bbox(
+                    img=img,
+                    bbox=bbox,
+                    conf=cf,
+                    class_name=class_name,
+                    color=clr,
+                    tag_size=tag_size,
+                    thickness=thickness,
+                )
         else:
             class_maps = {i: str(i) for i in class_ids}
-            for bbox, class_id in zip(bboxes, class_ids):
+            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
                 class_name = class_maps[class_id]
-                img = add_bbox(img=img, bbox=bbox, class_name=class_name, color=color, thickness=thickness)
+                img = add_bbox(
+                    img=img,
+                    bbox=bbox,
+                    conf=cf,
+                    class_name=class_name,
+                    color=clr,
+                    tag_size=tag_size,
+                    thickness=thickness,
+                )
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")

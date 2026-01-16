@@ -2,7 +2,7 @@ from .base import BaseNet
 from .auto_encoder import AENet
 from .diffusion.unet import UNet
 from .gan import Generator, Discriminator
-from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v13, COMONet
+from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v8, M2I2HANet_v13, COMONet
 
 __all__ = [
     "BaseNet",
@@ -11,6 +11,7 @@ __all__ = [
     "AENet",
     "Generator",
     "Discriminator",
+    "M2I2HANet_v8",
     "M2I2HANet_v13",
     "V8Net",
     "V13Net",

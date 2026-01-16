@@ -119,6 +119,8 @@ class AlgorithmBase(ABC):
             dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
             use_dataset (bool): Whether to use the dataset provided by the evaluator.
         """
+        self.ema_enable = False  # disable ema for evaluation
+        self.amp = False
         # init test dataset and test dataloader
         if use_dataset:
             self._init_eval_dataset(dataset)
@@ -129,11 +131,12 @@ class AlgorithmBase(ABC):
 
         # build net
         self._build_net(self.provided_net)
-
         # load net weights from ema
         self.load(ckpt, load_ema=True)
+        # set device
+        for net in self.nets.values():
+            net.to(self.device)
 
-        self.ema_enable = False  # disable ema for evaluation
         self.set_eval()
 
     @property
@@ -696,13 +699,19 @@ class AlgorithmBase(ABC):
 
         # cfg
         self._cfg = state["cfg"]  # include dataset, trainer
-        # trainer cfg and dataset cfg
 
-        self._dataset_cfg = self._cfg.get("dataset", {}).update(self._dataset_cfg)
-        self._trainer_cfg = self._cfg.get("trainer", {}).update(self._trainer_cfg)
+        # trainer cfg and dataset cfg
+        dataset_cfg = self._cfg["data"].get("dataset", {})
+        if hasattr(self, "_dataset_cfg"):
+            dataset_cfg.update(self.dataset_cfg)
+        self._dataset_cfg = dataset_cfg
+
+        trainer_cfg = self._cfg.get("trainer", {})
+        if hasattr(self, "_trainer_cfg"):
+            trainer_cfg.update(self.trainer_cfg)
+        self._trainer_cfg = trainer_cfg
 
         self.last_opt_step = state.get("last_opt_step", -1)
-        self.amp = state.get("amp", False)
 
         # load the nets' parameters
         if load_ema and state.get("emas") is not None:
@@ -720,10 +729,10 @@ class AlgorithmBase(ABC):
                     LOGGER.warning(f"EMA for network '{key}' not found in checkpoint, loading normal weights.")
                     if key in state["nets"]:
                         net.load_state_dict(state["nets"][key], strict=True)
+
         else:
             for key, net in self.nets.items():
                 net.load_state_dict(state["nets"][key], strict=True)
-                net.to(self.device)
 
         # load the optimizers' parameters
         for key, optimizer in self.optimizers.items():

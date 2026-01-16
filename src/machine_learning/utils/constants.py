@@ -28,3 +28,29 @@ IMG_FORMATS = [
 ]
 
 NPY_FORMATS = [".npy", ".npz"]
+
+CSS_COLORS = [
+    "red",
+    "green",
+    "blue",
+    "cyan",
+    "magenta",
+    "yellow",
+    "orange",
+    "purple",
+    "pink",
+    "brown",
+    "black",
+    "white",
+    "gray",
+    "lightblue",
+    "darkgreen",
+    "navy",
+    "teal",
+    "lime",
+    "olive",
+    "maroon",
+    "silver",
+    "gold",
+    "violet",
+]

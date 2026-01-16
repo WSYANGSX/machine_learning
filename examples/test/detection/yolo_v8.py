@@ -4,20 +4,20 @@ from machine_learning.evaluator import Evaluator
 
 def main():
     # Step 1: Build the algorithm
-    yolov13 = YoloV8("yolo_v13.yaml")
+    yolov8 = YoloV8("yolo_v8.yaml")
 
     # Step 2: Build the evaluate
     evaluator = Evaluator(
-        yolov13,
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v13/v2/best_model.pth",
-        "coco-2017.yaml",
+        yolov8,
+        "/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v8/vedai/yolo_v8_vedai_2026-01-12_18-55/best_model.pth",
+        "vedai.yaml",
         False,
     )
 
     # Step 3: Evaluate the model
     # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
     evaluator.eval(
-        img_path="/home/yangxf/WorkSpace/dataset/coco-2017/images/test/000000014075.jpg",
+        img_path="/home/yangxf/Downloads/vedai/1040_co.png",
         conf_thres=0.25,
         iou_thres=0.7,
     )

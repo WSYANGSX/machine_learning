@@ -316,7 +316,7 @@ class YoloV8(AlgorithmBase):
 
                 metrics["labels"] = nt.sum()
                 metrics["save_best"] = metrics["mAP.5-.95"]
-            
+
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
@@ -456,7 +456,7 @@ class YoloV8(AlgorithmBase):
             b, a, c = pred_dist.shape  # batch, anchors, channels
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
-    
+
     # FIXME: need to be improved
     @torch.no_grad()
     def eval(
@@ -500,11 +500,11 @@ class YoloV8(AlgorithmBase):
         detection = detections[0]
 
         bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
-        bboxes = rescale_bboxes(np.array(bboxes.cpu(), dtype=np.float32), self.image_size, w0, h0)
+        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
         cls = [int(cid) for cid in cls]
 
         # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, self.class_names)
+        visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names)
 
     def warmup(self, batch_inters: int, epoch: int) -> int:
         wb = (

@@ -227,7 +227,6 @@ class MultimodalDetection(YoloV8):
 
         return metrics, info
 
-    # FIXME: need to be improved
     @torch.no_grad()
     def eval(
         self,
@@ -235,25 +234,40 @@ class MultimodalDetection(YoloV8):
         ir_path: str | FilePath,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
+        modal: str | None = None,
         *args,
         **kwargs,
     ) -> None:
+        """
+        Evaluation of multimodal detection models.
+
+        Args:
+            img_path: The path of RGB image for detection.
+            ir_path: The path of infrared image for detection.
+            conf_thres: The confidence threshold during detection.
+            iou_thres: The IOU threshold during detection.
+            modal: The modal base plate to show the detection box.
+        """
         self.set_eval()
 
         # read image
         img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        ir0 = cv2.cvtColor(cv2.imread(ir_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
         h0, w0, _ = img0.shape
 
         # scale to square
         padded_img = pad_to_square(img=img0, pad_values=0)
+        padded_ir = pad_to_square(img=ir0, pad_values=0)
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
         img = tfs(padded_img)
         img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
+        ir = tfs(padded_ir)
+        ir = resize(ir, size=self.imgsz).unsqueeze(0).to(self.device)
 
         # input image to model
-        preds = self.net(img)
+        preds = self.net(img, ir)
 
         # decode preds
         detections = self.decode_preds(preds, img.size(2))  # xywh
@@ -271,8 +285,11 @@ class MultimodalDetection(YoloV8):
         detection = detections[0]
 
         bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
-        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), self.image_size, w0, h0)
+        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
         cls = [int(cid) for cid in cls]
 
         # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, self.class_names)
+        if modal is None or modal == "img":
+            visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names)
+        elif modal == "ir":
+            visualize_img_bboxes(ir0, bboxes, cls, conf, self.class_names)
