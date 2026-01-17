@@ -13,8 +13,6 @@ def main():
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
-        log_dir="/home/yangxf/WorkSpace/machine_learning/logs/m2i2ha/",
-        ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/m2i2ha/",
         epochs=300,
         log_interval=10,
         save_interval=10,

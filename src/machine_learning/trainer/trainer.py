@@ -62,11 +62,16 @@ class Trainer:
 
         # --------------------- init writer ---------------------------
         self._init_writer(self.record_dir)
-        self.save_best = torch.inf
 
         # record algorithm cfg
         with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
             yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
+
+        # set save_best value for saving the best ckpt
+        if self.algorithm.cfg["algorithm"].get("task", "") == "detect":
+            self.save_best = 0.0
+        else:
+            self.save_best = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
@@ -125,10 +130,16 @@ class Trainer:
             # save the best model
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
             if self.cfg.save_best and "save_best" in val_metrics:
-                if val_metrics["save_best"] < self.save_best:
-                    # For the larger the better metric, set it to negative in val metrics mannually
-                    self.save_best = val_metrics["save_best"]
-                    self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
+                current_val = val_metrics["save_best"]
+                task_type = self.algorithm.cfg["algorithm"].get("task", "")
+                if task_type == "detect":
+                    if current_val > self.save_best:  # Take the mAP value as a reference
+                        self.save_best = current_val
+                        self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
+                else:  # Take the Vloss as a reference
+                    if current_val < self.save_best:
+                        self.save_best = current_val
+                        self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
             else:
                 LOGGER.info("Saving of the best loss model skipped.")
 

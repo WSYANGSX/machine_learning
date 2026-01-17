@@ -17,4 +17,5 @@ build/
 *.egg-info/
 
 # 忽略训练模型
-checkpoints/
+runs/
+
