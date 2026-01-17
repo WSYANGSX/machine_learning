@@ -277,6 +277,9 @@ class AlgorithmBase(ABC):
                 self.net = NET_MAPS[self.name](**self.flatten_cfg)
                 self._add_net("net", self.net)
 
+        # add net name to cfg
+        self._add_cfg("net", {"net_name": self.net.__class__.__name__})
+
     def _add_cfg(self, name, cfg: dict[str, Any]) -> None:
         """
         Add additional configuration parameters.
@@ -638,7 +641,9 @@ class AlgorithmBase(ABC):
         """
         pass
 
-    def save(self, epoch: int, val_info: dict, best_loss: float, save_path: str, ckpt_dir: str, log_dir: str) -> None:
+    def save(
+        self, epoch: int, val_info: dict, best_loss: float, save_path: str, record_dir: str, ckpt_dir: str
+    ) -> None:
         """Save checkpoint."""
         state = {
             "epoch": epoch,
@@ -648,8 +653,8 @@ class AlgorithmBase(ABC):
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
             "amp": self.amp,
+            "record_dir": record_dir,
             "ckpt_dir": ckpt_dir,
-            "log_dir": log_dir,
             "emas": None,
         }
 

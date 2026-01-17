@@ -287,7 +287,7 @@ class YoloV8(AlgorithmBase):
 
                 if len(stats) and stats[0].any():
                     p, r, ap, f1, ap_class = ap_per_class(
-                        *stats, plot=self.plot, save_dir=self.trainer_cfg["log_dir"], names=self.class_names
+                        *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
                     )
                     ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
 
@@ -457,7 +457,6 @@ class YoloV8(AlgorithmBase):
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
-    # FIXME: need to be improved
     @torch.no_grad()
     def eval(
         self,
@@ -504,7 +503,7 @@ class YoloV8(AlgorithmBase):
         cls = [int(cid) for cid in cls]
 
         # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names)
+        visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
 
     def warmup(self, batch_inters: int, epoch: int) -> int:
         wb = (

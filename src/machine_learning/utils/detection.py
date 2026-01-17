@@ -1,4 +1,4 @@
-from typing import Union, Sequence, Mapping
+from typing import Union, Sequence, Mapping, Any
 
 import cv2
 import math
@@ -716,6 +716,8 @@ def visualize_img_bboxes(
     tag_size: float = 0.5,
     thickness: int = 2,
     cmap: str | None = None,
+    *args: Any,
+    **kwargs: dict[str, Any],
 ) -> None:
     """Plot the image with bounding boxes.
 
@@ -788,9 +790,9 @@ def visualize_img_bboxes(
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    plt.imshow(img, cmap)
-    plt.show()
-
+    # plt.imshow(img, cmap)
+    # plt.show()
+    plt.imsave("1.png", img)
 
 def ap_per_class(
     tp: torch.Tensor,

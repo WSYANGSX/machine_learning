@@ -2,6 +2,7 @@ from typing import Any, Mapping
 
 import os
 import json
+import yaml
 import torch
 from datetime import datetime
 from numbers import Integral, Real
@@ -10,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from .trianer_cfg import TrainerCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase
+from machine_learning.utils.constants import ROOT_PATH
 from machine_learning.utils import set_seed, cfg2dict, print_cfg
 
 from rich import box
@@ -38,6 +40,17 @@ class Trainer:
 
         self.epochs = self.cfg.epochs
 
+        # datetime suffix for log
+        self.dt_suffix = (
+            self.algorithm.name + "_" + os.path.splitext(dataset)[0] + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M")
+        )
+        self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + self.dt_suffix)
+        self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
+
+        # add record path to cfg
+        self.cfg.record_dir = self.record_dir
+        self.cfg.ckpt_dir = self.ckpt_dir
+
         # ------------------ init global random seed ------------------
         set_seed(self.cfg.seed)
         LOGGER.info(f"Current seed: {self.cfg.seed}")
@@ -47,34 +60,25 @@ class Trainer:
         self.algorithm._init_on_trainer(cfg2dict(self.cfg), dataset)
         print_cfg("Total configuration", self.algorithm.cfg)
 
-        # datetime suffix for ckpt
-        self.dt_suffix = (
-            self.algorithm.name
-            + "_"
-            + self.algorithm.dataset_cfg["name"]
-            + "_"
-            + datetime.now().strftime("%Y-%m-%d_%H-%M")
-        )
-        self.ckpt_dir = os.path.abspath(self.cfg.ckpt_dir + self.dt_suffix)
-
         # --------------------- init writer ---------------------------
-        self._init_writer()
+        self._init_writer(self.record_dir)
         self.save_best = torch.inf
+
+        # record algorithm cfg
+        with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
+            yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
 
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
 
-    def _init_writer(self):
-        self.log_dir = self.cfg.log_dir + self.dt_suffix
-        self.log_dir = os.path.abspath(self.log_dir)
-
+    def _init_writer(self, path: str):
         try:
-            os.makedirs(self.log_dir, exist_ok=True)
+            os.makedirs(path, exist_ok=True)
         except OSError as e:
-            raise RuntimeError(f"Failed to create log directory at {self.log_dir}: {e}")
+            raise RuntimeError(f"Failed to create record directory at {path}: {e}")
 
-        self.writer = SummaryWriter(log_dir=self.log_dir)
+        self.writer = SummaryWriter(log_dir=path)
 
     def _setup_train(self):
         # reset optimizer gradients to zeros
@@ -148,8 +152,8 @@ class Trainer:
         state_dict = self._algorithm.load(checkpoint)
         start_epoch = state_dict["epoch"] + 1
         self.best_loss = state_dict.get("best_loss", torch.inf)
+        self.record_dir = state_dict["record_dir"]
         self.ckpt_dir = state_dict["ckpt_dir"]
-        self.log_dir = state_dict["log_dir"]
 
         self.train(start_epoch)
 
@@ -157,14 +161,14 @@ class Trainer:
         try:
             os.makedirs(self.ckpt_dir, exist_ok=True)
         except OSError as e:
-            raise RuntimeError(f"Failed to create log directory at {self.ckpt_dir}: {e}")
+            raise RuntimeError(f"Failed to create ckpt directory at {self.ckpt_dir}: {e}")
 
         filename = f"checkpoint_epoch_{epoch + 1}.pth"
         if is_best:
             filename = "best_model.pth"
         save_path = os.path.join(self.ckpt_dir, filename)
 
-        self._algorithm.save(epoch, val_return, best_loss, save_path, self.ckpt_dir, self.log_dir)
+        self._algorithm.save(epoch, val_return, best_loss, save_path, self.record_dir, self.ckpt_dir)
 
     def epoch_info(
         self,

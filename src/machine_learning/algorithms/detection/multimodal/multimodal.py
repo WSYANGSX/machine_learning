@@ -193,7 +193,7 @@ class MultimodalDetection(YoloV8):
 
                 if len(stats) and stats[0].any():
                     p, r, ap, f1, ap_class = ap_per_class(
-                        *stats, plot=self.plot, save_dir=self.trainer_cfg["log_dir"], names=self.class_names
+                        *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
                     )
                     ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
 
@@ -290,6 +290,6 @@ class MultimodalDetection(YoloV8):
 
         # visiualization
         if modal is None or modal == "img":
-            visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names)
+            visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
         elif modal == "ir":
-            visualize_img_bboxes(ir0, bboxes, cls, conf, self.class_names)
+            visualize_img_bboxes(ir0, bboxes, cls, conf, self.class_names, *args, **kwargs)

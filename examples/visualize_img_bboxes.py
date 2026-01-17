@@ -3,11 +3,12 @@ import numpy as np
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 from ultralytics.utils.ops import segments2boxes
 
-img = Image.open("/home/yangxf/Downloads/flir/09039_co.jpg")
+img = Image.open("/home/yangxf/Downloads/vedai/3_co.png")
 img = np.array(img)
-ir = Image.open("/home/yangxf/Downloads/flir/09039_ir.jpeg")
+ir = Image.open("/home/yangxf/Downloads/vedai/3_ir.png")
 ir = np.array(ir)
-lb_file = "/home/yangxf/Downloads/flir/09039.txt"
+
+lb_file = "/home/yangxf/Downloads/vedai/3.txt"
 # segments to bboxes
 with open(lb_file) as f:
     lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
@@ -20,5 +21,5 @@ with open(lb_file) as f:
 
 bboxes = yolo2voc(lb[:, 1:5], img.shape[1], img.shape[0])
 cls = lb[:, 0]
-cls_maps = ["car", "bus", "truck", "van", "freight car"]
-visualize_img_bboxes(img=img, bboxes=bboxes, class_ids=cls.astype(np.int8), class_maps=cls_maps)
+cls_maps = ["Car", "Pickup", "Camping", "Truck", "Other", "Tractor", "Boat", "Van"]
+visualize_img_bboxes(img=ir, bboxes=bboxes, class_ids=cls.astype(np.int8), class_maps=cls_maps, tag_size=0.4)

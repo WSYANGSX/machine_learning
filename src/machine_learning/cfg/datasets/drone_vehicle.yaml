@@ -21,8 +21,8 @@ test_labels_dir: labels/test
 nc: 5 
 class_names:
   - car
-  - bus
-  - truck
   - van
+  - truck
+  - bus
   - freight car
   
