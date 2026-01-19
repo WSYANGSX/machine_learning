@@ -18,7 +18,9 @@ def main():
     trainer = Trainer(trainer_cfg, como, "vedai.yaml")
 
     # Step 3: Train the model
-    trainer.train()
+    trainer.train_from_checkpoint(
+        "/home/yangxf/WorkSpace/machine_learning/runs/como/como_vedai_2026-01-19_09-29/ckpt/checkpoint_epoch_10.pth"
+    )
 
 
 if __name__ == "__main__":

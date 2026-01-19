@@ -195,12 +195,12 @@ class AlgorithmBase(ABC):
         return self._nets
 
     @property
-    def optimizers(self) -> dict[str, BaseNet]:
+    def optimizers(self) -> dict[str, Optimizer]:
         """Return the optimizers of the algorithm."""
         return self._optimizers
 
     @property
-    def schedulers(self) -> dict[str, BaseNet]:
+    def schedulers(self) -> dict[str, LRScheduler]:
         """Return the schedulers of the algorithm."""
         return self._schedulers
 
@@ -360,14 +360,14 @@ class AlgorithmBase(ABC):
         dataset_name = dataset_cfg["name"]
         parser: ParserBase = PARSER_MAPS[dataset_name](dataset_cfg)
         parsing = parser.parse()
-        trian_parsing, val_parsing, test_parsing = parsing["train"], parsing["val"], parsing.get("test", {})
+        train_parsing, val_parsing, test_parsing = parsing["train"], parsing["val"], parsing.get("test", {})
 
         # build dataset
         type = self.dataset_cfg.get("dataset_type", None)
         if type is None:
             raise ValueError("The data type must be provided for Dataset mapping.")
 
-        return type, trian_parsing, val_parsing, test_parsing
+        return type, train_parsing, val_parsing, test_parsing
 
     def _init_ema(self) -> None:
         """
@@ -381,11 +381,11 @@ class AlgorithmBase(ABC):
 
     def _init_train_datasets(self, dataset: str | Mapping[str, Any]) -> None:
         """Initialize train and val datasets of the algorithm."""
-        type, trian_parsing, val_parsing, _ = self.parse_dataset(dataset)
+        type, train_parsing, val_parsing, _ = self.parse_dataset(dataset)
 
         LOGGER.info("Getting train and val datasets...")
         self._flatten_cfg = self.cfg_flat(self.cfg)
-        self._train_dataset = build_dataset(type, self.flatten_cfg, trian_parsing, self.batch_size, "train")
+        self._train_dataset = build_dataset(type, self.flatten_cfg, train_parsing, self.batch_size, "train")
         self._val_dataset = build_dataset(type, self.flatten_cfg, val_parsing, self.batch_size, "val")
 
     def _init_eval_dataset(self, dataset: str | Mapping[str, Any]) -> None:
@@ -725,7 +725,7 @@ class AlgorithmBase(ABC):
                     ema_state = state["emas"][key]
                     if isinstance(ema_state, dict) and "model_state" in ema_state:
                         net.load_state_dict(ema_state["model_state"], strict=True)
-                        LOGGER.debug(f"Loaded EMA parameters into network '{key}' for evaluation.")
+                        LOGGER.info(f"Loaded EMA parameters into network '{key}' for evaluation.")
                     else:
                         LOGGER.warning(f"Invalid EMA state format for network '{key}', loading normal weights.")
                         if key in state["nets"]:
@@ -744,7 +744,7 @@ class AlgorithmBase(ABC):
             if key in state.get("optimizers", {}):
                 try:
                     optimizer.load_state_dict(state["optimizers"][key])
-                    LOGGER.debug(f"Loaded optimizer '{key}' state.")
+                    LOGGER.info(f"Loaded optimizer '{key}' state.")
                 except Exception as e:
                     LOGGER.warning(f"Error loading optimizer '{key}': {e}.")
             else:
@@ -756,16 +756,16 @@ class AlgorithmBase(ABC):
                 if key in state["schedulers"]:
                     try:
                         scheduler.load_state_dict(state["schedulers"][key])
-                        LOGGER.debug(f"Loaded scheduler '{key}' state.")
+                        LOGGER.info(f"Loaded scheduler '{key}' state.")
                     except Exception as e:
                         LOGGER.warning(f"Error loading scheduler '{key}': {e}.")
                 else:
-                    LOGGER.debug(f"Scheduler '{key}' not found in checkpoint.")
+                    LOGGER.info(f"Scheduler '{key}' not found in checkpoint.")
 
         if "scaler" in state:
             if self.amp:
                 self.scaler.load_state_dict(state["scaler"])
-                LOGGER.debug("Loaded AMP scaler state.")
+                LOGGER.info("Loaded AMP scaler state.")
             else:
                 LOGGER.warning("Checkpoint has AMP scaler but current AMP is disabled, ignoring scaler.")
         elif self.amp:
@@ -789,8 +789,8 @@ class AlgorithmBase(ABC):
 
         LOGGER.info(f"Successfully loaded checkpoint from {checkpoint}.")
         if "epoch" in state:
-            LOGGER.info(f"Checkpoint epoch: {state['epoch']}.")
+            LOGGER.info(f"Checkpoint epoch: {state['epoch']}")
         if "best_loss" in state:
-            LOGGER.info(f"Checkpoint best loss: {state['best_loss']:.4f}.")
+            LOGGER.info(f"Checkpoint best loss: {state['best_loss']:.4f}")
 
         return state

@@ -9,14 +9,14 @@ def main():
     # Step 2: Build the evaluate
     evaluator = Evaluator(
         yolov8,
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v8/vedai/rgb/checkpoint_epoch_300.pth",
+        "/home/yangxf/WorkSpace/machine_learning/runs/yolo_v8/yolo_v8_vedai_2026-01-19_10-21/ckpt/best_model.pth",
         "vedai.yaml",
         False,
     )
 
     # Step 3: Evaluate the model
     # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
-    evaluator.eval(img_path="/home/yangxf/Downloads/vedai/3_co.png", conf_thres=0.5, iou_thres=0.7, tag_size=0.35)
+    evaluator.eval(img_path="/home/yangxf/Downloads/vedai/4_co.png", conf_thres=0.25, iou_thres=0.7, tag_size=0.35)
 
 
 if __name__ == "__main__":

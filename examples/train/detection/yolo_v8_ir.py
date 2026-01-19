@@ -9,8 +9,6 @@ def main():
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
-        log_dir="/home/yangxf/WorkSpace/machine_learning/logs/yolo_v8/",
-        ckpt_dir="/home/yangxf/WorkSpace/machine_learning/checkpoints/yolo_v8/",
         epochs=300,
         log_interval=10,
         save_interval=10,

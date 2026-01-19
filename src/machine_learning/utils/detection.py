@@ -790,9 +790,9 @@ def visualize_img_bboxes(
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    # plt.imshow(img, cmap)
-    # plt.show()
-    plt.imsave("1.png", img)
+    plt.imshow(img, cmap)
+    plt.show()
+
 
 def ap_per_class(
     tp: torch.Tensor,

@@ -31,13 +31,13 @@ $PY_ENV yolo_v8_rgb.py > "$LOG_DIR/2_yolo_v8_rgb.log" 2>&1
 # echo "[$(date)] 开始运行程序4: yolo_v13_rgb.py"
 # $PY_ENV yolo_v13_rgb.py > "$LOG_DIR/4_yolo_v13_rgb.log" 2>&1
 
-# 5. 运行 m2i2ha_v8_n
-echo "[$(date)] 开始运行程序5: m2i2ha_v8_n.py"
-$PY_ENV /home/yangxf/WorkSpace/machine_learning/examples/train/detection/m2i2ha/m2i2ha_v8_n.py > "$LOG_DIR/5_m2i2ha_v8_n.log" 2>&1
+# # 5. 运行 m2i2ha_v8_n
+# echo "[$(date)] 开始运行程序5: m2i2ha_v8_n.py"
+# $PY_ENV /home/yangxf/WorkSpace/machine_learning/examples/train/detection/m2i2ha/m2i2ha_v8_n.py > "$LOG_DIR/5_m2i2ha_v8_n.log" 2>&1
 
-# 6. 运行 m2i2ha_v8_s
-echo "[$(date)] 开始运行程序6: m2i2ha_v8_s.py"
-$PY_ENV /home/yangxf/WorkSpace/machine_learning/examples/train/detection/m2i2ha/m2i2ha_v8_s.py > "$LOG_DIR/6_m2i2ha_v8_s.log" 2>&1
+# # 6. 运行 m2i2ha_v8_s
+# echo "[$(date)] 开始运行程序6: m2i2ha_v8_s.py"
+# $PY_ENV /home/yangxf/WorkSpace/machine_learning/examples/train/detection/m2i2ha/m2i2ha_v8_s.py > "$LOG_DIR/6_m2i2ha_v8_s.log" 2>&1
 
 # # 7. 运行 m2i2ha_v13_n
 # echo "[$(date)] 开始运行程序7: m2i2ha_v13_n.py"

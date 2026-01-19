@@ -13,7 +13,7 @@ def main():
     # Step 2: Build the evaluate
     evaluator = Evaluator(
         como,
-        "/home/yangxf/WorkSpace/machine_learning/checkpoints/m2i2ha/vedai/s/checkpoint_epoch_220.pth",
+        "/home/yangxf/WorkSpace/machine_learning/runs/m2i2ha/m2i2ha_vedai_2026-01-17_18-09/ckpt/best_model.pth",
         "vedai.yaml",
         False,
     )
@@ -23,7 +23,7 @@ def main():
     evaluator.eval(
         img_path="/home/yangxf/Downloads/vedai/3_co.png",
         ir_path="/home/yangxf/Downloads/vedai/3_ir.png",
-        conf_thres=0.5,
+        conf_thres=0.25,
         iou_thres=0.7,
         tag_size=0.35,
         modal="img",

@@ -44,7 +44,7 @@ class Trainer:
         self.dt_suffix = (
             self.algorithm.name + "_" + os.path.splitext(dataset)[0] + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M")
         )
-        self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + self.dt_suffix)
+        self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + f"{self.algorithm.name}/" + self.dt_suffix)
         self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
 
         # add record path to cfg

@@ -3,12 +3,12 @@ import numpy as np
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
 from ultralytics.utils.ops import segments2boxes
 
-img = Image.open("/home/yangxf/Downloads/vedai/3_co.png")
+img = Image.open("/home/yangxf/Downloads/vedai/4_co.png")
 img = np.array(img)
-ir = Image.open("/home/yangxf/Downloads/vedai/3_ir.png")
+ir = Image.open("/home/yangxf/Downloads/vedai/4_ir.png")
 ir = np.array(ir)
 
-lb_file = "/home/yangxf/Downloads/vedai/3.txt"
+lb_file = "/home/yangxf/Downloads/vedai/4.txt"
 # segments to bboxes
 with open(lb_file) as f:
     lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
