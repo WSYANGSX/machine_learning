@@ -1190,20 +1190,17 @@ class CompressAdaHGConv(nn.Module):
         k = edge_idx.size(-1)
 
         idx = edge_idx.reshape(B, N * k).to(device=X.device, dtype=torch.long)  # [B, Nk]
-        with torch.amp.autocast(device_type=str(X.device), enabled=False):
-            X32 = X.float()  # [B,N,D]
-            w32 = edge_w.to(device=X.device).float()  # [B,N,k]
 
-            contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)
 
-            He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
-            He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+        He = torch.zeros(B, E, D, device=X.device, dtype=X.dtype)  # 使用 X.dtype
+        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
 
-            He = self.edge_proj(He)
+        He = self.edge_proj(He)
 
-            He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)  # [B,N,k,D]
-            X_new = (w32.unsqueeze(-1) * He_sel).sum(dim=2)  # [B,N,D]
-            X_new = self.node_proj(X_new)  # fp32
+        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)
+        X_new = (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)
+        X_new = self.node_proj(X_new)
 
         X_new = X_new.to(dtype=X.dtype)
         return X_new + X
@@ -1664,14 +1661,10 @@ class CrossHyperConv(nn.Module):
         k = edge_idx.size(-1)
         idx = edge_idx.reshape(B, N * k)  # [B,Nk]
 
-        with torch.amp.autocast(device_type=str(X.device), enabled=False):
-            X32 = X.float()  # [B,N,D]
-            w32 = edge_w.to(device=X.device).float()  # [B,N,k]
+        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
-            contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
-
-            He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
-            He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+        He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
+        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
 
         return He.to(dtype=X.dtype)
 

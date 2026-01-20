@@ -80,10 +80,12 @@ class SimpleFusion_v8(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # HyperACE
-                    "HyperACE_IMG": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
+                    # "HyperACE_IMG": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
+                    "HyperACE_IMG": IntraHyperEnhance(128, 128, 1, 4, True, True, 0.5, 1, "both"),
                     "Upsample_1": nn.Upsample(None, 2, "nearest"),
                     "Downsample_1": DownsampleConv(128),
-                    "HyperACE_IR": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
+                    # "HyperACE_IR": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
+                    "HyperACE_IR": IntraHyperEnhance(128, 128, 1, 4, True, True, 0.5, 1, "both"),
                     "Upsample_2": nn.Upsample(None, 2, "nearest"),
                     "Downsample_2": DownsampleConv(128),
                     # Simple fusion
@@ -132,10 +134,16 @@ class SimpleFusion_v8(BaseNet):
             self.neck = nn.ModuleDict(
                 {
                     # HyperACE
-                    "HyperACE_IMG": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    # "HyperACE_IMG": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_IMG": IntraHyperEnhance(
+                        256, 256, 1, 8, True, True, 0.5, 1, 4, sparse_ratio=0.1, context="both", node_topk_chunk=4
+                    ),
                     "Upsample_1": nn.Upsample(None, 2, "nearest"),
                     "Downsample_1": DownsampleConv(256),
-                    "HyperACE_IR": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    # "HyperACE_IR": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
+                    "HyperACE_IR": IntraHyperEnhance(
+                        256, 256, 1, 8, True, True, 0.5, 1, 4, sparse_ratio=0.1, context="both", node_topk_chunk=4
+                    ),
                     "Upsample_2": nn.Upsample(None, 2, "nearest"),
                     "Downsample_2": DownsampleConv(256),
                     # Simple fusion

@@ -1,0 +1,157 @@
+class CompressAdaHGConv(nn.Module):
+    """
+    Low-rank + Sparse hypergraph conv.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_hyperedges: int = 32,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+
+        self.num_hyperedges = num_hyperedges
+        self.edge_proj = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(embed_dim),
+        )
+        self.node_proj = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(embed_dim),
+        )
+
+    def forward(self, X: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor):
+        """
+        X: [B,N,D]
+        """
+        B, N, D = X.shape
+        E = self.num_hyperedges
+        k = edge_idx.size(-1)
+
+        idx = edge_idx.reshape(B, N * k).to(device=X.device, dtype=torch.long)  # [B, Nk]
+        # with torch.amp.autocast(device_type=str(X.device), enabled=False):
+        #     X32 = X.float()  # [B,N,D]
+        #     w32 = edge_w.to(device=X.device).float()  # [B,N,k]
+
+        #     contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+
+        #     He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
+        #     He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+
+        #     He = self.edge_proj(He)
+
+        #     He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)  # [B,N,k,D]
+        #     X_new = (w32.unsqueeze(-1) * He_sel).sum(dim=2)  # [B,N,D]
+        #     X_new = self.node_proj(X_new)  # fp32
+
+        contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)
+
+        He = torch.zeros(B, E, D, device=X.device, dtype=X.dtype)  # 使用 X.dtype
+        He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+
+        He = self.edge_proj(He)
+
+        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)
+        X_new = (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)
+        X_new = self.node_proj(X_new)
+
+        X_new = X_new.to(dtype=X.dtype)
+        return X_new + X
+
+class CrossHyperConv(nn.Module):
+    """
+    Cross-modal hypergraph conv.
+      -Node (A)->edge and node(B)->edge are respectively aggregated to the same set of hyperedges.
+      -edge ->node(A) is written back using B-side hyperedge features, and edge->node(B) is written back using A-side
+      hyperedge features.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_hyperedges: int = 16,
+        dropout: float = 0.1,
+        bidirectional: bool = True,
+        fusion_type: Literal["bilinear", "concatenate", "gate", "residual"] = "gate",
+    ):
+        super().__init__()
+        self.E = num_hyperedges
+        self.bidirectional = bidirectional
+        self.fusion_type = fusion_type
+
+        self.A_to_B_proj = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.GELU(), nn.Dropout(dropout))
+        self.B_to_A_proj = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.GELU(), nn.Dropout(dropout))
+
+        if fusion_type == "gate":
+            self.gate_A = nn.Sequential(nn.Linear(embed_dim * 2, embed_dim), nn.Sigmoid())
+            self.gate_B = nn.Sequential(nn.Linear(embed_dim * 2, embed_dim), nn.Sigmoid())
+        elif fusion_type == "bilinear":
+            self.bilin = nn.Bilinear(embed_dim, embed_dim, embed_dim)
+
+    @staticmethod
+    def _node_to_edge(X: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor, E: int) -> torch.Tensor:
+        """
+        X:[B,N,D], edge_idx:[B,N,k], edge_w:[B,N,k] -> He:[B,E,D]
+        """
+        B, N, D = X.shape
+        k = edge_idx.size(-1)
+        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+
+        with torch.amp.autocast(device_type=str(X.device), enabled=False):
+            X32 = X.float()  # [B,N,D]
+            w32 = edge_w.to(device=X.device).float()  # [B,N,k]
+
+            contrib = (w32.unsqueeze(-1) * X32.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
+
+            He = torch.zeros(B, E, D, device=X.device, dtype=torch.float32)  # [B,E,D]
+            He.scatter_add_(1, idx.unsqueeze(-1).expand(-1, -1, D), contrib)
+
+        return He.to(dtype=X.dtype)
+
+    @staticmethod
+    def _edge_to_node(He: torch.Tensor, edge_idx: torch.Tensor, edge_w: torch.Tensor) -> torch.Tensor:
+        """
+        He:[B,E,D], edge_idx:[B,N,k], edge_w:[B,N,k] -> X_new:[B,N,D]
+        """
+        B, E, D = He.shape
+        _, N, k = edge_idx.shape
+        idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+        He_sel = He.gather(1, idx.unsqueeze(-1).expand(-1, -1, D)).reshape(B, N, k, D)  # [B,N,k,D]
+        return (edge_w.unsqueeze(-1) * He_sel).sum(dim=2)  # [B,N,D]
+
+    def forward(self, X_A, X_B, idxA, wA, idxB, wB, E):
+        He_A = self._node_to_edge(X_A, idxA, wA, E)  # A-side aggregate to the hyperedge
+        He_B = self._node_to_edge(X_B, idxB, wB, E)  # B-side aggregate to the hyperedge
+
+        He_A_t = self.B_to_A_proj(He_A)
+        He_B_t = self.A_to_B_proj(He_B)
+
+        X_A_from_B = self._edge_to_node(
+            He_B_t, idxA, wA
+        )  # A reads B's information using the hyperedge it connects itself
+        X_B_from_A = self._edge_to_node(He_A_t, idxB, wB) if self.bidirectional else X_B
+
+        if self.fusion_type == "concatenate":
+            X_A_new = torch.cat([X_A, X_A_from_B], dim=-1)
+            X_B_new = torch.cat([X_B, X_B_from_A], dim=-1)
+        elif self.fusion_type == "bilinear":
+            X_A_new = self.bilin(X_A, X_A_from_B)
+            X_B_new = self.bilin(X_B, X_B_from_A)
+        elif self.fusion_type == "gate":
+            gA = self.gate_A(torch.cat([X_A, X_A_from_B], dim=-1))
+            X_A_new = gA * X_A + (1 - gA) * X_A_from_B
+            gB = self.gate_B(torch.cat([X_B, X_B_from_A], dim=-1))
+            X_B_new = gB * X_B + (1 - gB) * X_B_from_A
+        else:  # residual
+            X_A_new = X_A + X_A_from_B
+            X_B_new = X_B + X_B_from_A
+
+        # Return sparse "3D hyperedge relationships" for visualization/debugging
+        # Which hyperedges each node is connected to + weights (two modes share the same set of hyperedge ids)
+        cross_repr = (idxA, wA, idxB, wB, E)
+        return X_A_new, X_B_new, cross_repr
