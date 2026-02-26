@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "machine_learning" 
+version = "0.1.0"           
+description = "A training framework for various types of machine learning algorithms."
+readme = "README.md"          
+requires-python = ">=3.8"
+license = "MIT"              
+authors = [
+    {name = "Xiaofan Yang", email = "1062033103@qq.com"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/WSYANGSX/machine_learning"
+Repository = "https://github.com/WSYANGSX/machine_learning.git"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+exclude = ["tests*", "examples*"]
