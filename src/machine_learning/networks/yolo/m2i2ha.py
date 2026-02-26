@@ -7,7 +7,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
     IntraHyperEnhance,
-    IntreHyperFusion_V2,
+    IntreHyperFusionV2,
     MMFullPAD_Tunnel,
     ModalFuseSE,
     DownsampleConv,
@@ -364,7 +364,7 @@ class M2I2HANet_v8(BaseNet):
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusion_V2(512, 256, 12, 0.5),
+                    "CHyperACE": IntreHyperFusionV2(512, 256, 12, 0.5),
                     "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -430,6 +430,7 @@ class M2I2HANet_v8(BaseNet):
         # Cross HyerACE
         fuse_enhanced = []
         fuse_h3 = self.neck.CHyperACE([img_enhanced[2], ir_enhanced[2]])
+
         fuse_h2 = self.neck.Upsample(fuse_h3)
         fuse_h1 = self.neck.Upsample(fuse_h2)
         fuse_enhanced.extend([fuse_h1, fuse_h2, self.neck.Conv_0(fuse_h3)])

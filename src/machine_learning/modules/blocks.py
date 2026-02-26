@@ -1761,7 +1761,7 @@ class CorssHGComputation(nn.Module):
         return x_a_out, x_b_out, cross_repr
 
 
-class IntreHyperFusion_V2(nn.Module):
+class IntreHyperFusionV2(nn.Module):
     def __init__(
         self,
         c1,
@@ -1798,6 +1798,7 @@ class IntreHyperFusion_V2(nn.Module):
     def forward(self, X):
         x0, x1 = X
         x_a, x_b, _ = self.cross_hg_computation(x0, x1)
+
         y = self.fuse((x_a, x_b))
         return self.cv(y)
 
