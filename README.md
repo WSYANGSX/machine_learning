@@ -1,0 +1,1 @@
+“This repository contains the official implementation of the paper 'M2I2HA: Multi-modal Object Detection Based on Intra- and Inter-Modal Hypergraph Attention'. The preprint is available on arXiv, and the manuscript is currently under review.”
