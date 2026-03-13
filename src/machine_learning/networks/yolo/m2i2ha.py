@@ -12,217 +12,8 @@ from machine_learning.modules.blocks import (
     ModalFuseSE,
     DownsampleConv,
     FullPAD_Tunnel,
-    HyperACE,
 )
 from ultralytics.nn.modules import Conv, Concat, DSC3k2, DSConv, A2C2f, C2f, SPPF
-
-
-# --------------------------------------------- Baselines ---------------------------------------------
-class SimpleFusion_v8(BaseNet):
-    def __init__(
-        self,
-        imgsz: int,
-        channels: int = 3,
-        nc: int = 1,
-        net_scale: Literal["n", "s", "l", "x"] = "n",
-        hyperace: bool = False,
-        *args,
-        **kwargs,
-    ):
-        """Baseline multi-modal object detection network with yolov8 FENs.
-
-        Args:
-            imgsz (int): the size of input images.
-            channels (int): number of input channels.
-            nc (int): number of classes.
-            net_scale (Literal["n", "s", "l", "x"]): scale of the network.
-        """
-        super().__init__(args=args, kwargs=kwargs)
-
-        self.imgsz = imgsz
-        self.nc = nc
-        self.net_scale = net_scale
-        self.channels = channels
-        self.hyperace = hyperace
-
-        if self.net_scale == "n":
-            # img backbone
-            self.img_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 16, 6, 2, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
-                    "Conv_2": Conv(16, 32, 3, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
-                    "C2f_1": C2f(32, 64, 1, True),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
-                    "Conv_3": Conv(64, 64, 3, 2),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
-                    "C2f_2": C2f(64, 128, 2, True),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
-                    "Conv_4": Conv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
-                    "C2f_3": C2f(128, 128, 3, True),  # 6 (P4) (128, 40, 40)
-                    "Conv_5": Conv(128, 128, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
-                    "C2f_4": C2f(128, 256, 1, True),  # 8 (P5) (256, 20, 20)
-                    "SPPF": SPPF(256, 256, k=5),  # 9 (P5) (256, 20, 20)
-                }
-            )
-            # ir backbone
-            self.ir_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 16, 6, 2, 2),  # 0-P1/2  (3, 640, 640) -> (16, 320, 320)
-                    "Conv_2": Conv(16, 32, 3, 2),  # 1-P2/4 (16, 320, 320) -> (32, 160, 160)
-                    "C2f_1": C2f(32, 64, 1, True),  # 2 (P2) (32, 160, 160) -> (64, 160, 160)
-                    "Conv_3": Conv(64, 64, 3, 2),  # 3-P3/8 (64, 160, 160) -> (64, 80, 80)
-                    "C2f_2": C2f(64, 128, 2, True),  # 4 (P3) (64, 80, 80) -> (128, 80, 80)
-                    "Conv_4": Conv(128, 128, 3, 2),  # 5-P4/16 (128, 80, 80) -> (128, 40, 40)
-                    "C2f_3": C2f(128, 128, 3, True),  # 6 (P4) (128, 40, 40)
-                    "Conv_5": Conv(128, 128, 3, 2),  # 7-P5/32 (128, 40, 40) -> (128, 20, 20)
-                    "C2f_4": C2f(128, 256, 1, True),  # 8 (P5) (256, 20, 20)
-                    "SPPF": SPPF(256, 256, k=5),  # 9 (P5) (256, 20, 20)
-                }
-            )
-            # neck
-            self.neck = nn.ModuleDict(
-                {
-                    # HyperACE
-                    # "HyperACE_IMG": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
-                    "HyperACE_IMG": IntraHyperEnhance(128, 128, 1, 4, True, True, 0.5, 1, "both"),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample_1": DownsampleConv(128),
-                    # "HyperACE_IR": HyperACE(128, 128, 1, 4, True, True, 0.5, 1, "both"),
-                    "HyperACE_IR": IntraHyperEnhance(128, 128, 1, 4, True, True, 0.5, 1, "both"),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Downsample_2": DownsampleConv(128),
-                    # Simple fusion
-                    "ModalFuseSE_1": ModalFuseSE(128),
-                    "Conv_1": Conv(128, 64, 1, 1),
-                    "ModalFuseSE_2": ModalFuseSE(128),
-                    "ModalFuseSE_3": ModalFuseSE(256),
-                }
-            )
-            # head
-            self.head = DetectV8(nc=self.nc, ch=(64, 128, 256))
-
-        elif self.net_scale == "s":
-            # img backbone
-            self.img_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 32, 6, 2, 2),  # 0 P1/2 (3, 640, 640) -> (32, 320, 320)
-                    "Conv_2": Conv(32, 64, 3, 2),  # 1 P2/4 (32, 320, 320) -> (64, 160, 160)
-                    "C2f_1": C2f(64, 64, 1, True),  # 2 (P2) (64, 160, 160) -> (128, 160, 160)
-                    "Conv_3": Conv(64, 128, 3, 2),  # 3 P3/8 (128, 160, 160) -> (128, 80, 80)
-                    "C2f_2": C2f(128, 256, 2, True),  # 4 (P3) (128, 80, 80) -> (256, 80, 80)
-                    "Conv_4": Conv(256, 256, 3, 2),  # 5 P4/16 (256, 80, 80) -> (256, 40, 40)
-                    "C2f_3": C2f(256, 256, 3, True),  # 6 (P4) (256, 40, 40)
-                    "Conv_5": Conv(256, 512, 3, 2),  # 7 P5/32 (256, 40, 40) -> (512, 20, 20)
-                    "C2f_4": C2f(512, 512, 1, True),  # 8 (P5) (512, 20, 20)
-                    "SPPF": SPPF(512, 512, k=5),  # 9 (P5) (512, 20, 20)
-                }
-            )
-            # ir backbone
-            self.ir_backbone = nn.ModuleDict(
-                {
-                    "Conv_1": Conv(self.channels, 32, 6, 2, 2),  # 0 P1/2 (3, 640, 640) -> (32, 320, 320)
-                    "Conv_2": Conv(32, 64, 3, 2),  # 1 P2/4 (32, 320, 320) -> (64, 160, 160)
-                    "C2f_1": C2f(64, 64, 1, True),  # 2 (P2) (64, 160, 160) -> (128, 160, 160)
-                    "Conv_3": Conv(64, 128, 3, 2),  # 3 P3/8 (128, 160, 160) -> (128, 80, 80)
-                    "C2f_2": C2f(128, 256, 2, True),  # 4 (P3) (128, 80, 80) -> (256, 80, 80)
-                    "Conv_4": Conv(256, 256, 3, 2),  # 5 P4/16 (256, 80, 80) -> (256, 40, 40)
-                    "C2f_3": C2f(256, 256, 3, True),  # 6 (P4) (256, 40, 40)
-                    "Conv_5": Conv(256, 512, 3, 2),  # 7 P5/32 (256, 40, 40) -> (512, 20, 20)
-                    "C2f_4": C2f(512, 512, 1, True),  # 8 (P5) (512, 20, 20)
-                    "SPPF": SPPF(512, 512, k=5),  # 9 (P5) (512, 20, 20)
-                }
-            )
-
-            # neck
-            self.neck = nn.ModuleDict(
-                {
-                    # HyperACE
-                    # "HyperACE_IMG": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
-                    "HyperACE_IMG": IntraHyperEnhance(
-                        256, 256, 1, 8, True, True, 0.5, 1, 4, sparse_ratio=0.1, context="both", node_topk_chunk=4
-                    ),
-                    "Upsample_1": nn.Upsample(None, 2, "nearest"),
-                    "Downsample_1": DownsampleConv(256),
-                    # "HyperACE_IR": HyperACE(256, 256, 1, 8, True, True, 0.5, 1, "both"),
-                    "HyperACE_IR": IntraHyperEnhance(
-                        256, 256, 1, 8, True, True, 0.5, 1, 4, sparse_ratio=0.1, context="both", node_topk_chunk=4
-                    ),
-                    "Upsample_2": nn.Upsample(None, 2, "nearest"),
-                    "Downsample_2": DownsampleConv(256),
-                    # Simple fusion
-                    "ModalFuseSE_1": ModalFuseSE(256),
-                    "Cov_1": Conv(256, 128, 1, 1),
-                    "ModalFuseSE_2": ModalFuseSE(256),
-                    "ModalFuseSE_3": ModalFuseSE(512),
-                }
-            )
-            # head
-            self.head = DetectV8(nc=self.nc, ch=(128, 256, 512))
-
-    @property
-    def dummy_input(self) -> tuple[torch.Tensor]:
-        dummy_img_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        dummy_ir_input = torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
-        return dummy_img_input, dummy_ir_input
-
-    def forward(self, imgs: torch.Tensor, irs: torch.Tensor) -> tuple[torch.Tensor]:
-        # img backbone
-        img_skips = []
-        for key, layer in self.img_backbone.items():
-            imgs = layer(imgs)
-            if key in ["C2f_2", "C2f_3", "SPPF"]:
-                img_skips.append(imgs)
-
-        # ir backbone
-        ir_skips = []
-        for key, layer in self.ir_backbone.items():
-            irs = layer(irs)
-            if key in ["C2f_2", "C2f_3", "SPPF"]:
-                ir_skips.append(irs)
-
-        # simple fusion
-        if not self.hyperace:
-            features_fuse = [
-                self.neck[f"ModalFuseSE_{i + 1}"](img_skips[i], ir_skips[i]) for i in range(len(img_skips))
-            ]
-            det1 = self.neck.Cov_1(features_fuse[0])
-            det2 = features_fuse[1]
-            det3 = features_fuse[2]
-        else:
-            img_h2 = self.neck.HyperACE_IMG(img_skips)
-            img_h1 = self.neck.Upsample_1(img_h2)
-            img_h3 = self.neck.Downsample_1(img_h2)
-
-            ir_h2 = self.neck.HyperACE_IR(ir_skips)
-            ir_h1 = self.neck.Upsample_2(ir_h2)
-            ir_h3 = self.neck.Downsample_2(ir_h2)
-
-            f1 = self.neck.ModalFuseSE_1(img_h1 + img_skips[0], ir_h1 + ir_skips[0])
-            f2 = self.neck.ModalFuseSE_2(img_h2 + img_skips[1], ir_h2 + ir_skips[1])
-            f3 = self.neck.ModalFuseSE_3(img_h3 + img_skips[2], ir_h3 + ir_skips[2])
-
-            det1 = self.neck.Cov_1(f1)
-            det2 = f2
-            det3 = f3
-
-        return self.head([det1, det2, det3])
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            t = type(m)
-            if t is nn.Conv2d:
-                pass
-            elif t is nn.BatchNorm2d:
-                m.eps = 1e-3
-                m.momentum = 0.03
-            elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
-                m.inplace = True
-
-        self._initialize_strides()
-        self.head.bias_init()
-
-    def _initialize_strides(self):
-        self.stride = torch.tensor(
-            [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
-        )
-        self.head.stride = self.stride
 
 
 class M2I2HANet_v8(BaseNet):
@@ -295,7 +86,7 @@ class M2I2HANet_v8(BaseNet):
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": IntreHyperFusion_V2(256, 128, 16, 0.5),
+                    "CHyperACE": IntreHyperFusionV2(256, 128, 16, 0.5),
                     "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -550,7 +341,7 @@ class M2I2HANet_v13(BaseNet):
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": IntreHyperFusion_V2(256, 128, 16, 0.5),
+                    "CHyperACE": IntreHyperFusionV2(256, 128, 16, 0.5),
                     "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -616,7 +407,7 @@ class M2I2HANet_v13(BaseNet):
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusion_V2(512, 256, 12, 0.5),
+                    "CHyperACE": IntreHyperFusionV2(512, 256, 12, 0.5),
                     "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),

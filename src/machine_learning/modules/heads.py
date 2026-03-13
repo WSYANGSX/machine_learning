@@ -65,3 +65,35 @@ class DetectV8(nn.Module):
     def forward(self, x: List[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
         """Forward pass through detection head."""
         return tuple(torch.cat([self.cv1[i](xi), self.cv2[i](xi)], 1) for i, xi in enumerate(x))
+
+
+class SegmentationHead(nn.Module):
+    """Segmentation head for semantic segmentation tasks."""
+
+    def __init__(self, in_channels: int, num_classes: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            Conv(in_channels, in_channels // 2, 3),
+            Conv(in_channels // 2, in_channels // 4, 3),
+            nn.Conv2d(in_channels // 4, num_classes, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through segmentation head."""
+        return self.conv(x)
+
+
+class InstanceSegmentationHead(nn.Module):
+    """Instance segmentation head for instance segmentation tasks."""
+
+    def __init__(self, in_channels: int, num_classes: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            Conv(in_channels, in_channels // 2, 3),
+            Conv(in_channels // 2, in_channels // 4, 3),
+            nn.Conv2d(in_channels // 4, num_classes + 1, 1),  # +1 for background
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through instance segmentation head."""
+        return self.conv(x)

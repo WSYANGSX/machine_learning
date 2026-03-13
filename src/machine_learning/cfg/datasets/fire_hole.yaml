@@ -1,0 +1,23 @@
+name: fire_hole
+path: /home/yangxf/WorkSpace/datasets/..datasets/fire_hole
+dataset_type: YoloMultiModalDataset
+modals:
+  - img
+  - ir
+
+# Directories
+train_imgs_dir: visible/train
+train_irs_dir: infrared/train
+val_imgs_dir: visible/val
+val_irs_dir: infrared/val
+
+train_labels_dir: labels/train
+val_labels_dir: labels/val
+
+# Classes
+nc: 4 
+class_names:
+  - background
+  - melt
+  - slag
+  - tool
