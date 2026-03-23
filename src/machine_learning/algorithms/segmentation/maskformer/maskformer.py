@@ -1,12 +1,15 @@
-from typing import Literal, Mapping, Any, Sequence
+from typing import Literal, Mapping, Any
 
 import cv2
 import math
 import torch
 import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
+
 from tqdm import tqdm
 from torch.amp import autocast
+from scipy.optimize import linear_sum_assignment
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
@@ -14,6 +17,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils.detection import pad_to_square
 
 
 class MaskFormer(AlgorithmBase):
@@ -50,30 +54,18 @@ class MaskFormer(AlgorithmBase):
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]
         self.imgsz = self.cfg["algorithm"]["imgsz"]
-        self.reg_max = self.cfg["algorithm"]["reg_max"]
-        self.use_dfl = self.reg_max > 1
-        self.proj = torch.arange(self.reg_max, dtype=torch.float, device=self.device)
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
-        self.max_det = self.cfg["algorithm"]["max_det"]
-        self.single_cls = self.cfg["data"]["single_cls"]
-        self.plot = self.cfg["algorithm"].get("plot", False)
+        self.single_cls = self.cfg["data"]["single_cls"]  # only one class (foreground) + background
+        self.plot = self.cfg["algorithm"].get("plot", False)  # whether to plot validation results
 
-        # threshold
-        self.iou_thres = self.cfg["algorithm"]["iou_thres"]
-        self.conf_thres_val = self.cfg["algorithm"]["conf_thres_val"]
-        self.conf_thres_det = self.cfg["algorithm"]["conf_thres_det"]
+        # maskformer specific parameters
+        self.num_queries = self.cfg["algorithm"].get("num_queries", 100)
 
-        # weight
-        self.box_weight = self.cfg["algorithm"].get("box")
-        self.cls_weight = self.cfg["algorithm"].get("cls")
-        self.dfl_weight = self.cfg["algorithm"].get("dfl")
-
-        self.bbox_loss = BboxLoss(self.reg_max).to(self.device)
-        self.bce = nn.BCEWithLogitsLoss(reduction="none")
-
-        # IoU vector for mAP@0.5:0.95
-        self.iouv = torch.linspace(0.5, 0.95, 10)
-        self.niou = self.iouv.numel()
+        # weights
+        self.cls_weight = self.cfg["algorithm"].get("cls", 2.0)
+        self.mask_weight = self.cfg["algorithm"].get("mask", 5.0)
+        self.dice_weight = self.cfg["algorithm"].get("dice", 5.0)
+        self.no_object_weight = self.cfg["algorithm"].get("no_object", 0.1)  # 'No object' weight
 
     def _init_on_trainer(self, train_cfg, dataset):
         """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
@@ -81,13 +73,11 @@ class MaskFormer(AlgorithmBase):
         """
         super()._init_on_trainer(train_cfg, dataset)
 
-        self.topk = self.cfg["algorithm"]["topk"]
-        self.alpha = self.cfg["algorithm"]["alpha"]
-        self.beta = self.cfg["algorithm"]["beta"]
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
 
-        self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
+        self.empty_weight = torch.ones(self.nc + 1, device=self.device)
+        self.empty_weight[-1] = self.no_object_weight
 
     def _init_on_evaluator(self, ckpt, dataset, use_dataset):
         super()._init_on_evaluator(ckpt, dataset, use_dataset)
@@ -134,7 +124,7 @@ class MaskFormer(AlgorithmBase):
             self.close_dataloader_mosaic()
 
         # log metrics
-        metrics = {"tloss": 0.0, "bloss": 0.0, "dloss": 0.0, "closs": 0.0, "instances": 0, "img_size": None}
+        metrics = {"tloss": 0.0, "mask_loss": 0.0, "dice_loss": 0.0, "closs": 0.0, "instances": 0, "img_size": None}
         self.print_metric_titles("train", metrics)
 
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
@@ -145,16 +135,22 @@ class MaskFormer(AlgorithmBase):
 
             # Load data
             imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
-            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
-                self.device
-            )  # (img_ids, class_ids, bboxes)
+
+            # For MaskFormer, Dataloader should provide batch["masks"] [N, H, W]
+            batch_idx = batch["batch_idx"].to(self.device)
+            cls_ids = batch["cls"].view(-1).to(self.device)
+            masks = batch["masks"].to(self.device) if "masks" in batch else None
+
+            # Group Ground Truths by image
+            gt_labels = [cls_ids[batch_idx == j] for j in range(imgs.size(0))]
+            gt_masks = [masks[batch_idx == j] for j in range(imgs.size(0))] if masks is not None else []
 
             # Loss calculation
             with autocast(
                 device_type=str(self.device), enabled=self.amp
             ):  # Ensure that the autocast scope correctly covers the forward computation
                 preds = self.net(imgs)
-                loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
+                loss, lc = self.criterion(preds, gt_labels, gt_masks)
 
             # Gradient backpropagation
             self.backward(loss)
@@ -162,19 +158,19 @@ class MaskFormer(AlgorithmBase):
             self.optimizer_step(batches)
 
             # Metrics
-            bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
+            mask_loss, closs, dice_loss = lc["mask_loss"], lc["cls_loss"], lc["dice_loss"]
 
             metrics["tloss"] = (metrics["tloss"] * i + loss.item()) / (i + 1)  # tloss
-            metrics["bloss"] = (metrics["bloss"] * i + bloss) / (i + 1)
+            metrics["mask_loss"] = (metrics["mask_loss"] * i + mask_loss) / (i + 1)
             metrics["closs"] = (metrics["closs"] * i + closs) / (i + 1)
-            metrics["dloss"] = (metrics["dloss"] * i + dloss) / (i + 1)
+            metrics["dice_loss"] = (metrics["dice_loss"] * i + dice_loss) / (i + 1)
             metrics["img_size"] = imgs.size(2)
-            metrics["instances"] = targets.size(0)
+            metrics["instances"] = sum(len(lbl) for lbl in gt_labels)
 
             if i % log_interval == 0:
-                writer.add_scalar("bloss/train_batch", bloss, batches)
+                writer.add_scalar("mask_loss/train_batch", mask_loss, batches)
                 writer.add_scalar("closs/train_batch", closs, batches)
-                writer.add_scalar("dloss/train_batch", dloss, batches)
+                writer.add_scalar("dice_loss/train_batch", dice_loss, batches)
 
             # log
             self.pbar_log("train", pbar, epoch, **metrics)
@@ -187,272 +183,245 @@ class MaskFormer(AlgorithmBase):
             self.train_loader.dataset.close_mosaic()
 
     @torch.no_grad()
+    def match(self, pred_logits: torch.Tensor, pred_masks: torch.Tensor, gt_labels: list, gt_masks: list):
+        """Bipartite matching for MaskFormer via Hungarian algorithm."""
+        indices = []
+        for b in range(len(gt_labels)):
+            if len(gt_labels[b]) == 0:
+                indices.append((torch.empty(0, dtype=torch.int64), torch.empty(0, dtype=torch.int64)))
+                continue
+
+            out_prob = pred_logits[b].softmax(-1)  # [Q, NC+1]
+            out_mask = pred_masks[b]  # [Q, H, W]
+
+            tgt_ids = gt_labels[b].long()
+            tgt_mask = gt_masks[b].to(out_mask)
+
+            # Compute cost matrices
+            cost_class = -out_prob[:, tgt_ids]  # [Q, num_gt]
+
+            out_mask_flat = out_mask.flatten(1)  # [Q, H*W]
+            tgt_mask_flat = tgt_mask.flatten(1)  # [num_gt, H*W]
+
+            # Focal loss/BCE cost and Dice cost
+            device_type = str(self.device).split(":")[0]  # safely extract "cuda" or "cpu"
+            with autocast(device_type=device_type, enabled=False):
+                # Memory efficient mask cost calculation to prevent OOM
+                cost_mask = torch.zeros((out_mask_flat.size(0), tgt_mask_flat.size(0)), device=self.device)
+                for i in range(tgt_mask_flat.size(0)):
+                    cost_mask[:, i] = F.binary_cross_entropy_with_logits(
+                        out_mask_flat, tgt_mask_flat[i].unsqueeze(0).expand(out_mask_flat.size(0), -1), reduction="none"
+                    ).mean(-1)
+
+                # Memory efficient dice cost calculation via Matrix Multiplication
+                out_mask_sig = out_mask_flat.sigmoid()
+                num = 2 * (out_mask_sig @ tgt_mask_flat.T)
+                den = out_mask_sig.sum(-1).unsqueeze(1) + tgt_mask_flat.sum(-1).unsqueeze(0) + 1e-8
+                cost_dice = 1.0 - (num / den)
+
+            C = self.cls_weight * cost_class + self.mask_weight * cost_mask + self.dice_weight * cost_dice
+            C = C.cpu().numpy()
+
+            row_ind, col_ind = linear_sum_assignment(C)
+            indices.append((torch.as_tensor(row_ind, dtype=torch.int64), torch.as_tensor(col_ind, dtype=torch.int64)))
+
+        return indices
+
+    def criterion(self, preds: dict[str, torch.Tensor], gt_labels: list[torch.Tensor], gt_masks: list[torch.Tensor]):
+        """MaskFormer Set Prediction Loss."""
+        # Assumes BaseNet outputs a dict for MaskFormer with keys `pred_logits` and `pred_masks`
+        pred_logits = preds["pred_logits"]  # [B, Q, NC+1]
+        pred_masks = preds["pred_masks"]  # [B, Q, H, W]
+
+        indices = self.match(pred_logits, pred_masks, gt_labels, gt_masks)
+
+        # Arrange permutation
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        src_idx = torch.cat([src for (src, _) in indices])
+        idx = (batch_idx, src_idx)
+
+        target_classes_o = torch.cat([t[J] for t, (_, J) in zip(gt_labels, indices)])
+        target_classes = torch.full(pred_logits.shape[:2], self.nc, dtype=torch.int64, device=self.device)
+        target_classes[idx] = target_classes_o.long()
+
+        # 1. Classification Loss (Cross Entropy)
+        loss_ce = F.cross_entropy(pred_logits.transpose(1, 2), target_classes, self.empty_weight)
+
+        # 2. Mask Loss (BCE & Dice)
+        if len(target_classes_o) == 0:
+            loss_mask = pred_masks.sum() * 0
+            loss_dice = pred_masks.sum() * 0
+        else:
+            src_masks = pred_masks[idx].flatten(1)
+            target_masks_o = torch.cat([t[J] for t, (_, J) in zip(gt_masks, indices)]).to(src_masks).flatten(1)
+
+            loss_mask = F.binary_cross_entropy_with_logits(src_masks, target_masks_o, reduction="none").mean(
+                1
+            ).sum() / len(target_classes_o)
+
+            num = 2 * (src_masks.sigmoid() * target_masks_o).sum(1)
+            den = src_masks.sigmoid().sum(1) + target_masks_o.sum(1) + 1e-8
+            loss_dice = (1 - num / den).sum() / len(target_classes_o)
+
+        losses = {
+            "cls_loss": loss_ce.item() * self.cls_weight,
+            "mask_loss": loss_mask.item() * self.mask_weight,
+            "dice_loss": loss_dice.item() * self.dice_weight,
+        }
+        loss = loss_ce * self.cls_weight + loss_mask * self.mask_weight + loss_dice * self.dice_weight
+
+        return loss, losses
+
+    @torch.no_grad()
     def validate(self):
         super().validate()
 
-        # log metrics
-        stats = []
         metrics = {
             "class": "all",
             "images": 0,
             "vloss": 0.0,
-            "save_best": 0.0,
             "labels": 0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "mAP.5": 0.0,
-            "mAP.75": 0.0,
-            "mAP.5-.95": 0.0,
+            "mIoU": 0.0,
+            "PQ": 0.0,
+            "save_best": 0.0,
         }
         info = {}
         self.print_metric_titles("val", metrics)
 
+        conf_thres_val = self.cfg["algorithm"].get("conf_thres_val", 0.5)
+        mask_thres = self.cfg["algorithm"].get("mask_thres", 0.5)
+
+        total_inter = torch.zeros(self.nc, device=self.device)
+        total_union = torch.zeros(self.nc, device=self.device)
+        pq_iou_sum = 0.0
+        pq_tp = 0
+        pq_fp = 0
+        pq_fn = 0
+
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, batch in pbar:
             imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
-            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
-                self.device
-            )  # (img_ids, class_ids, bboxes)
+            batch_idx = batch["batch_idx"].to(self.device)
+            cls_ids = batch["cls"].view(-1).to(self.device)
+            masks = batch["masks"].to(self.device) if "masks" in batch else None
+
+            gt_labels = [cls_ids[batch_idx == j] for j in range(imgs.size(0))]
+            gt_masks = [masks[batch_idx == j] for j in range(imgs.size(0))] if masks is not None else []
 
             preds = self.net(imgs)
-            loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
-
-            # metrics
+            loss, _ = self.criterion(preds, gt_labels, gt_masks)
             metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
 
-            # prepare preds
-            detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
-            # NMS: Fewer overlapping boxes
-            detections = non_max_suppression(
-                detections.permute(0, 2, 1),
-                conf_thres=self.conf_thres_val,
-                iou_thres=self.iou_thres,
-                multi_label=True,
-                max_det=self.max_det,
-                agnostic=self.single_cls,
-            )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
+            pred_logits = preds["pred_logits"]  # [B, Q, NC+1]
+            pred_masks = preds["pred_masks"]  # [B, Q, H, W]
+            probs = pred_logits.softmax(-1)
 
-            # # prepare targets
-            # scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
-            # targets_abs = targets.clone()
-            # bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
-            # targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
-
-            for si, detection in enumerate(detections):
+            for b in range(imgs.size(0)):
                 metrics["images"] += 1
-                # get the original frame of the current image (img_id, class_id, x1, y1, x2, y2)
-                pbatch = self.prepare_batch(si, batch)
-                tcls, tbox = pbatch.pop("cls"), pbatch.pop("bbox")
+                tcls = gt_labels[b]
+                tmasks = gt_masks[b] if gt_masks else torch.zeros(0, *pred_masks.shape[-2:], device=self.device)
+                metrics["labels"] += int(tcls.numel())
 
-                if len(detection) == 0:
-                    if len(tcls):
-                        stats.append(
-                            (
-                                torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
-                                torch.zeros(0, device=self.device),  # confidence scores
-                                torch.zeros(0, device=self.device),  # pred_classes
-                                tcls,  # ground truth classes
-                            )
-                        )
-                    continue
+                # Semantic prediction from queries
+                class_probs = probs[b, :, : self.nc]
+                mask_probs = pred_masks[b].sigmoid()
+                sem_scores = torch.einsum("qc,qhw->chw", class_probs, mask_probs)
+                pred_sem = sem_scores.argmax(0)
 
-                # Prediction box format: [x1, y1, x2, y2, conf, class]
-                detection = self.prepare_pred(detection, pbatch)
-                detection = detection[detection[:, 4].argsort(descending=True)]
-                pred_boxes = detection[:, :4]
-                pred_scores = detection[:, 4]
-                pred_classes = detection[:, 5]
-
-                # calculate IoU
-                iou = box_iou(tbox, pred_boxes)  # shape: [n_gt, n_pred]
-                # Determine whether each prediction box is regarded as a correct detection under each IoU threshold
-                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
-
-                # record statistical information
-                stats.append((tp, pred_scores, pred_classes, tcls))
-
-            if i == self.val_batches - 1:
-                # calculate mAP metrics
-                stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
-
-                if len(stats) and stats[0].any():
-                    p, r, ap, f1, ap_class = ap_per_class(
-                        *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
-                    )
-                    ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
-
-                    # AP value for each category
-                    info["ap_per_class"] = {}
-                    for idx, class_idx in enumerate(ap_class):
-                        class_name = (
-                            self.class_names[class_idx]
-                            if hasattr(self, "class_names") and self.class_names
-                            else f"Class {class_idx}"
-                        )
-                        info["ap_per_class"][class_name] = (float(ap50[idx]), float(ap75[idx]), float(ap[idx]))
-
-                    mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
-                    nt = np.bincount(
-                        stats[3].cpu().numpy().astype(np.int64), minlength=self.nc
-                    )  # number of targets per class
-                    metrics["mAP.5"] = map50
-                    metrics["mAP.75"] = map75
-                    metrics["mAP.5-.95"] = map
-                    metrics["precision"] = mp
-                    metrics["recall"] = mr
-
+                # Build GT semantic map (ignore background)
+                if tcls.numel() > 0:
+                    gt_sem = torch.full_like(pred_sem, -1, dtype=torch.long)
+                    for gi in range(tcls.numel()):
+                        m = tmasks[gi] > 0.5
+                        gt_sem[m] = tcls[gi].long()
                 else:
-                    nt = np.zeros(1, dtype=np.uint8)
+                    gt_sem = torch.full_like(pred_sem, -1, dtype=torch.long)
 
-                metrics["labels"] = nt.sum()
-                metrics["save_best"] = metrics["mAP.5-.95"]
+                # mIoU accumulation (ignore pixels without GT)
+                valid = gt_sem >= 0
+                if valid.any():
+                    pred_flat = pred_sem[valid].view(-1)
+                    gt_flat = gt_sem[valid].view(-1)
+                    conf = torch.bincount(self.nc * gt_flat + pred_flat, minlength=self.nc * self.nc).reshape(
+                        self.nc, self.nc
+                    )
+                    inter = conf.diag()
+                    union = conf.sum(0) + conf.sum(1) - inter
+                    total_inter += inter
+                    total_union += union
+
+                # Panoptic Quality (PQ) via instance matching per class
+                labels_all = probs[b].argmax(-1)
+                class_scores, class_labels = class_probs.max(-1)
+                keep = (labels_all != self.nc) & (class_scores > conf_thres_val)
+                pred_inst_masks = mask_probs[keep] > mask_thres
+                pred_inst_labels = class_labels[keep]
+
+                gt_inst_masks = (tmasks > 0.5) if tcls.numel() > 0 else tmasks
+                gt_inst_labels = tcls
+
+                for c in range(self.nc):
+                    p_idx = pred_inst_labels == c
+                    g_idx = gt_inst_labels == c
+                    p_masks = pred_inst_masks[p_idx]
+                    g_masks = gt_inst_masks[g_idx]
+
+                    if p_masks.numel() == 0 and g_masks.numel() == 0:
+                        continue
+                    if p_masks.numel() == 0:
+                        pq_fn += int(g_masks.shape[0])
+                        continue
+                    if g_masks.numel() == 0:
+                        pq_fp += int(p_masks.shape[0])
+                        continue
+
+                    p_flat = p_masks.flatten(1).float()
+                    g_flat = g_masks.flatten(1).float()
+                    inter = p_flat @ g_flat.T
+                    union = p_flat.sum(1, keepdim=True) + g_flat.sum(1, keepdim=True).T - inter
+                    iou = torch.where(union > 0, inter / union, torch.zeros_like(union))
+
+                    iou_np = iou.cpu().numpy()
+                    row_ind, col_ind = linear_sum_assignment(1 - iou_np)
+                    matched = [(r, cidx) for r, cidx in zip(row_ind, col_ind) if iou_np[r, cidx] > 0.5]
+
+                    tp = len(matched)
+                    pq_tp += tp
+                    pq_fp += int(p_masks.shape[0] - tp)
+                    pq_fn += int(g_masks.shape[0] - tp)
+                    if tp:
+                        pq_iou_sum += float(sum(iou_np[r, cidx] for r, cidx in matched))
+
+            denom = total_union > 0
+            if denom.any():
+                metrics["mIoU"] = (total_inter[denom] / total_union[denom]).mean().item()
+            else:
+                metrics["mIoU"] = 0.0
+
+            pq_denom = pq_tp + 0.5 * pq_fp + 0.5 * pq_fn
+            metrics["PQ"] = float(pq_iou_sum / pq_denom) if pq_denom > 0 else 0.0
+            metrics["save_best"] = metrics["mIoU"]
 
             self.pbar_log("val", pbar, **metrics)
 
+        # Per-class IoU info
+        denom = total_union > 0
+        if denom.any():
+            iou_per_class = (total_inter / torch.clamp(total_union, min=1)).detach().cpu().numpy().tolist()
+            info["iou_per_class"] = {
+                (self.class_names[idx] if hasattr(self, "class_names") and self.class_names else f"Class {idx}"): float(
+                    iou_per_class[idx]
+                )
+                for idx in range(self.nc)
+            }
+
         return metrics, info
-
-    def prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
-        """
-        Prepare a batch of images and annotations for validation.
-        """
-        idx = (batch["batch_idx"] == si).to(self.device)
-        cls = batch["cls"].to(self.device)[idx].squeeze(-1)
-        bbox = batch["bboxes"].to(self.device)[idx]
-        ori_shape = batch["ori_shape"][si]
-        imgsz = batch["img"].shape[2:]
-        ratio_pad = batch["ratio_pad"][si]
-        if len(cls):
-            bbox = (
-                xywh2xyxy(bbox) * torch.tensor(imgsz, device=self.device, dtype=torch.float32)[[1, 0, 1, 0]]
-            )  # target boxes
-            bbox = rescale_boxes(bbox, imgsz, ori_shape, ratio_pad=ratio_pad)  # native-space labels
-        return {"cls": cls, "bbox": bbox, "ori_shape": ori_shape, "imgsz": imgsz, "ratio_pad": ratio_pad}
-
-    def prepare_pred(self, pred: torch.Tensor, pbatch: dict[str, Any]) -> torch.Tensor:
-        """
-        Prepare predictions for evaluation against ground truth.
-
-        Args:
-            pred (torch.Tensor): Model predictions.
-            pbatch (dict): Prepared batch information.
-
-        Returns:
-            (torch.Tensor): Prepared predictions in native space.
-        """
-        predn = pred.clone()
-        predn[:, :4] = rescale_boxes(
-            predn[:, :4], pbatch["imgsz"], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
-        )  # native-space pred
-        return predn
-
-    def decode_preds(self, preds: torch.Tensor, img_size: int) -> torch.Tensor:
-        # decode preds
-        x = []
-        for pred in preds:
-            bs, _, h, w = pred.shape
-            pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
-            x.append(pred)
-        x = torch.cat(x, 1)  # [bs， sum(h*w), nc + 4*reg_max]
-        # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.nc), 2)
-
-        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
-        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
-        dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
-        detections = torch.cat((dbox, cls.sigmoid()), 2)
-
-        return detections  # [bs, sum(h*w), 4 + nc]
-
-    def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, imgs_shape: tuple[int]):
-        closs = torch.zeros(1, device=self.device)
-        bloss = torch.zeros(1, device=self.device)
-        dloss = torch.zeros(1, device=self.device)
-
-        strides = torch.tensor([imgs_shape[2] // pred.size(2) for pred in preds], device=self.device)
-        pred_distri, pred_scores = torch.cat(
-            [xi.view(preds[0].shape[0], self.nc + self.reg_max * 4, -1) for xi in preds], 2
-        ).split(
-            (self.reg_max * 4, self.nc), 1
-        )  # [bs, no, h1*w1+h2*w2+h3*w3] -> [bs, 4*reg_max, h1*w1+h2*w2+h3*w3] & [bs, nc, h1*w1+h2*w2+h3*w3]
-
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, nc]
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # [bs, h1*w1+h2*w2+h3*w3, 4*reg_max]
-
-        bs = pred_scores.shape[0]
-        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
-
-        # Targets
-        scale_tensor = torch.tensor([imgs_shape[3], imgs_shape[2]] * 2, device=self.device)
-        targets = self.preprocess(targets, bs, scale_tensor=scale_tensor)
-        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
-
-        # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
-
-        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
-            pred_scores.detach().sigmoid(),
-            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor,
-            gt_labels,
-            gt_bboxes,
-            mask_gt,
-        )
-
-        target_scores_sum = target_scores.sum().clamp(min=1.0)
-
-        # Cls loss
-        closs = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum  # BCE
-
-        # Bbox loss
-        if fg_mask.sum():
-            target_bboxes /= stride_tensor
-            bloss, dloss = self.bbox_loss(
-                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
-            )
-
-        bloss *= self.box_weight
-        closs *= self.cls_weight
-        dloss *= self.dfl_weight
-
-        loss = (bloss + closs + dloss) * bs
-        loss_component = {"bloss": bloss.item(), "closs": closs.item(), "dloss": dloss.item()}
-
-        return loss, loss_component
-
-    def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor):
-        """Preprocesses the target counts and matches with the input batch size to output a tensor."""
-        nl, ne = targets.shape
-
-        if nl == 0:
-            out = torch.zeros(batch_size, 0, ne - 1, device=self.device)
-        else:
-            i = targets[:, 0]  # image index
-            _, counts = i.unique(return_counts=True)
-            counts = counts.to(dtype=torch.int32)
-            out = torch.zeros(batch_size, counts.max(), ne - 1, device=self.device)
-            for j in range(batch_size):
-                matches = i == j
-                if n := matches.sum():
-                    out[j, :n] = targets[matches, 1:]
-            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
-
-        return out
-
-    def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, xywh: bool = False):
-        """Decode predicted object bounding box coordinates from anchor points and distribution."""
-        if self.use_dfl:
-            b, a, c = pred_dist.shape  # batch, anchors, channels
-            pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
-        return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
     @torch.no_grad()
     def eval(
         self,
         img_path: str | FilePath,
         conf_thres: float | None = None,
-        iou_thres: float | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -468,32 +437,75 @@ class MaskFormer(AlgorithmBase):
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
         img = tfs(padded_img)
-        img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
+        img = img.unsqueeze(0).to(self.device)
 
         # input image to model
         preds = self.net(img)
 
-        # decode preds
-        detections = self.decode_preds(preds, img.size(2))  # xywh
-        # NMS
-        detections = non_max_suppression(
-            detections.permute(0, 2, 1),
-            conf_thres=conf_thres if conf_thres is not None else self.conf_thres_det,
-            iou_thres=iou_thres if iou_thres is not None else self.iou_thres,
-            multi_label=True,
-            max_det=self.max_det,
-            agnostic=self.single_cls,
-        )  # xyxy
+        pred_logits = preds["pred_logits"][0]
+        pred_masks = preds["pred_masks"][0]
+        probs = pred_logits.softmax(-1)
+        class_probs = probs[:, : self.nc]
+        class_scores, class_labels = class_probs.max(-1)
+        labels_all = probs.argmax(-1)
 
-        # rescale to img coordiante
-        detection = detections[0]
+        conf_thres = conf_thres if conf_thres is not None else self.cfg["algorithm"].get("conf_thres_val", 0.5)
+        keep = (labels_all != self.nc) & (class_scores > conf_thres)
+        keep_indices = torch.nonzero(keep).squeeze(1)
 
-        bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
-        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
-        cls = [int(cid) for cid in cls]
+        rendered = img0.copy()
 
-        # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        if keep_indices.numel() == 0:
+            LOGGER.info("No objects detected above the confidence threshold.")
+        else:
+            # Iterate and render all valid predicted instances
+            for idx in keep_indices:
+                pred_cls = int(class_labels[idx].item())
+                pred_conf = float(class_scores[idx].item())
+                prob_mask = pred_masks[idx].sigmoid()
+
+                if prob_mask.shape != img.shape[-2:]:
+                    prob_mask = (
+                        F.interpolate(
+                            prob_mask.unsqueeze(0).unsqueeze(0),
+                            size=img.shape[-2:],
+                            mode="bilinear",
+                            align_corners=False,
+                        )
+                        .squeeze(0)
+                        .squeeze(0)
+                    )
+
+                prob_mask = prob_mask[:h0, :w0].detach().cpu().numpy()
+
+                # Assign random color for each detected instance
+                color = np.random.randint(0, 255, (1, 1, 3), dtype=np.uint8)
+                mask_bool = prob_mask > self.cfg["algorithm"].get("mask_thres", 0.5)
+
+                colored_mask = np.zeros_like(img0)
+                colored_mask[mask_bool] = color
+                rendered = cv2.addWeighted(rendered, 1.0, colored_mask, 0.5, 0.0)
+
+                class_name = (
+                    self.class_names[pred_cls] if hasattr(self, "class_names") and self.class_names else str(pred_cls)
+                )
+
+                y_indices, x_indices = np.where(mask_bool)
+                if len(y_indices) > 0:
+                    cy, cx = int(np.mean(y_indices)), int(np.mean(x_indices))
+                    cv2.putText(
+                        rendered,
+                        f"{class_name}: {pred_conf:.2f}",
+                        (cx, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
+        cv2.imshow("maskformer_inference", cv2.cvtColor(rendered, cv2.COLOR_RGB2BGR))
+        cv2.waitKey(0)
+        cv2.destroyWindow("maskformer_inference")
 
     def warmup(self, batch_inters: int, epoch: int) -> int:
         wb = (

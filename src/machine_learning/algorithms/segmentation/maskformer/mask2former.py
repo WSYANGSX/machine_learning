@@ -14,17 +14,6 @@ from .maskformer import MaskFormer
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
-from machine_learning.utils.detection import (
-    resize,
-    non_max_suppression,
-    box_iou,
-    xywh2xyxy,
-    match_predictions,
-    ap_per_class,
-    pad_to_square,
-    visualize_img_bboxes,
-    rescale_boxes,
-)
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
