@@ -5,10 +5,14 @@
         ], // Python 文件显示 80 字符红线
         "editor.wordWrapColumn": 120
     },
-    "flake8.args": ["--max-line-length=120"],
+    "flake8.args": [
+        "--max-line-length=120"
+    ],
     "python.terminal.executeInFileDir": true,
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src",
         "/home/yangxf/WorkSpace/ultralytics"
     ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
 }
