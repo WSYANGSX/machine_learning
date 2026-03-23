@@ -14,40 +14,28 @@ from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils.detection import (
-    resize,
-    non_max_suppression,
-    box_iou,
-    xywh2xyxy,
-    match_predictions,
-    ap_per_class,
-    pad_to_square,
-    visualize_img_bboxes,
-    rescale_boxes,
-)
-from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloV8(AlgorithmBase):
+class MaskFormer(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
         net: BaseNet | None = None,
-        name: str | None = None,
+        name: str | None = "maskformer",
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
         ema: bool = True,
         modality: str = "img",
     ) -> None:
         """
-        Implementation of YoloV8 object detection algorithm
+        Implementation of maskformer segmentation algorithm.
 
         Args:
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
-            net (BaseNet): Models required by the YoloV8 algorithm.
-            name (str): Name of the algorithm, it can be instantiated as v8, v9, v10, v11, v13 by cfg. Defaults to None.
+            net (BaseNet): Models required by the MaskFormer algorithm.
+            name (str): Name of the algorithm, it can be instantiated by cfg. Defaults to 'maskformer'.
             device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
@@ -598,36 +586,3 @@ class YoloV8(AlgorithmBase):
 """
 Helper functions
 """
-
-
-def make_anchors(preds, strides, grid_cell_offset=0.5):
-    """Generate anchors from features."""
-    anchor_points, stride_tensor = [], []
-    assert preds is not None
-    dtype, device = preds[0].dtype, preds[0].device
-    for i, stride in enumerate(strides):
-        h, w = preds[i].shape[2:] if isinstance(preds, (list, tuple)) else (int(preds[i][0]), int(preds[i][1]))
-        sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
-        sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
-        sy, sx = torch.meshgrid(sy, sx, indexing="ij")
-        anchor_points.append(torch.stack((sx, sy), -1).view(-1, 2))
-        stride_tensor.append(torch.full((h * w, 1), stride, dtype=dtype, device=device))
-    return torch.cat(anchor_points), torch.cat(stride_tensor)
-
-
-def bbox2dist(anchor_points, bbox, reg_max):
-    """Transform bbox(xyxy) to dist(ltrb)."""
-    x1y1, x2y2 = bbox.chunk(2, -1)
-    return torch.cat((anchor_points - x1y1, x2y2 - anchor_points), -1).clamp_(0, reg_max - 0.01)  # dist (lt, rb)
-
-
-def dist2bbox(distance, anchor_points, xywh=True, dim=-1):
-    """Transform distance(ltrb) to box(xywh or xyxy)."""
-    lt, rb = distance.chunk(2, dim)
-    x1y1 = anchor_points - lt
-    x2y2 = anchor_points + rb
-    if xywh:
-        c_xy = (x1y1 + x2y2) / 2
-        wh = x2y2 - x1y1
-        return torch.cat((c_xy, wh), dim)  # xywh bbox
-    return torch.cat((x1y1, x2y2), dim)  # xyxy bbox

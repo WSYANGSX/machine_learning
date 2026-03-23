@@ -10,10 +10,10 @@ from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
+from .maskformer import MaskFormer
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
-from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import (
     resize,
     non_max_suppression,
@@ -28,7 +28,7 @@ from machine_learning.utils.detection import (
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 
 
-class YoloV8(AlgorithmBase):
+class Mask2Former(MaskFormer):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
@@ -52,8 +52,6 @@ class YoloV8(AlgorithmBase):
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
             ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
-            modality (str): The data modality to use for multimodal dataset selection. Only relevant for multimodal
-            datasets. Defaults to "img".
         """
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
 

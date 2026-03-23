@@ -1,6 +1,7 @@
 from .base import AlgorithmBase
 from .generation import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 from .detection import YoloV3, YoloV8, MultimodalDetection
+from .segmentation import YoloV8Segmentation, MaskFormer, Mask2Former, MultimodalSegmentation
 
 __all__ = [
     "AlgorithmBase",
@@ -13,4 +14,8 @@ __all__ = [
     "YoloV8",
     "YoloV13",
     "MultimodalDetection",
+    "YoloV8Segmentation",
+    "MaskFormer",
+    "Mask2Former",
+    "MultimodalSegmentation",
 ]
