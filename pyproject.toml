@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A training framework for various types of machine learning algorithms."
 readme = "README.md"          
 requires-python = ">=3.8"
-license = "MIT"              
+license = "GPL-3.0-only"              
 authors = [
     {name = "Xiaofan Yang", email = "1062033103@qq.com"},
 ]
@@ -17,7 +17,6 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
