@@ -25,10 +25,10 @@ class ParserBase(ABC):
 
     @abstractmethod
     def parse(self) -> dict[str, Any]:
-        """Parse the train、val and test data or data_path of the dataset.
+        """Parse the train/val and test data or data_path of the dataset.
 
         Returns:
-            dict[str, Any]: train、val and test data or data_path value.
+            dict[str, Any]: train/val and test data or data_path value.
         """
         pass
 
