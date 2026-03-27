@@ -10,7 +10,6 @@ from einops import rearrange
 from mamba_ssm.modules.mamba_simple import Mamba
 
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.block import DSC3k, DSBottleneck
 
 
 class AttentionBlock(nn.Module):
@@ -134,6 +133,103 @@ class MFD(nn.Module):
 
 
 # --------------------------------------------- Hypergraph attentation  ------------------------------------------------
+class Bottleneck(nn.Module):
+    """
+    Standard bottleneck.
+    Source: https://github.com/iMoonLab/yolov13.
+    """
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        """Initializes a standard bottleneck module with optional shortcut connection and configurable parameters."""
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Applies the YOLO FPN to input data."""
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C2f(nn.Module):
+    """
+    Faster Implementation of CSP Bottleneck with 2 convolutions.
+    Source: https://github.com/iMoonLab/yolov13.
+    """
+
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        """Initializes a CSP bottleneck with 2 convolutions and n Bottleneck blocks for faster processing."""
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x):
+        """Forward pass through C2f layer."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+    def forward_split(self, x):
+        """Forward pass using split() instead of chunk()."""
+        y = self.cv1(x).split((self.c, self.c), 1)
+        y = [y[0], y[1]]
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+
+class DSC3k2(C2f):
+    """
+    An improved C3k2 module that uses lightweight depthwise separable convolution blocks.
+    Source: https://github.com/iMoonLab/yolov13.
+
+    This class redesigns C3k2 module, replacing its internal processing blocks with either DSBottleneck
+    or DSC3k modules.
+
+    Attributes:
+        c1 (int): Number of input channels.
+        c2 (int): Number of output channels.
+        n (int, optional): Number of internal processing blocks to stack. Defaults to 1.
+        dsc3k (bool, optional): If True, use DSC3k as the internal block. If False, use DSBottleneck. Defaults to False.
+        e (float, optional): Expansion ratio for the C2f module's hidden channels. Defaults to 0.5.
+        g (int, optional): Number of groups for grouped convolution (passed to parent C2f). Defaults to 1.
+        shortcut (bool, optional): Whether to use shortcut connections in the internal blocks. Defaults to True.
+        k1 (int, optional): Kernel size for the first DSConv in internal blocks. Defaults to 3.
+        k2 (int, optional): Kernel size for the second DSConv in internal blocks. Defaults to 7.
+        d2 (int, optional): Dilation for the second DSConv in internal blocks. Defaults to 1.
+
+    Methods:
+        forward: Performs a forward pass through the DSC3k2 module (inherited from C2f).
+
+    Examples:
+        >>> import torch
+        >>> # Using DSBottleneck as internal block
+        >>> model1 = DSC3k2(c1=64, c2=64, n=2, dsc3k=False)
+        >>> x = torch.randn(2, 64, 128, 128)
+        >>> output1 = model1(x)
+        >>> print(f"With DSBottleneck: {output1.shape}")
+        With DSBottleneck: torch.Size([2, 64, 128, 128])
+        >>> # Using DSC3k as internal block
+        >>> model2 = DSC3k2(c1=64, c2=64, n=1, dsc3k=True)
+        >>> output2 = model2(x)
+        >>> print(f"With DSC3k: {output2.shape}")
+        With DSC3k: torch.Size([2, 64, 128, 128])
+    """
+
+    def __init__(self, c1, c2, n=1, dsc3k=False, e=0.5, g=1, shortcut=True, k1=3, k2=7, d2=1):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        if dsc3k:
+            self.m = nn.ModuleList(
+                DSC3k(self.c, self.c, n=2, shortcut=shortcut, g=g, e=1.0, k1=k1, k2=k2, d2=d2) for _ in range(n)
+            )
+        else:
+            self.m = nn.ModuleList(
+                DSBottleneck(self.c, self.c, shortcut=shortcut, e=1.0, k1=k1, k2=k2, d2=d2) for _ in range(n)
+            )
+
+
 class AdaHyperedgeGen(nn.Module):
     """
     Generates an adaptive hyperedge participation matrix from a set of vertex features.
