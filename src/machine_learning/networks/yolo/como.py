@@ -3,10 +3,11 @@ from typing import Literal, Any
 import torch
 import torch.nn as nn
 
+from ultralytics.nn.modules import Conv, Concat, C2f, SPPF
+
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import FusionMamba, FourInputFusionBlock
-from ultralytics.nn.modules import Conv, Concat, C2f, SPPF
 
 
 class COMONet(BaseNet):
