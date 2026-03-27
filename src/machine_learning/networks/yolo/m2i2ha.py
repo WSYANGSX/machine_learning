@@ -6,6 +6,8 @@ import torch.nn as nn
 from machine_learning.networks import BaseNet
 from machine_learning.modules.heads import DetectV8
 from machine_learning.modules.blocks import (
+    DSC3k2,
+    DSConv,
     IntraHyperEnhance,
     IntreHyperFusionV2,
     MMFullPAD_Tunnel,
@@ -13,7 +15,7 @@ from machine_learning.modules.blocks import (
     DownsampleConv,
     FullPAD_Tunnel,
 )
-from ultralytics.nn.modules import Conv, Concat, DSC3k2, DSConv, A2C2f, C2f, SPPF
+from ultralytics.nn.modules import Conv, Concat, A2C2f, C2f, SPPF
 
 
 class M2I2HANet_v8(BaseNet):

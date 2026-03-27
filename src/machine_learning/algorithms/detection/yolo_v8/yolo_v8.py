@@ -128,9 +128,8 @@ class YoloV8(AlgorithmBase):
         self.sch_config = self._cfg["scheduler"]
 
         if self.sch_config.get("sched") == "CustomLRDecay":
-            self.lf = (
-                lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.opt_cfg["final_factor"])
-                + self.opt_cfg["final_factor"]
+            self.lf = lambda x: (
+                max(1 - x / self.epochs, 0) * (1.0 - self.opt_cfg["final_factor"]) + self.opt_cfg["final_factor"]
             )  # linear
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
             self._add_scheduler("scheduler", self.scheduler)
@@ -421,7 +420,15 @@ class YoloV8(AlgorithmBase):
         if fg_mask.sum():
             target_bboxes /= stride_tensor
             bloss, dloss = self.bbox_loss(
-                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
+                pred_distri,
+                pred_bboxes,
+                anchor_points,
+                target_bboxes,
+                target_scores,
+                target_scores_sum,
+                fg_mask,
+                imgs_shape[2:],
+                stride_tensor,
             )
 
         bloss *= self.box_weight

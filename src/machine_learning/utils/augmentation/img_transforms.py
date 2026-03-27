@@ -1897,7 +1897,7 @@ class Albumentations(TransformBase):
             assert "cls" in sample and len(sample["cls"]) == len(sample["instances"]), (
                 "'instances' and 'cls' must appear in the sample simultaneously and have same length for Yolo task."
             )
-            compose_kwargs["bbox_params"] = A.BboxParams(format="pascal_voc", label_fields=["class_labels"])
+            compose_kwargs["bbox_params"] = A.BboxParams(coord_format="pascal_voc", label_fields=["class_labels"])
             has_segments = sample["instances"].segments is not None and len(sample["instances"].segments) > 0
             if has_segments or sample["instances"].keypoints is not None:
                 compose_kwargs["keypoint_params"] = A.KeypointParams(format="xy", remove_invisible=False)
