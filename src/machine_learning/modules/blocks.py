@@ -10,6 +10,7 @@ from einops import rearrange
 from mamba_ssm.modules.mamba_simple import Mamba
 
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.block import C3, C2f
 
 
 class AttentionBlock(nn.Module):
@@ -173,32 +174,82 @@ class Bottleneck(nn.Module):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 
-class C2f(nn.Module):
+class DSBottleneck(nn.Module):
     """
-    Faster Implementation of CSP Bottleneck with 2 convolutions.
-    Source: https://github.com/iMoonLab/yolov13.
+    An improved bottleneck block using depthwise separable convolutions (DSConv).
+
+    This class implements a lightweight bottleneck module that replaces standard convolutions with depthwise
+    separable convolutions to reduce parameters and computational cost.
+
+    Attributes:
+        c1 (int): Number of input channels.
+        c2 (int): Number of output channels.
+        shortcut (bool, optional): Whether to use a residual shortcut connection. The connection is only added if c1 == c2. Defaults to True.
+        e (float, optional): Expansion ratio for the intermediate channels. Defaults to 0.5.
+        k1 (int, optional): Kernel size for the first DSConv layer. Defaults to 3.
+        k2 (int, optional): Kernel size for the second DSConv layer. Defaults to 5.
+        d2 (int, optional): Dilation for the second DSConv layer. Defaults to 1.
+
+    Methods:
+        forward: Performs a forward pass through the DSBottleneck module.
+
+    Examples:
+        >>> import torch
+        >>> model = DSBottleneck(c1=64, c2=64, shortcut=True)
+        >>> x = torch.randn(2, 64, 32, 32)
+        >>> output = model(x)
+        >>> print(output.shape)
+        torch.Size([2, 64, 32, 32])
     """
 
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
-        """Initializes a CSP bottleneck with 2 convolutions and n Bottleneck blocks for faster processing."""
+    def __init__(self, c1, c2, shortcut=True, e=0.5, k1=3, k2=5, d2=1):
         super().__init__()
-        self.c = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+        c_ = int(c2 * e)
+        self.cv1 = DSConv(c1, c_, k1, s=1, p=None, d=1)
+        self.cv2 = DSConv(c_, c2, k2, s=1, p=None, d=d2)
+        self.add = shortcut and c1 == c2
 
     def forward(self, x):
-        """Forward pass through C2f layer."""
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        y = self.cv2(self.cv1(x))
+        return x + y if self.add else y
 
-    def forward_split(self, x):
-        """Forward pass using split() instead of chunk()."""
-        y = self.cv1(x).split((self.c, self.c), 1)
-        y = [y[0], y[1]]
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+
+class DSC3k(C3):
+    """
+    An improved C3k module using DSBottleneck blocks for lightweight feature extraction.
+    Source: https://github.com/iMoonLab/yolov13.
+
+    This class extends the C3 module by replacing its standard bottleneck blocks with DSBottleneck blocks,
+    which use depthwise separable convolutions.
+
+    Attributes:
+        c1 (int): Number of input channels.
+        c2 (int): Number of output channels.
+        n (int, optional): Number of DSBottleneck blocks to stack. Defaults to 1.
+        shortcut (bool, optional): Whether to use shortcut connections within the DSBottlenecks. Defaults to True.
+        g (int, optional): Number of groups for grouped convolution (passed to parent C3). Defaults to 1.
+        e (float, optional): Expansion ratio for the C3 module's hidden channels. Defaults to 0.5.
+        k1 (int, optional): Kernel size for the first DSConv in each DSBottleneck. Defaults to 3.
+        k2 (int, optional): Kernel size for the second DSConv in each DSBottleneck. Defaults to 5.
+        d2 (int, optional): Dilation for the second DSConv in each DSBottleneck. Defaults to 1.
+
+    Methods:
+        forward: Performs a forward pass through the DSC3k module (inherited from C3).
+
+    Examples:
+        >>> import torch
+        >>> model = DSC3k(c1=128, c2=128, n=2, k1=3, k2=7)
+        >>> x = torch.randn(2, 128, 64, 64)
+        >>> output = model(x)
+        >>> print(output.shape)
+        torch.Size([2, 128, 64, 64])
+    """
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k1=3, k2=5, d2=1):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+
+        self.m = nn.Sequential(*(DSBottleneck(c_, c_, shortcut=shortcut, e=1.0, k1=k1, k2=k2, d2=d2) for _ in range(n)))
 
 
 class DSC3k2(C2f):
@@ -521,7 +572,7 @@ class HyperACE(nn.Module):
         c2 (int): Number of output channels for the entire block.
         n (int, optional): Number of blocks in the low-order branch. Defaults to 1.
         num_hyperedges (int, optional): Number of hyperedges for the C3AH branches. Defaults to 8.
-        dsc3k (bool, optional): If True, use DSC3k in the low-order branch; otherwise, use DSBottleneck. Defaults to True.
+        dsc3k (bool, optional): True to use DSC3k in the low-order branch; otherwise use DSBottleneck. Defaults to True.
         shortcut (bool, optional): Whether to use shortcuts in the low-order branch. Defaults to False.
         e1 (float, optional): Expansion ratio for the main hidden channels. Defaults to 0.5.
         e2 (float, optional): Expansion ratio within the C3AH branches. Defaults to 1.
