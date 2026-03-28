@@ -11,6 +11,7 @@ from mamba_ssm.modules.mamba_simple import Mamba
 
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.modules.block import C3, C2f
+from machine_learning.utils.torch_utils import get_activation_layer
 
 
 class AttentionBlock(nn.Module):
@@ -2382,3 +2383,443 @@ class CrossModalHyperMamba(nn.Module):
         y2 = identity2 + gate2 * x_m
 
         return y1, y2
+
+
+# -------------------------------------------- Transformer attentation  ------------------------------------------------
+"""
+For a detailed explanation of the transformer, please refer to https://zhuanlan.zhihu.com/p/338817680
+
+"""
+
+
+class PositionalEmbedding1D(nn.Module):
+    """Standard sinusoidal positional embedding for 1D sequences."""
+
+    def __init__(self, dim: int, max_len: int = 5000) -> None:
+        super().__init__()
+        assert dim % 2 == 0, "Dimension must be even for sinusoidal positional encoding."
+
+        pe = torch.zeros(max_len, dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, dim, 2).float() * (-math.log(10000.0) / dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # [1, max_len, dim]
+        self.register_buffer(
+            "pe", pe
+        )  # register as buffer to avoid being updated during training, e.g. runing mean/std in batchnorm
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.pe[:, : x.size(1)]  # [B, L, dim]
+
+
+class PositionalEncoding2D(nn.Module):
+    """
+    This is a standard version of the position encoding generalized to work on 2D images.
+    Source: https://https://github.com/facebookresearch/Mask2Former.
+
+    Note: PositionalEncoding2D only encodes the relative position of pixels, not execute position embedding on the
+    input feature map.
+    """
+
+    def __init__(
+        self,
+        num_pos_feats: int = 64,
+        temperature: int = 10000,
+        normalize: bool = False,
+        scale: float = None,
+    ) -> None:
+        super().__init__()
+        self.num_pos_feats = num_pos_feats
+        self.temperature = temperature
+        self.normalize = normalize
+        if scale is not None and normalize is False:
+            raise ValueError("Normalize should be True if scale is passed.")
+        if scale is None:
+            scale = 2 * math.pi
+        self.scale = scale
+
+    def forward(self, x: torch.Tensor, padding_mask: torch.Tensor = None) -> torch.Tensor:
+        if padding_mask is None:
+            padding_mask = torch.zeros(
+                (x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool
+            )  # [B, H, W]
+        not_padding_mask = ~padding_mask
+        y_embed = not_padding_mask.cumsum(1, dtype=torch.float32)  # [B, H, W]
+        x_embed = not_padding_mask.cumsum(2, dtype=torch.float32)  # [B, H, W]
+        if self.normalize:
+            eps = 1e-6
+            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale  # [B, H, W]
+            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale  # [B, H, W]
+
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=x.device)
+        dim_t = torch.pow(self.temperature, 2 * (dim_t // 2) / self.num_pos_feats)
+
+        pos_x = x_embed[:, :, :, None] / dim_t  # [B, H, W, NumPosFeats]
+        pos_y = y_embed[:, :, :, None] / dim_t  # [B, H, W, NumPosFeats]
+        pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)  # [B, 2*NumPosFeats, H, W]
+
+        return pos
+
+
+class TransformerEncoderBlock(nn.Module):
+    """Transformer encoder block with multi-head self attention and feedforward network."""
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        qkv_bias: bool = True,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+        normalize_before: bool = False,
+        batch_first: bool = False,
+    ) -> None:
+        super().__init__()
+        # multi-head self attention
+        self.attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout, bias=qkv_bias, batch_first=batch_first)
+        self.attn_drop = nn.Dropout(dropout)
+
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+
+        # feedforward network
+        hidden_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            get_activation_layer(activation),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout),
+        )
+
+        self.normalize_before = normalize_before
+
+    def forward_pre(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass with pre-normalization.
+
+        Formula: x_out = x_in + Sublayer(LayerNorm(x_in))
+        """
+        x_norm = self.norm1(x)
+        q = k = x_norm + pos if pos is not None else x_norm  # Add positional embedding to query and key
+
+        attn, _ = self.attn(q, k, value=x_norm, attn_mask=mask, key_padding_mask=padding_mask)
+        x = x + self.attn_drop(attn)
+
+        x_norm2 = self.norm2(x)
+        mlp_out = self.mlp(x_norm2)
+
+        return x + mlp_out
+
+    def forward_post(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass with post-normalization.
+
+        Formula: x_out = LayerNorm(x_in + Sublayer(x_in))
+        """
+        q = k = x + pos if pos is not None else x  # Add positional embedding to query and key
+
+        attn, _ = self.attn(q, k, value=x, attn_mask=mask, key_padding_mask=padding_mask)
+        x = x + self.attn_drop(attn)
+        x = self.norm1(x)
+
+        mlp_out = self.mlp(x)
+        x = x + mlp_out
+
+        return self.norm2(x)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass for Transformer encoder block.
+
+        Note:
+            1. mask: In NLP decoders, it is the Causal Mask that is an upper triangular matrix that tells the model:
+            "The i_th word can only see the word before it and cannot see the i+1_th word. In a common visual Encoder
+            (such as DETR) : it is usually None directly. Since images have no concept of "chronological order", the
+            pixels in the upper left corner can and should be used to calculate attention with those in the lower
+            right corner.
+            2. padding_mask: It is a boolean mask that indicates which tokens are padding and should be ignored in
+            attention calculation. In NLP, it is used to prevent the model from attending to padding tokens that are
+            added to make all sequences in a batch the same length. In vision, it can be used to ignore certain
+            regions of the image (e.g., masked areas in masked image modeling) or to handle variable-sized inputs by
+            padding them to a common size and masking the padded areas.
+        """
+        if self.normalize_before:
+            return self.forward_pre(x, mask, padding_mask, pos)
+        else:
+            return self.forward_post(x, mask, padding_mask, pos)
+
+
+class TransformerDecoderBlock(nn.Module):
+    """
+    Transformer decoder block with masked multi-head self attention, cross attention, and feedforward network.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        qkv_bias: bool = True,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+        normalize_before: bool = False,
+        batch_first: bool = False,
+    ) -> None:
+        super().__init__()
+        # self attention and cross attention
+        self.self_attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout, bias=qkv_bias, batch_first=batch_first)
+        self.cross_attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout, bias=qkv_bias, batch_first=batch_first)
+
+        self.self_attn_drop = nn.Dropout(dropout)
+        self.cross_attn_drop = nn.Dropout(dropout)
+
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.norm3 = nn.LayerNorm(dim)
+
+        # feedforward network
+        hidden_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            get_activation_layer(activation),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout),
+        )
+
+        self.normalize_before = normalize_before
+
+    def forward_pre(
+        self,
+        x: torch.Tensor,
+        enc_out: torch.Tensor,
+        self_mask: torch.Tensor | None = None,
+        cross_mask: torch.Tensor | None = None,
+        self_padding_mask: torch.Tensor | None = None,
+        cross_padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+        enc_pos: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass with pre-normalization.
+
+        Formula: x_out = x_in + Sublayer(LayerNorm(x_in))
+        """
+        x_norm = self.norm1(x)
+        q_self = k_self = x_norm + pos if pos is not None else x_norm
+        attn_self, _ = self.self_attn(
+            q_self, k_self, value=x_norm, attn_mask=self_mask, key_padding_mask=self_padding_mask
+        )
+        x = x + self.self_attn_drop(attn_self)
+
+        x_norm2 = self.norm2(x)
+        q_cross = x_norm2 + pos if pos is not None else x_norm2
+        k_cross = enc_out + enc_pos if enc_pos is not None else enc_out
+        attn_cross, _ = self.cross_attn(
+            q_cross, k_cross, value=enc_out, attn_mask=cross_mask, key_padding_mask=cross_padding_mask
+        )
+        x = x + self.cross_attn_drop(attn_cross)
+
+        mlp_out = self.mlp(self.norm3(x))
+
+        return x + mlp_out
+
+    def forward_post(
+        self,
+        x: torch.Tensor,
+        enc_out: torch.Tensor,
+        self_mask: torch.Tensor | None = None,
+        cross_mask: torch.Tensor | None = None,
+        self_padding_mask: torch.Tensor | None = None,
+        cross_padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+        enc_pos: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass with post-normalization.
+
+        Formula: x_out = LayerNorm(x_in + Sublayer(x_in))
+        """
+        q_self = k_self = x + pos if pos is not None else x
+        attn_self, _ = self.self_attn(q_self, k_self, value=x, attn_mask=self_mask, key_padding_mask=self_padding_mask)
+        x = x + self.self_attn_drop(attn_self)
+        x = self.norm1(x)
+
+        q_cross = x + pos if pos is not None else x
+        k_cross = enc_out + enc_pos if enc_pos is not None else enc_out
+        attn_cross, _ = self.cross_attn(
+            q_cross, k_cross, value=enc_out, attn_mask=cross_mask, key_padding_mask=cross_padding_mask
+        )
+        x = x + self.cross_attn_drop(attn_cross)
+        x = self.norm2(x)
+
+        mlp_out = self.mlp(x)
+        return self.norm3(x + mlp_out)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        enc_out: torch.Tensor,
+        self_mask: torch.Tensor | None = None,
+        cross_mask: torch.Tensor | None = None,
+        self_padding_mask: torch.Tensor | None = None,
+        cross_padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+        enc_pos: torch.Tensor | None = None,
+    ):
+        """Forward pass for Transformer decoder block."""
+        if self.normalize_before:
+            return self.forward_pre(
+                x, enc_out, self_mask, cross_mask, self_padding_mask, cross_padding_mask, pos, enc_pos
+            )
+        else:
+            return self.forward_post(
+                x, enc_out, self_mask, cross_mask, self_padding_mask, cross_padding_mask, pos, enc_pos
+            )
+
+
+class TransformerEncoder(nn.Module):
+    """Transformer encoder consisting of multiple TransformerEncoderBlocks."""
+
+    def __init__(
+        self,
+        num_layers: int,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        qkv_bias: bool = True,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+        normalize_before: bool = False,
+        batch_first: bool = False,
+    ):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                TransformerEncoderBlock(
+                    dim=dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    dropout=dropout,
+                    activation=activation,
+                    normalize_before=normalize_before,
+                    batch_first=batch_first,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.output_norm = nn.LayerNorm(dim) if normalize_before else None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+    ):
+        for layer in self.layers:
+            x = layer(x, mask=mask, padding_mask=padding_mask, pos=pos)
+
+        return self.output_norm(x) if self.output_norm is not None else x
+
+
+class TransformerDecoder(nn.Module):
+    """Transformer decoder consisting of multiple TransformerDecoderBlocks."""
+
+    def __init__(
+        self,
+        num_layers: int,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        qkv_bias: bool = True,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+        normalize_before: bool = False,
+        return_intermediate: bool = False,
+        batch_first: bool = False,
+    ):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                TransformerDecoderBlock(
+                    dim=dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    dropout=dropout,
+                    activation=activation,
+                    normalize_before=normalize_before,
+                    batch_first=batch_first,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.output_norm = nn.LayerNorm(dim) if normalize_before else None
+
+        self.return_intermediate = return_intermediate
+        if return_intermediate:
+            self.aux_norm = nn.LayerNorm(dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        enc_out: torch.Tensor,
+        self_mask: torch.Tensor | None = None,
+        cross_mask: torch.Tensor | None = None,
+        self_padding_mask: torch.Tensor | None = None,
+        cross_padding_mask: torch.Tensor | None = None,
+        pos: torch.Tensor | None = None,
+        enc_pos: torch.Tensor | None = None,
+    ):
+        intermediate = []
+
+        for layer in self.layers:
+            x = layer(
+                x,
+                enc_out,
+                self_mask=self_mask,
+                cross_mask=cross_mask,
+                self_padding_mask=self_padding_mask,
+                cross_padding_mask=cross_padding_mask,
+                pos=pos,
+                enc_pos=enc_pos,
+            )
+            if self.return_intermediate:
+                intermediate.append(self.aux_norm(x))
+
+        if self.output_norm is not None:
+            x = self.output_norm(x)
+            if self.return_intermediate:
+                intermediate[-1] = x
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+
+        return x
