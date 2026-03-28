@@ -184,7 +184,8 @@ class DSBottleneck(nn.Module):
     Attributes:
         c1 (int): Number of input channels.
         c2 (int): Number of output channels.
-        shortcut (bool, optional): Whether to use a residual shortcut connection. The connection is only added if c1 == c2. Defaults to True.
+        shortcut (bool, optional): Whether to use a residual shortcut connection. The connection is only added if
+        c1 == c2. Defaults to True.
         e (float, optional): Expansion ratio for the intermediate channels. Defaults to 0.5.
         k1 (int, optional): Kernel size for the first DSConv layer. Defaults to 3.
         k2 (int, optional): Kernel size for the second DSConv layer. Defaults to 5.
