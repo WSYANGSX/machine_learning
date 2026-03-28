@@ -2,6 +2,36 @@ import math
 import torch.nn as nn
 
 from copy import deepcopy
+from machine_learning.modules.activations import SwiGLU, GEGLU
+
+
+def get_activation_layer(name: str = "relu", inplace: bool = True):
+    """Returns the activation layer corresponding to 'name'."""
+    name = name.lower()
+
+    if name == "relu":
+        return nn.ReLU(inplace=inplace)
+    elif name == "gelu":
+        return nn.GELU()
+    elif name == "glu":
+        return nn.GLU()
+    elif name == "silu":
+        return nn.SiLU(inplace=inplace)
+    elif name == "hswish":
+        return nn.Hardswish(inplace=inplace)
+    elif name == "relu6":
+        return nn.ReLU6(inplace=inplace)
+    elif name == "leaky_relu":
+        return nn.LeakyReLU(0.1, inplace=inplace)
+    elif name == "prelu":
+        return nn.PReLU()
+    # add more activation layers as variants of GLU
+    elif name == "swiglu":
+        return SwiGLU()
+    elif name == "geglu":
+        return GEGLU()
+    else:
+        raise ValueError(f"Unsupported activation layer '{name}'")
 
 
 def copy_attr(a, b, include=(), exclude=()):
