@@ -11,8 +11,8 @@ from machine_learning.utils.logger import LOGGER
 class BaseNet(nn.Module, ABC):
     def __init__(
         self,
-        *args,
-        **kwargs,
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
     ):
         super().__init__()
 
@@ -44,7 +44,7 @@ class BaseNet(nn.Module, ABC):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
-            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.GroupNorm)):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 

@@ -417,7 +417,7 @@ class DatasetBase(Dataset):
         """
         if self.augment:
             ...
-        else:
+        else:  # FIXME: make compatible with dict data structure
             return Compose([ToTensor(), Normalize(hyp.get("mean", 0.0), hyp.get("std", 1.0))])
 
     def register_buffer(self, name: str, buffer: list) -> None:

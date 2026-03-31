@@ -5,6 +5,11 @@ from copy import deepcopy
 from machine_learning.modules.activations import SwiGLU, GEGLU
 
 
+def get_clones(module: nn.Module, N: int) -> nn.ModuleList:
+    """Creates N deep copies of 'module' and returns them as a ModuleList."""
+    return nn.ModuleList([deepcopy(module) for i in range(N)])
+
+
 def get_activation_layer(name: str = "relu", inplace: bool = True):
     """Returns the activation layer corresponding to 'name'."""
     name = name.lower()

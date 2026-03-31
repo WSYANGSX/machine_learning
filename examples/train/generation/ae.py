@@ -7,10 +7,7 @@ def main():
     auto_encoder = AutoEncoder("ae.yaml")
 
     # Step 2: Configure the trainer
-    trainer_cfg = TrainerCfg(
-        log_dir="./logs/auto_encoder/",
-        ckpt_dir="./checkpoints/auto_encoder/",
-    )
+    trainer_cfg = TrainerCfg()
     trainer = Trainer(trainer_cfg, auto_encoder, "minist.yaml")
 
     # Step 3: Train the model

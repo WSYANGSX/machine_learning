@@ -1,10 +1,18 @@
+from typing import Any
+
 import torch
 import torch.nn as nn
 from machine_learning.networks import BaseNet
 
 
 class AENet(BaseNet):
-    def __init__(self, imgsz: int, z_dim: int, *args, **kwargs) -> None:
+    def __init__(
+        self,
+        imgsz: int,
+        z_dim: int,
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
+    ) -> None:
         """
         auto_encoder network
 
@@ -44,7 +52,7 @@ class AENet(BaseNet):
 
     @property
     def dummy_input(self) -> torch.Tensor:
-        return (1, 1, self.img_size, self.img_size)
+        return torch.randn(1, 1, self.img_size, self.img_size, device=self.device)
 
     def forward(self, x):
         y = self.encoder(x)

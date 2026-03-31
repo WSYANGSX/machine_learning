@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Any
 
 import torch
 import torch.nn as nn
@@ -25,8 +25,8 @@ class M2I2HANet_v8(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
-        *args,
-        **kwargs,
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
     ):
         """M2I2HA multi-modal object detection network with yolov8 FENs.
 
