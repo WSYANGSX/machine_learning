@@ -2,10 +2,10 @@ from typing import Mapping, Any, Literal
 
 from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
-from machine_learning.algorithms import AlgorithmBase
+from machine_learning.algorithms.segmentation import PerPixelSegmentationBase
 
 
-class Unet(AlgorithmBase):
+class Unet(PerPixelSegmentationBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
@@ -14,7 +14,7 @@ class Unet(AlgorithmBase):
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
         ema: bool = True,
-        modality: str = "img",
+        modality: str | None = "img",
     ) -> None:
         """
         Implementation of YoloV8 object detection algorithm
@@ -29,12 +29,10 @@ class Unet(AlgorithmBase):
             "auto"-automatic selection by algorithm.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
             ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
-            modality (str): The data modality to use for multimodal dataset selection. Only relevant for multimodal
-            datasets. Defaults to "img".
+            modality (str | None): The data modality to use for multimodal dataset selection. Only relevant for
+            multimodal datasets. Defaults to "img".
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
-
-        self.modality = modality
+        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema, modality=modality)
 
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]

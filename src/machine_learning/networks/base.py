@@ -17,7 +17,7 @@ class BaseNet(nn.Module, ABC):
         1. Subclasses must implement the 'dummy_input' property to enable structure visualization and FLOPs estimation.
         2. The 'view_structure' method relies on forward hooks to capture layer-wise output shapes and parameter counts
         during a dummy forward pass. Mixing 'nn.Module' components with functional APIs (e.g., 'torch.flatten', 'F.relu'
-        ) will break the computation graph tracking. To ensure accurate structural tracing, strictly use 'nn.Module' 
+        ) will break the computation graph tracking. To ensure accurate structural tracing, strictly use 'nn.Module'
         layers registered in '__init__()' during the 'forward' pass.
     """
 
@@ -30,14 +30,23 @@ class BaseNet(nn.Module, ABC):
 
     @property
     def device(self) -> torch.device:
+        """Returns the device on which the model's parameters are located."""
         return next(self.parameters()).device
 
     @property
     @abstractmethod
     def dummy_input(self) -> Any:
+        """
+        Returns a dummy input tensor (or tuple/dict of tensors) that can be used for model structure visualization and
+        FLOPs estimation.
+
+        Note:
+            Subclasses must implement this property to enable these features.
+        """
         pass
 
     def _initialize_weights(self):
+        """Initialize weights of the model using Kaiming normal initialization default."""
         LOGGER.info(f"Initializing weights of {self.__class__.__name__} with Kaiming normal...")
 
         for module in self.modules():
@@ -61,6 +70,7 @@ class BaseNet(nn.Module, ABC):
                 nn.init.constant_(module.bias, 0)
 
     def view_structure(self):
+        """View the structure of the model, including layer types, input from, output shapes, and parameter counts."""
         LOGGER.info(f"Model summary for {self.__class__.__name__}:")
 
         records = []
