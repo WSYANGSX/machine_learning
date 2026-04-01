@@ -176,8 +176,10 @@ class BottleNeck(nn.Module):
 class ResNet(BaseNet):
     def __init__(
         self,
+        imgsz: int,
         block: type[BasicBlock] | type[BottleNeck],
         layers: list[int],
+        channels: int = 3,
         num_classes: int = 1000,
         zero_init_residual: bool = False,
         normalize_before: bool = False,
@@ -185,12 +187,15 @@ class ResNet(BaseNet):
         **kwargs: dict[str, Any],
     ):
         super().__init__(args=args, kwargs=kwargs)
+        self.imgsz = imgsz
+        self.channels = channels
+
         self.in_channels = 64
         self.zero_init_residual = zero_init_residual
         self.normalize_before = normalize_before
 
         # Stem: 7x7 Conv + MaxPooling
-        self.conv1 = nn.Conv2d(3, self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(self.channels, self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(self.in_channels)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -203,7 +208,12 @@ class ResNet(BaseNet):
 
         # Head: Global average pooling + fully connected classification headers
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.flatten = nn.Flatten()
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+    @property
+    def dummy_input(self):
+        return torch.randn(1, 3, 224, 224)
 
     def _initialize_weights(self) -> None:
         # Weight initialization
@@ -261,7 +271,7 @@ class ResNet(BaseNet):
 
         # Standard classification output mode
         out = self.avgpool(c5)
-        out = torch.flatten(out, 1)
+        out = self.flatten(out)
         out = self.fc(out)
         return out
 
@@ -272,6 +282,8 @@ class ResNet(BaseNet):
 
 
 def build_resnet(
+    imgsz: int = 224,
+    channels: int = 3,
     version: str = "resnet18",
     num_classes: int = 1000,
     zero_init_residual: bool = False,
@@ -282,14 +294,30 @@ def build_resnet(
     version = version.lower()
 
     if version == "resnet18":
-        return ResNet(BasicBlock, [2, 2, 2, 2], num_classes, zero_init_residual, normalize_before, **kwargs)
+        return ResNet(
+            imgsz, BasicBlock, [2, 2, 2, 2], channels, num_classes, zero_init_residual, normalize_before, **kwargs
+        )
     elif version == "resnet34":
-        return ResNet(BasicBlock, [3, 4, 6, 3], num_classes, zero_init_residual, normalize_before, **kwargs)
+        return ResNet(
+            imgsz, BasicBlock, [3, 4, 6, 3], channels, num_classes, zero_init_residual, normalize_before, **kwargs
+        )
     elif version == "resnet50":
-        return ResNet(BottleNeck, [3, 4, 6, 3], num_classes, zero_init_residual, normalize_before, **kwargs)
+        return ResNet(
+            imgsz, BottleNeck, [3, 4, 6, 3], channels, num_classes, zero_init_residual, normalize_before, **kwargs
+        )
     elif version == "resnet101":
-        return ResNet(BottleNeck, [3, 4, 23, 3], num_classes, zero_init_residual, normalize_before, **kwargs)
+        return ResNet(
+            imgsz, BottleNeck, [3, 4, 23, 3], channels, num_classes, zero_init_residual, normalize_before, **kwargs
+        )
     elif version == "resnet152":
-        return ResNet(BottleNeck, [3, 8, 36, 3], num_classes, zero_init_residual, normalize_before, **kwargs)
+        return ResNet(
+            imgsz, BottleNeck, [3, 8, 36, 3], channels, num_classes, zero_init_residual, normalize_before, **kwargs
+        )
     else:
         raise ValueError(f"Unsupported ResNet version: {version}")
+
+
+if __name__ == "__main__":
+    # Example usage
+    resnet_18 = build_resnet(version="resnet18", num_classes=1000, zero_init_residual=True, normalize_before=True)
+    resnet_18.view_structure()

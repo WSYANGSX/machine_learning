@@ -9,6 +9,18 @@ from machine_learning.utils.logger import LOGGER
 
 
 class BaseNet(nn.Module, ABC):
+    """
+    Base class for all neural network models in this project.
+    Provides common utilities, including weight initialization and model structure visualization.
+
+    Notes:
+        1. Subclasses must implement the 'dummy_input' property to enable structure visualization and FLOPs estimation.
+        2. The 'view_structure' method relies on forward hooks to capture layer-wise output shapes and parameter counts
+        during a dummy forward pass. Mixing 'nn.Module' components with functional APIs (e.g., 'torch.flatten', 'F.relu'
+        ) will break the computation graph tracking. To ensure accurate structural tracing, strictly use 'nn.Module' 
+        layers registered in '__init__()' during the 'forward' pass.
+    """
+
     def __init__(
         self,
         *args: tuple[Any, ...],
