@@ -68,7 +68,7 @@ class Trainer:
             yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
 
         # set save_best value for saving the best ckpt
-        if self.algorithm.cfg["algorithm"].get("task", "") == "detect":
+        if self.algorithm.cfg["algorithm"].get("task", "") in ("detect"):
             self.save_best = 0.0
         else:
             self.save_best = torch.inf
