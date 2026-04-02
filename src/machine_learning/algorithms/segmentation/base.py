@@ -1,20 +1,31 @@
 from typing import Any, Mapping, Literal
 
+import cv2
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from tqdm import tqdm
 from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Compose, ToTensor, Normalize
 
 from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils.detection import pad_to_square, resize
+from machine_learning.utils.segmentation import calculate_miou, visualize_segmentation, rescale_masks
 
 
-class PerPixelSegmentationBase(AlgorithmBase):
+class PerPixelSegmentation(AlgorithmBase):
     """
     Base class for per-pixel segmentation algorithms, which treat the segmentation task as a pixel-wise classification
     problem. The models is trained to predict the class of each pixel in the input image.
+
+    Note:
+        Although per-pixel segmentation can also be used for instance segmentation, as in the classical era dominated by
+        Mask R-CNN, where the approach was straightforward: first draw bounding boxes and then perform per-pixel
+        segmentation within the local area of these boxes, in the MaskFormer framework, PerPixelSegmentationBase focuses
+        on semantic segmentation.
     """
 
     def __init__(
@@ -30,8 +41,20 @@ class PerPixelSegmentationBase(AlgorithmBase):
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
         self.modality = modality
 
+        self.loss_weight = self.cfg["algorithm"].get("loss_weight", 1.0)
+        self.ignore_value = self.cfg["data"].get("ignore_value", 255)
+        self.imgsz = self.cfg["algorithm"]["imgsz"]
+
+    def _init_on_trainer(self, train_cfg, dataset):
+        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
+        The attributes that require the dataset parameter are created here.
+        """
+        super()._init_on_trainer(train_cfg, dataset)
+
+        self.class_names = self.dataset_cfg["class_names"]
+
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
-        """Train a single epoch"""
+        """Train a single epoch."""
         super().train_epoch(epoch, writer, log_interval)
 
         # metrics
@@ -66,11 +89,13 @@ class PerPixelSegmentationBase(AlgorithmBase):
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """Validate after a single train epoch"""
+        """Validate after a single train epoch."""
         super().validate()
 
         # metrics
-        metrics = {"vloss": 0.0, "save_best": 0.0, "miou": None}
+        total_intersection = None
+        total_union = None
+        metrics = {"vloss": 0.0, "save_best": 0.0, "batch_miou": 0.0, "miou": 0.0}
         self.print_metric_titles("val", metrics)
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
@@ -82,46 +107,41 @@ class PerPixelSegmentationBase(AlgorithmBase):
             predictions = self.net(imgs)
             loss = self.criterion(predictions, targets)
 
-            # calculate mIoU
-            miou = self.calculate_miou(predictions, targets)
-            metrics["miou"] = (metrics["miou"] * i + miou) / (i + 1)
+            # calculate batch mIoU
+            batch_miou, (intersection, union) = calculate_miou(predictions, targets, ignore_value=self.ignore_value)
+            metrics["batch_miou"] = (metrics["batch_miou"] * i + batch_miou) / (i + 1)
+
+            # accumulate intersection and union for overall mIoU calculation
+            if total_intersection is None:
+                total_intersection = intersection.clone()
+                total_union = union.clone()
+            else:
+                total_intersection += intersection
+                total_union += union
 
             # add value to val_metrics
             metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-            metrics["save_best"] = metrics["miou"]
+
+            if i == self.val_batches - 1:  # calculate overall mIoU at the end of validation
+                valid_classes = total_union > 0
+                if valid_classes.any():
+                    overall_miou = (total_intersection[valid_classes] / total_union[valid_classes]).mean().item()
+                else:
+                    overall_miou = 0.0
+                metrics["miou"] = overall_miou
+                metrics["save_best"] = metrics["miou"]
 
             # log
             self.pbar_log("val", pbar, **metrics)
 
         return metrics
 
-    def calculate_miou(self, predictions: torch.Tensor, targets: torch.Tensor) -> float:
-        """Calculate mean Intersection over Union (mIoU) for the batch."""
-        with torch.no_grad():
-            # Get predicted class for each pixel
-            pred_classes = torch.argmax(predictions, dim=1)
-
-            # Initialize variables to accumulate IoU for each class
-            iou_sum = 0.0
-            num_classes = predictions.shape[1]
-
-            for c in range(num_classes):
-                pred_mask = pred_classes == c
-                target_mask = targets == c
-
-                intersection = (pred_mask & target_mask).float().sum()
-                union = (pred_mask | target_mask).float().sum()
-
-                if union > 0:
-                    iou_sum += intersection / union
-
-            return iou_sum / num_classes if num_classes > 0 else 0.0
-
     def criterion(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Calculate the loss between predictions and targets using cross-entropy loss for per-pixel classification."""
-        fun = nn.CrossEntropyLoss()
-        return fun(predictions, targets)
+        predictions = F.interpolate(predictions, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+        return nn.CrossEntropyLoss(ignore_index=self.ignore_value)(predictions, targets) * self.loss_weight
 
+    @torch.no_grad()
     def eval(
         self,
         img_path: str | FilePath,
@@ -131,8 +151,27 @@ class PerPixelSegmentationBase(AlgorithmBase):
         """Evaluate the model effect by visualizing the predicted segmentation mask."""
         self.set_eval()
 
+        # read image
+        img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        h0, w0, _ = img0.shape
 
-class MaskSegmentationBase(AlgorithmBase):
+        # scale to square
+        padded_img = pad_to_square(img=img0, pad_values=0)
+
+        # to tensor / normalize
+        tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
+        img = tfs(padded_img)
+        img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
+
+        # input image to model
+        masks = self.net(img)
+        preds = rescale_masks(masks, (self.imgsz, self.imgsz), (h0, w0))
+
+        # visualize results
+        visualize_segmentation(img=img0, pred_mask=preds, class_maps=self.class_names)
+
+
+class MaskSegmentation(AlgorithmBase):
     """
     Base class for mask-based segmentation algorithms, which treat the segmentation task as a mask classification and
     prediction problem. The models is trained to predict a set of binary masks and their corresponding class labels for
@@ -204,8 +243,8 @@ class MaskSegmentationBase(AlgorithmBase):
             predictions = self.net(imgs)
             loss = self.criterion(predictions, targets)
 
-            # calculate mIoU            miou = self.calculate_miou(predictions, targets)
-            miou = self.calculate_miou(predictions, targets)
+            # calculate mIoU
+            miou = calculate_miou(predictions, targets)
             metrics["miou"] = (metrics["miou"] * i + miou) / (i + 1)
 
             # add value to val_metrics

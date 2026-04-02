@@ -89,7 +89,7 @@ class YoloV8(AlgorithmBase):
 
     def _init_on_trainer(self, train_cfg, dataset):
         """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
-        The attributes that require the dataset parameter are created here
+        The attributes that require the dataset parameter are created here.
         """
         super()._init_on_trainer(train_cfg, dataset)
 
@@ -137,7 +137,9 @@ class YoloV8(AlgorithmBase):
         else:
             LOGGER.warning(f"Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
 
-    def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
+    def train_epoch(
+        self, epoch: int, writer: SummaryWriter, log_interval: int = 10
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         super().train_epoch(epoch, writer, log_interval)
 
         # close mosaic
@@ -198,7 +200,7 @@ class YoloV8(AlgorithmBase):
             self.train_loader.dataset.close_mosaic()
 
     @torch.no_grad()
-    def validate(self):
+    def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
         super().validate()
 
         # log metrics

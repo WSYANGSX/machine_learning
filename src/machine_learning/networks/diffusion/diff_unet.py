@@ -63,7 +63,7 @@ class ResidualBlock(nn.Module):
         return h + self.shortcut(x)
 
 
-class UNet(BaseNet):
+class DiffUNet(BaseNet):
     def __init__(
         self,
         input_size: Sequence[int],
