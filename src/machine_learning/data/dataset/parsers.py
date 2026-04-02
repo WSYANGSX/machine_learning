@@ -284,6 +284,44 @@ class FireHoleParser(ParserBase):
         }
 
 
+class CarParser(ParserBase):
+    r"""Car dataset parser."""
+
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
+
+        self.train_imgs_dir = self.dataset_cfg["train_imgs_dir"]
+        self.val_imgs_dir = self.dataset_cfg["val_imgs_dir"]
+        self.test_imgs_dir = self.dataset_cfg["test_imgs_dir"]
+
+        self.train_labels_dir = self.dataset_cfg["train_labels_dir"]
+        self.val_labels_dir = self.dataset_cfg["val_labels_dir"]
+        self.test_labels_dir = self.dataset_cfg["test_labels_dir"]
+
+        self.train_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.train_imgs_dir))
+        self.val_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.val_imgs_dir))
+        self.test_ids = extract_ids_from_dir(os.path.join(self.dataset_path, self.test_imgs_dir))
+
+    def parse(self) -> dict[str, Any]:
+        # train path
+        train_imgs = [os.path.join(self.dataset_path, self.train_imgs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.jpg" for id in self.train_ids]
+
+        # val path
+        val_imgs = [os.path.join(self.dataset_path, self.val_imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.jpg" for id in self.val_ids]
+
+        # test path
+        test_imgs = [os.path.join(self.dataset_path, self.test_imgs_dir) + f"/{id}.jpg" for id in self.test_ids]
+        test_labels = [os.path.join(self.dataset_path, self.test_labels_dir) + f"/{id}.jpg" for id in self.test_ids]
+
+        return {
+            "train": {"data": {"imgs": train_imgs}, "labels": train_labels},
+            "val": {"data": {"imgs": val_imgs}, "labels": val_labels},
+            "test": {"data": {"imgs": test_imgs}, "labels": test_labels},
+        }
+
+
 """Helper functions.
 """
 

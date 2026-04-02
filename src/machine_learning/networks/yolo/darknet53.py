@@ -12,7 +12,7 @@ class DarkNet53(BaseNet):
         self,
         imgsz: int,
         num_anchors: int,
-        num_classes: int,
+        nc: int,
         *args,
         **kwargs,
     ):
@@ -26,7 +26,7 @@ class DarkNet53(BaseNet):
         super().__init__(args=args, kwargs=kwargs)
         self.imgsz = imgsz
         self.num_anchors = num_anchors
-        self.num_classes = num_classes
+        self.num_classes = nc
         self.channels = (5 + self.num_classes) * self.num_anchors
 
         # Define the network backbone layers
