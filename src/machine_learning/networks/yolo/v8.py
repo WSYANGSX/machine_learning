@@ -13,7 +13,7 @@ class V8Net(BaseNet):
     def __init__(
         self,
         imgsz: Sequence[int],
-        channel: int = 3,
+        channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
         *args,
@@ -32,7 +32,7 @@ class V8Net(BaseNet):
         self.imgsz = imgsz
         self.nc = nc
         self.net_scale = net_scale
-        self.in_channels = channel
+        self.in_channels = channels
 
         if self.net_scale == "n":
             # backbone

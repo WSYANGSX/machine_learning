@@ -1,0 +1,15 @@
+name: cars
+path: /home/yangxf/WorkSpace/datasets/..datasets/cars
+dataset_type: YoloDataset
+
+# Directories
+train_imgs_dir: imgs/train
+val_imgs_dir: imgs/val
+test_imgs_dir: imgs/test
+
+train_labels_dir: masks/train
+val_labels_dir: masks/val
+test_labels_dir: masks/test
+
+
+

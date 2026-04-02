@@ -100,16 +100,16 @@ class UNet(BaseNet):
     def __init__(
         self,
         imgsz: int = 256,
-        in_channels: int = 3,
-        num_classes: int = 1,
+        channels: int = 3,
+        nc: int = 1,
         bilinear: bool = False,
         activation: Literal["relu", "gelu", "leaky_relu"] = "relu",
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.in_channels = in_channels
-        self.num_classes = num_classes
+        self.in_channels = channels
+        self.num_classes = nc
         self.bilinear = bilinear
         self.imgsz = imgsz
         self.activation = activation
@@ -117,7 +117,7 @@ class UNet(BaseNet):
         factor = 2 if bilinear else 1
 
         # Encoder
-        self.inc = DConvBNAct(in_channels, 64, activation=activation)
+        self.inc = DConvBNAct(self.in_channels, 64, activation=activation)
         self.down1 = DownBlock(64, 128, activation=activation)
         self.down2 = DownBlock(128, 256, activation=activation)
         self.down3 = DownBlock(256, 512, activation=activation)
