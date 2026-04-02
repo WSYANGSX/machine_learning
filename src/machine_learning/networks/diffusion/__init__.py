@@ -1,3 +1,3 @@
-from .unet import UNet
+from .diff_unet import DiffUNet
 
-__all__ = ["UNet"]
+__all__ = ["DiffUNet"]
