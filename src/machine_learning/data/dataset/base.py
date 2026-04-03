@@ -131,15 +131,13 @@ class DatasetBase(Dataset, ABC):
 
         # type check
         if not isinstance(labels, (list, np.ndarray)):
-            raise TypeError(f"Unsupported labels type: {type(labels)}. Expected list or np.ndarray")
+            raise TypeError(f"Unsupported labels type: {type(labels)}. Expected list or np.ndarray.")
         if not isinstance(data, (list, np.ndarray)):
-            raise TypeError(f"Unsupported data type: {type(data)}. Expected list or np.ndarray")
-        if type(data) is not type(labels):
-            raise TypeError(f"The type of data {type(data)} does not match the type of labels {type(labels)}")
+            raise TypeError(f"Unsupported data type: {type(data)}. Expected list or np.ndarray.")
 
         # length check
         if len(labels) != len(data):
-            raise ValueError(f"Labels length {len(labels)} != data length {len(data)}")
+            raise ValueError(f"Labels length {len(labels)} does not match data length {len(data)}.")
 
     def create_buffers(self, labels: np.ndarray | list[str]) -> None:
         """Build buffers for data and labels storage."""
@@ -170,20 +168,18 @@ class DatasetBase(Dataset, ABC):
         #
         # ********************************************************
 
-        # np.ndarray
-        if isinstance(labels, np.ndarray):
+        # cache labels
+        if isinstance(labels, np.ndarray):  # np.ndarray, mainly for classification labels
             self.cache_labels_np(labels)
-            self.cache_data_np(data)
-
-        # list[str]
-        elif isinstance(labels, list):
+        else:  # list[str], mainly for labels with file paths, such as detection labels
             self.label_files[:] = labels[: self.length]
-            self.data_files[:] = data[: self.length]
-
-            # cache labels
             self.cache_labels()
 
-            # cache data
+        # cache data
+        if isinstance(data, np.ndarray):  # np.ndarray, mainly for small data that can be parsed to np.ndarray directly
+            self.cache_data_np(data)
+        else:  # list[str], mainly for data with file paths, such as images, point clouds, etc.
+            self.data_files[:] = data[: self.length]
             self.data_npy_files[:] = [Path(f).with_suffix(".npy") for f in self.data_files]
 
             if self.cache == "ram" and self.check_cache_ram():
@@ -210,7 +206,7 @@ class DatasetBase(Dataset, ABC):
         """Cache the data of the dataset from np.ndarray data source to buffers."""
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         LOGGER.info(f"Caching {self.mode} data from np.ndarray input...")
-        pbar = tqdm(enumerate(data), total=self.length)
+        pbar = tqdm(enumerate(data[: self.length]), total=self.length)
         for i, item in pbar:
             self.data[i] = item
             b += self.calculate_cache_size(item)
@@ -703,7 +699,7 @@ class MultiModalDatasetBase(DatasetBase):
         dropout: bool = False,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        """Initialize DatasetBase with given configuration and options."""
+        """Initialize MultiModalDatasetBase with given configuration and options."""
 
         self.dropout = dropout
         self._data_names = list(data.keys())  # used for building buffers
@@ -772,15 +768,11 @@ class MultiModalDatasetBase(DatasetBase):
         data_types = {type(v) for v in data.values()}
         if len(data_types) != 1:
             raise ValueError(f"All data values must be of the same type, got: {data_types}.")
-        data_type = next(iter(data_types))
 
         # labels type and length check
         if isinstance(labels, (list, np.ndarray)):
             if len(labels) == 0:
                 raise ValueError("Labels cannot be empty.")
-
-            if type(labels) is not data_type:
-                raise TypeError(f"Labels type {type(labels)} does not match data type {data_type}.")
 
             if len(labels) != data_len:
                 raise ValueError(f"Labels length {len(labels)} not equal to data length {data_len}.")
@@ -791,9 +783,7 @@ class MultiModalDatasetBase(DatasetBase):
 
             label_lens = {k: len(v) for k, v in labels.items()}
             if 0 in label_lens.values():
-                raise ValueError(
-                    f"Label entries cannot be empty, got: {label_lens}."
-                )  # empty check for each label entry
+                raise ValueError(f"Label entries cannot be empty, got: {label_lens}.")
             if len(set(label_lens.values())) != 1:
                 raise ValueError(f"All label entries must have the same length, got: {label_lens}.")
             label_len = next(iter(label_lens.values()))
@@ -803,9 +793,6 @@ class MultiModalDatasetBase(DatasetBase):
             label_types = {type(v) for v in labels.values()}
             if len(label_types) != 1:
                 raise ValueError(f"All label values must be of the same type, got: {label_types}.")
-            label_type = next(iter(label_types))
-            if label_type is not data_type:
-                raise TypeError(f"Labels type {label_type} does not match data type {data_type}.")
 
         else:
             raise TypeError(f"Unsupported labels type: {type(labels)}.")
@@ -852,26 +839,25 @@ class MultiModalDatasetBase(DatasetBase):
         #
         # ********************************************************
 
-        # np.ndarray
-        if isinstance(next(iter(data.values())), np.ndarray):
+        # cache labels
+        if isinstance(labels, np.ndarray) or (
+            isinstance(labels, dict) and isinstance(next(iter(labels.values())), np.ndarray)
+        ):  # np.ndarray or dict[str, np.ndarray]
             self.cache_labels_np(labels)
-            self.cache_data_np(data)
-
-        # list[str]
-        elif isinstance(next(iter(data.values())), list):
-            for name in self.data_names:
-                self.data_files[name][:] = data[name][: self.length]
+        else:  # list[str] or dict[str, list[str]]
             if isinstance(labels, list):
                 self.label_files[:] = labels[: self.length]
             elif isinstance(labels, dict):
                 for name in self.label_names:
                     self.label_files[name][:] = labels[name][: self.length]
-
-            # labels
             self.cache_labels()
 
-            # data
+        # cache data
+        if isinstance(next(iter(data.values())), np.ndarray):  # dict[str, np.ndarray]
+            self.cache_data_np(data)
+        elif isinstance(next(iter(data.values())), list):  # dict[str, list[str]]
             for name in self.data_names:
+                self.data_files[name][:] = data[name][: self.length]
                 self.data_npy_files[name][:] = [Path(f).with_suffix(".npy") for f in self.data_files[name]]
 
             if self.cache == "ram" and self.check_cache_ram():
