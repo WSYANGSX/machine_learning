@@ -808,10 +808,10 @@ class MultiModalDatasetBase(DatasetBase):
 
         self.buffers = {}
 
-        self.data = {name: [None] * length for name in self.data_names}
-        self.data_files = {name: [None] * length for name in self.data_names}
-        self.data_npy_files = {name: [None] * length for name in self.data_names}
-        self.labels = [None] * length  # labels buffers
+        self.data = {name: [None] * self.length for name in self.data_names}
+        self.data_files = {name: [None] * self.length for name in self.data_names}
+        self.data_npy_files = {name: [None] * self.length for name in self.data_names}
+        self.labels = [None] * self.length  # labels buffers
 
         self.buffers["data"] = self.data
         self.buffers["data_files"] = self.data_files
@@ -820,10 +820,10 @@ class MultiModalDatasetBase(DatasetBase):
 
         if self.label_names is not None:
             if isinstance(next(iter(labels.values())), list):
-                self.label_files = {name: [None] * length for name in self.label_names}
+                self.label_files = {name: [None] * self.length for name in self.label_names}
                 self.buffers["label_files"] = self.label_files
         elif isinstance(labels, list):
-            self.label_files = [None] * length
+            self.label_files = [None] * self.length
             self.buffers["label_files"] = self.label_files
 
     def setup_data_labels(
