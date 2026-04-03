@@ -168,6 +168,11 @@ class DatasetBase(Dataset, ABC):
         #
         # ********************************************************
 
+        # While caching labels, the data path needs to be cached first to verify the validity.
+        if isinstance(data, list):
+            self.data_files[:] = data[: self.length]
+            self.data_npy_files[:] = [Path(f).with_suffix(".npy") for f in self.data_files]
+
         # cache labels
         if isinstance(labels, np.ndarray):  # np.ndarray, mainly for classification labels
             self.cache_labels_np(labels)
@@ -179,9 +184,6 @@ class DatasetBase(Dataset, ABC):
         if isinstance(data, np.ndarray):  # np.ndarray, mainly for small data that can be parsed to np.ndarray directly
             self.cache_data_np(data)
         else:  # list[str], mainly for data with file paths, such as images, point clouds, etc.
-            self.data_files[:] = data[: self.length]
-            self.data_npy_files[:] = [Path(f).with_suffix(".npy") for f in self.data_files]
-
             if self.cache == "ram" and self.check_cache_ram():
                 self.cache_data()
             elif self.cache == "disk" and self.check_cache_disk():
@@ -839,6 +841,12 @@ class MultiModalDatasetBase(DatasetBase):
         #
         # ********************************************************
 
+        # While caching labels, the data path needs to be cached first to verify the validity.
+        if isinstance(next(iter(data.values())), list):
+            for name in self.data_names:
+                self.data_files[name][:] = data[name][: self.length]
+                self.data_npy_files[name][:] = [Path(f).with_suffix(".npy") for f in self.data_files[name]]
+
         # cache labels
         if isinstance(labels, np.ndarray) or (
             isinstance(labels, dict) and isinstance(next(iter(labels.values())), np.ndarray)
@@ -855,11 +863,7 @@ class MultiModalDatasetBase(DatasetBase):
         # cache data
         if isinstance(next(iter(data.values())), np.ndarray):  # dict[str, np.ndarray]
             self.cache_data_np(data)
-        elif isinstance(next(iter(data.values())), list):  # dict[str, list[str]]
-            for name in self.data_names:
-                self.data_files[name][:] = data[name][: self.length]
-                self.data_npy_files[name][:] = [Path(f).with_suffix(".npy") for f in self.data_files[name]]
-
+        else:  # dict[str, list[str]]
             if self.cache == "ram" and self.check_cache_ram():
                 self.cache_data()
             elif self.cache == "disk" and self.check_cache_disk():

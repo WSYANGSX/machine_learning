@@ -15,7 +15,7 @@ def main():
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, como, "drone_vehicle.yaml")
+    trainer = Trainer(trainer_cfg, como, "vedai.yaml")
 
     # Step 3: Train the model
     trainer.train()

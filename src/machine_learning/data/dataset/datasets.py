@@ -480,7 +480,7 @@ class YoloDataset(DatasetBase):
                 skips += 1
                 continue
             ratio = self.imgsz / max(img.shape[0], img.shape[1])
-            b += img.nbytes * ratio**2
+            b += self.calculate_cache_size(img) * ratio**2
         mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache data into RAM
         mem = psutil.virtual_memory()
         if mem_required > mem.available:
@@ -493,13 +493,14 @@ class YoloDataset(DatasetBase):
             return False
         return True
 
-    def create_buffers(self, length):
+    def create_buffers(self, labels: np.ndarray | list[str]) -> None:
         """Build buffers for data and labels storage."""
-        super().create_buffers(length)
+        super().create_buffers(labels)
 
-        self.im_hw0 = [None] * length
+        # buffers for image shapes, used for caching data and adjusting mosaic augmentation
+        self.im_hw0 = [None] * self.length
         self.register_buffer("im_hw0", self.im_hw0)
-        self.im_hw = [None] * length
+        self.im_hw = [None] * self.length
         self.register_buffer("im_hw", self.im_hw)
 
     def build_transforms(self, hyp=None):
@@ -585,7 +586,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
     def __init__(
         self,
-        imgs: dict[str, np.ndarray | list[str]],
+        data: dict[str, np.ndarray | list[str]],
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
         nc: int,
         imgsz: int = 640,
@@ -599,7 +600,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         hyp: dict[str, Any] | None = None,
         batch_size: int = 16,
         fraction: float = 1.0,
-        modals: list[str] | None = None,
+        modalities: list[str] | None = None,
         dropout: bool = False,
         task: Literal["detect", "pose", "segment", "obb"] = "detect",
         mode: Literal["train", "val", "test"] = "train",
@@ -620,16 +621,29 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         self.use_obb = self.task == "obb"
 
         super().__init__(
-            data=imgs,
+            data=data,
             labels=labels,
             cache=cache,
             hyp=hyp,
             fraction=fraction,
             augment=augment,
-            modals=modals,
+            modalities=modalities,
             dropout=dropout,
             mode=mode,
         )
+
+    def create_buffers(
+        self,
+        labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
+    ) -> None:
+        """Build buffers for data and labels storage."""
+        super().create_buffers(labels)
+
+        # buffers for image shapes, used for caching data and adjusting mosaic augmentation
+        self.hw0 = [None] * self.length
+        self.register_buffer("hw0", self.hw0)
+        self.hw = [None] * self.length
+        self.register_buffer("hw", self.hw)
 
     def setup_data_labels(self, data, labels):
         """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
@@ -658,7 +672,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         def get_stats_desc():
             return (
-                f" {self.num_found} couple of {tuple(self.modals)} data, "
+                f" {self.num_found} couple of {tuple(self.modalities)} data, "
                 f"{self.num_missing + self.num_empty} backgrounds, "
                 f"{self.num_skip} skip, "
                 f"{self.num_corrupt} corrupt."
@@ -711,7 +725,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         for name in self.data_names:
             file = self.data_files[name][i]
-            files[f"{self.modal_mapping[name]}_file"] = file
+            files[f"{self.modality_maps[name]}_file"] = file
             try:
                 img = Image.open(file)
                 img.verify()  # PIL verify
@@ -1026,11 +1040,14 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                 else:
                     if x:
                         for name in self.data_names:
-                            self.data[name][i] = x[0][self.modal_mapping[name]]
+                            self.data[name][i] = x[0][self.modality_maps[name]]
                             self.hw0[i] = x[1]
                             self.hw[i] = x[2]
-                            b += self.data[name][i].nbytes
-                pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+                            b += self.calculate_cache_size(self.data[name][i])
+
+                if i % 100 == 0 or i == len(pbar) - 1:
+                    pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+
             pbar.close()
 
     def load_data(self, i: int, rect_mode: bool = True) -> tuple[dict, tuple, tuple]:
@@ -1042,7 +1059,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         if cached_ram:  # cached in ram
             for name in self.data_names:
-                data[self.modal_mapping[name]] = self.data[name][i]
+                data[self.modality_maps[name]] = self.data[name][i]
             hw = self.hw[i]
             hw0 = self.hw0[i]
 
@@ -1060,7 +1077,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                 else:
                     dt = DatasetBase.file_read(dtf)
 
-                data[self.modal_mapping[name]] = dt  # may be None, dropout mode
+                data[self.modality_maps[name]] = dt  # may be None, dropout mode
 
             shapes = set([dt.shape[:2] for dt in data.values()])
             if len(shapes) != 1:
@@ -1088,7 +1105,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
             if self.augment:
                 for name in self.data_names:
-                    self.data[name][i] = data[self.modal_mapping[name]]
+                    self.data[name][i] = data[self.modality_maps[name]]
                 self.hw0[i] = hw0
                 self.hw[i] = hw
                 self.mosaic_buffer.append(i)
@@ -1100,12 +1117,6 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                         self.hw0[j], self.hw[j] = None, None
 
         return data, hw0, hw
-
-    def __getitem__(self, index) -> dict[str, Any]:
-        sample = self.get_sample(index)
-        if self.transforms:
-            sample = self.transforms(sample)  # The transform must take label as input.
-        return sample
 
     def get_sample(self, index: int) -> dict[str, Any]:
         """Get data and label information from the dataset."""
@@ -1155,6 +1166,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
         n = min(self.length, 100)  # extrapolate from 100 random data
         skips = 0
+
         for _ in range(n):
             i = random.randint(0, self.length - 1)
             data = []
@@ -1166,9 +1178,17 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                     break
                 else:
                     data.append(dt)
-            b += np.sum([d.nbytes * (self.imgsz / max(d.shape[0], d.shape[1])) ** 2 for d in data])
-        mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache data into RAM
+            b += np.sum([self.calculate_cache_size(d) * (self.imgsz / max(d.shape[0], d.shape[1])) ** 2 for d in data])
+
+        valid_samples = n - skips
+        if valid_samples == 0:
+            self.cache = None
+            LOGGER.warning("All sampled data failed to load. Disabling RAM cache.")
+            return False
+
+        mem_required = b * self.length / valid_samples * (1 + safety_margin)  # GB required to cache data into RAM
         mem = psutil.virtual_memory()
+
         if mem_required > mem.available:
             self.cache = None
             LOGGER.info(
@@ -1177,20 +1197,8 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                 f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching data."
             )
             return False
+
         return True
-
-    def create_buffers(
-        self,
-        length: int,
-        labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
-    ) -> None:
-        """Build buffers for data and labels storage."""
-        super().create_buffers(length, labels)
-
-        self.hw0 = [None] * length
-        self.register_buffer("hw0", self.hw0)
-        self.hw = [None] * length
-        self.register_buffer("hw", self.hw)
 
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
@@ -1232,7 +1240,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         values = list(zip(*[list(b.values()) for b in batch]))
         for i, k in enumerate(keys):
             value = values[i]
-            if k in self.modals:
+            if k in self.modalities:
                 value = torch.stack(value, 0)
             if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
                 value = torch.cat(value, 0)

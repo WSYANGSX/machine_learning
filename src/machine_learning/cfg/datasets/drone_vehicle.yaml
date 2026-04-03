@@ -1,7 +1,7 @@
 name: drone_vehicle
 path: /home/yangxf/WorkSpace/datasets/..datasets/drone_vehicle
 dataset_type: YoloMultiModalDataset
-modals:
+modalities:
   - img
   - ir
 

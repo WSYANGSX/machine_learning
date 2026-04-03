@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MultiModalDatasetBase
-from .datasets import ClassificationDataset, YoloDataset, YoloMultiModalDataset
+from .datasets import SimpleDataset, YoloDataset, YoloMultiModalDataset
 from .parsers import (
     ParserBase,
     MinistParser,
@@ -21,7 +21,7 @@ from machine_learning.utils.logger import LOGGER
 __all__ = [
     # datasets
     "DatasetBase",
-    "ClassificationDataset",
+    "SimpleDataset",
     "YoloDataset",
     "MultiModalDatasetBase",
     "YoloMultiModalDataset",
@@ -72,18 +72,7 @@ def build_dataset(
     cache = cfg.get("cache")
     fraction = cfg.get("fraction", 1.0) if mode == "train" else 1.0
 
-    if type == "DatasetBase":
-        return DatasetBase(
-            data=parsing["data"],
-            labels=parsing["labels"],
-            batch_size=batch_size,
-            cache=cache,
-            augment=augment,
-            hyp=cfg,
-            fraction=fraction,
-            mode=mode,
-        )
-    elif type == "YoloDataset":
+    if type == "YoloDataset":
         return YoloDataset(
             imgs=parsing["imgs"],
             labels=parsing["labels"],
@@ -102,23 +91,11 @@ def build_dataset(
             fraction=fraction,
             mode=mode,
         )
-    elif type == "MultiModalDatasetBase":
-        modals = cfg.get("modals")
-        return MultiModalDatasetBase(
-            data=parsing["data"],
-            labels=parsing["labels"],
-            cache=cache,
-            augment=augment,
-            hyp=cfg,
-            fraction=fraction,
-            modals=modals,
-            mode=mode,
-        )
 
     elif type == "YoloMultiModalDataset":
-        modals = cfg.get("modals")
+        modalities = cfg.get("modalities")
         return YoloMultiModalDataset(
-            imgs=parsing["data"],
+            data=parsing["data"],
             labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),
             nc=cfg.get("nc"),
@@ -132,7 +109,7 @@ def build_dataset(
             augment=augment,
             hyp=cfg,
             batch_size=batch_size,
-            modals=modals,
+            modalities=modalities,
             fraction=fraction,
             mode=mode,
         )
