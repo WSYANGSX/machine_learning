@@ -351,6 +351,8 @@ class YoloDataset(DatasetBase):
         irect = ar.argsort()
         self.img_files = [self.img_files[i] for i in irect]
         self.labels = [self.labels[i] for i in irect]
+        self.img_npy_files = [self.img_npy_files[i] for i in irect]
+
         ar = ar[irect]
 
         # Set training image shapes
@@ -1015,6 +1017,8 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
         # Rearrange the data files
         for fs in self.data_files.values():
+            fs[:] = [fs[i] for i in irect]
+        for fs in self.data_npy_files.values():
             fs[:] = [fs[i] for i in irect]
 
         # Rearrange the labels

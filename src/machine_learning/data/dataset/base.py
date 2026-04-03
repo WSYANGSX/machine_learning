@@ -143,6 +143,10 @@ class DatasetBase(Dataset, ABC):
         """Build buffers for data and labels storage."""
         # calculate the length of the dataset after applying fraction
         self.length = round(len(labels) * self.fraction)
+        if self.length == 0:
+            raise ValueError(
+                f"Fraction {self.fraction} results in zero-length dataset, please adjust the fraction."
+            )
 
         # register buffers
         self.buffers = {}
