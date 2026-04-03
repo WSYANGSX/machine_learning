@@ -16,24 +16,21 @@ from multiprocessing.pool import ThreadPool
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
+from machine_learning.utils.augmentation import Compose
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
 from machine_learning.data.dataset.base import DatasetBase, MultiModalDatasetBase
-
-from machine_learning.utils.augmentation import Compose
 from machine_learning.utils.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
 
-from ultralytics.utils.ops import segments2boxes
-from ultralytics.utils.ops import resample_segments
+from ultralytics.utils.ops import segments2boxes, resample_segments
 
 
-class ClassificationDataset(DatasetBase):
+class SimpleDataset(DatasetBase):
     """
-    Dataset class for loading data and labels for classification. Based from DatasetBase class.
+    Simple dataset for loading data and labels for classification and generation task.
 
     Args:
         data (list[str] | np.ndarray): Path list to the data or data itself with np.ndarray format.
         labels (list[str] | np.ndarray): Path list to the labels or labels itself with np.ndarray format.
-        batch_size (int, optional): Size of batches.
         cache (bool, optional): Cache data to RAM or disk during training. Defaults to False.
         augment (bool, optional): If True, data augmentation is applied. Defaults to True.
         hyp (dict, optional): Hyperparameters to apply data augmentation. Defaults to None.
@@ -48,7 +45,6 @@ class ClassificationDataset(DatasetBase):
         self,
         data: np.ndarray | list[str],
         labels: np.ndarray | list[str],
-        batch_size: int,
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] = {},
@@ -58,7 +54,6 @@ class ClassificationDataset(DatasetBase):
         super().__init__(
             data=data,
             labels=labels,
-            batch_size=batch_size,
             cache=cache,
             augment=augment,
             hyp=hyp,
@@ -66,13 +61,39 @@ class ClassificationDataset(DatasetBase):
             mode=mode,
         )
 
-    def label_format(self, label: Any | None) -> dict[str, Any] | None:
+    def label_read(self, i: int) -> np.ndarray | None:
+        """Read label from a specific path and verify the validity of relative data."""
+        data_file, lb_file = self.data_files[i], self.label_files[i]
+
+        try:
+            # verify data
+            if not self.verify_data(data_file):
+                LOGGER.warning(f"Invalid data file: {data_file}")
+                return None
+
+            # verify label
+            label = self.file_read(lb_file)
+
+        except Exception as e:
+            LOGGER.error(f"Error reading label at index {i}: {e}")
+            return None
+
+        return label
+
+    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
         """Format the label to a dict with 'cls' item."""
         if label is not None and not isinstance(label, dict):
             label = {"cls": label}  # customize dict interface
             return label
         else:
             return label
+
+    def build_transforms(self, hyp=None):
+        """Builds and appends transforms to the list."""
+        if self.augment:
+            transforms = v8_transforms(self, self.imgsz, hyp)
+        else:
+            pass
 
 
 class YoloDataset(DatasetBase):
@@ -140,7 +161,6 @@ class YoloDataset(DatasetBase):
             data=imgs,
             labels=labels,
             cache=cache,
-            batch_size=batch_size,
             augment=augment,
             hyp=hyp,
             fraction=fraction,
@@ -198,7 +218,7 @@ class YoloDataset(DatasetBase):
         # description recall fun
         def get_stats_desc():
             return (
-                f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt"
+                f"{self.num_found} images, {self.num_missing + self.num_empty} backgrounds, {self.num_corrupt} corrupt."
             )
 
         super().cache_labels(get_stats_desc)
