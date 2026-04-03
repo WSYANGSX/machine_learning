@@ -86,7 +86,7 @@ class DatasetBase(Dataset, ABC):
         labels: np.ndarray | list[str],
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = False,
-        hyp: dict[str, Any] = {},
+        hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
         mode: Literal["train", "val", "test"] = "train",
     ):
@@ -95,7 +95,7 @@ class DatasetBase(Dataset, ABC):
 
         self._check_input_match(data, labels)
 
-        self.hyp = Dict(hyp)
+        self.hyp = Dict(hyp if hyp is not None else {})
         if not (0 < fraction <= 1.0):
             raise ValueError("Fraction must be in (0, 1].")
         self.fraction = fraction
@@ -695,7 +695,7 @@ class MultiModalDatasetBase(DatasetBase):
         labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray],
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = False,
-        hyp: dict[str, Any] = {},
+        hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
         modalities: list[str] | None = None,
         dropout: bool = False,

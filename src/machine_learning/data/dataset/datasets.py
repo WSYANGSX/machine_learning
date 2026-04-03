@@ -47,7 +47,7 @@ class SimpleDataset(DatasetBase):
         labels: np.ndarray | list[str],
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
-        hyp: dict[str, Any] = {},
+        hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
         mode: Literal["train", "val", "test"] = "train",
     ):
@@ -231,33 +231,6 @@ class YoloDataset(DatasetBase):
             assert self.batch_size is not None
             self.set_rectangle()
 
-    def update_labels(self, include_class: Optional[list]):
-        """Update labels to include only these classes (optional)."""
-        if include_class is None and not self.single_cls:
-            return
-
-        include_class_array = None
-        if include_class is not None:
-            include_class_array = np.array(include_class).reshape(1, -1)
-
-        for i in range(len(self.labels)):
-            if include_class_array is not None:
-                cls = self.labels[i]["cls"]
-                bboxes = self.labels[i]["bboxes"]
-                segments = self.labels[i]["segments"]
-                keypoints = self.labels[i]["keypoints"]
-
-                j = (cls == include_class_array).any(1)
-                self.labels[i]["cls"] = cls[j]
-                self.labels[i]["bboxes"] = bboxes[j]
-                if segments:
-                    self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
-                if keypoints is not None:
-                    self.labels[i]["keypoints"] = keypoints[j]
-
-            if self.single_cls:
-                self.labels[i]["cls"][:, 0] = 0
-
     def label_read(self, index: int) -> tuple[np.ndarray | None]:
         """Read label from a specific path and verify the validity of relative data."""
         im_file, lb_file = self.img_files[index], self.label_files[index]
@@ -341,6 +314,33 @@ class YoloDataset(DatasetBase):
         else:
             return None
 
+    def update_labels(self, include_class: Optional[list]):
+        """Update labels to include only these classes (optional)."""
+        if include_class is None and not self.single_cls:
+            return
+
+        include_class_array = None
+        if include_class is not None:
+            include_class_array = np.array(include_class).reshape(1, -1)
+
+        for i in range(len(self.labels)):
+            if include_class_array is not None:
+                cls = self.labels[i]["cls"]
+                bboxes = self.labels[i]["bboxes"]
+                segments = self.labels[i]["segments"]
+                keypoints = self.labels[i]["keypoints"]
+
+                j = (cls == include_class_array).any(1)
+                self.labels[i]["cls"] = cls[j]
+                self.labels[i]["bboxes"] = bboxes[j]
+                if segments:
+                    self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
+                if keypoints is not None:
+                    self.labels[i]["keypoints"] = keypoints[j]
+
+            if self.single_cls:
+                self.labels[i]["cls"][:, 0] = 0
+
     def set_rectangle(self):
         """Sets the shape of bounding boxes for YOLO detections as rectangles."""
         bi = np.floor(np.arange(self.length) / self.batch_size).astype(int)  # batch index
@@ -370,20 +370,23 @@ class YoloDataset(DatasetBase):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         fcn, storage = (self.load_data, "RAM") if self.cache == "ram" else (self.cache_data_to_disk, "Disk")
         LOGGER.info(f"Caching {self.mode} data to {storage}...")
+
         with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, range(len(self.data_files)))
-            pbar = tqdm(enumerate(results), total=len(self.data_files))
+            results = pool.imap(fcn, range(self.length))
+            pbar = tqdm(enumerate(results), total=self.length)
             for i, x in pbar:
                 if self.cache == "disk":
-                    try:
-                        b += self.data_files[i].stat().st_size
-                    except FileNotFoundError:
-                        b += 0.0
+                    b += x
                 else:
                     self.imgs[i], self.im_hw0[i], self.im_hw[i] = x
                     if self.imgs[i]:
-                        b += self.data[i].nbytes
-                pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+                        b += self.calculate_cache_size(self.imgs[i])
+                        b += self.calculate_cache_size(self.im_hw0[i])
+                        b += self.calculate_cache_size(self.im_hw[i])
+
+                if i % 100 == 0 or i == self.length - 1:
+                    pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+
             pbar.close()
 
     def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
@@ -473,6 +476,7 @@ class YoloDataset(DatasetBase):
         b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
         n = min(self.length, 100)  # extrapolate from 100 random data
         skips = 0
+
         for _ in range(n):
             i = random.randint(0, self.length - 1)
             img = self.file_read(self.img_files[i])
@@ -481,8 +485,16 @@ class YoloDataset(DatasetBase):
                 continue
             ratio = self.imgsz / max(img.shape[0], img.shape[1])
             b += self.calculate_cache_size(img) * ratio**2
-        mem_required = b * self.length / (n - skips) * (1 + safety_margin)  # GB required to cache data into RAM
+
+        valid_samples = n - skips
+        if valid_samples == 0:
+            self.cache = None
+            LOGGER.warning("All sampled data failed to load. Disabling RAM cache.")
+            return False
+
+        mem_required = b * self.length / valid_samples * (1 + safety_margin)  # GB required to cache data into RAM
         mem = psutil.virtual_memory()
+
         if mem_required > mem.available:
             self.cache = None
             LOGGER.info(
@@ -491,6 +503,7 @@ class YoloDataset(DatasetBase):
                 f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching data."
             )
             return False
+
         return True
 
     def create_buffers(self, labels: np.ndarray | list[str]) -> None:
@@ -1044,6 +1057,8 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                             self.hw0[i] = x[1]
                             self.hw[i] = x[2]
                             b += self.calculate_cache_size(self.data[name][i])
+                            b += self.calculate_cache_size(self.hw0[i])
+                            b += self.calculate_cache_size(self.hw[i])
 
                 if i % 100 == 0 or i == len(pbar) - 1:
                     pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
@@ -1079,7 +1094,7 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
 
                 data[self.modality_maps[name]] = dt  # may be None, dropout mode
 
-            shapes = set([dt.shape[:2] for dt in data.values()])
+            shapes = set([dt.shape[:2] for dt in data.values() if dt is not None])
             if len(shapes) != 1:
                 raise ValueError(
                     "The hight and width of the multispectral images actually loaded from the disk are inconsistent."
@@ -1097,11 +1112,11 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                 w = h = self.imgsz
                 hw = (h, w)
 
-            for modal, dt in data.items():
-                if dt is not None:
-                    data[modal] = cv2.resize(dt, hw[::-1], interpolation=cv2.INTER_LINEAR)
+            for m, d in data.items():
+                if d is not None:
+                    data[m] = cv2.resize(d, hw[::-1], interpolation=cv2.INTER_LINEAR)
                 else:
-                    data[modal] = np.zeros((w, hw[::-1]))
+                    data[m] = np.zeros((hw[0], hw[1], 3), dtype=np.uint8)
 
             if self.augment:
                 for name in self.data_names:
