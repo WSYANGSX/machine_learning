@@ -316,9 +316,9 @@ class CarParser(ParserBase):
         test_labels = [os.path.join(self.dataset_path, self.test_labels_dir) + f"/{id}.jpg" for id in self.test_ids]
 
         return {
-            "train": {"data": {"imgs": train_imgs}, "labels": train_labels},
-            "val": {"data": {"imgs": val_imgs}, "labels": val_labels},
-            "test": {"data": {"imgs": test_imgs}, "labels": test_labels},
+            "train": {"imgs": train_imgs, "labels": train_labels},
+            "val": {"imgs": val_imgs, "labels": val_labels},
+            "test": {"imgs": test_imgs, "labels": test_labels},
         }
 
 
