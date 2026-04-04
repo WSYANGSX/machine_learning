@@ -1362,7 +1362,7 @@ class RandomPerspective(TransformBase):
         **params: dict[str, Any],
     ) -> np.ndarray:
         """
-        Apply perspective/affine transform to semantic masks.
+        Apply perspective/affine transform to semantic mask.
         """
         changed = (border[0] != 0) or (border[1] != 0) or (transform_matrix != np.eye(3)).any()
         if not changed or mask.size == 0:
@@ -1900,7 +1900,7 @@ class Albumentations(TransformBase):
             compose_kwargs["bbox_params"] = A.BboxParams(coord_format="pascal_voc", label_fields=["class_labels"])
             has_segments = sample["instances"].segments is not None and len(sample["instances"].segments) > 0
             if has_segments or sample["instances"].keypoints is not None:
-                compose_kwargs["keypoint_params"] = A.KeypointParams(format="xy", remove_invisible=False)
+                compose_kwargs["keypoint_params"] = A.KeypointParams(coord_format="xy", remove_invisible=False)
 
         # create transforms
         if self.color_transforms and len(self.color_transforms) > 0:  # color transform
@@ -2285,6 +2285,42 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         [
             pre_transform,
             MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
+            CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
+            Albumentations(p=1.0),
+            RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
+            RandomFlip(direction="vertical", p=hyp.flipud),
+            RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+        ]
+    )  # transforms
+
+
+def segmentation_transforms(dataset, imgsz, hyp, stretch=False):
+    """
+    Applies a series of image transformations for training.
+
+    This function creates a composition of image augmentation techniques to prepare images for YOLO training.
+    It includes operations such as mosaic, copy-paste, random perspective, mixup, and various color adjustments.
+
+    Args:
+        dataset (Dataset): The dataset object containing image data and annotations.
+        imgsz (int): The target image size for resizing.
+        hyp (Namespace): A dictionary of hyperparameters controlling various aspects of the transformations.
+        stretch (bool): If True, applies stretching to the image. If False, uses LetterBox resizing.
+    """
+    mosaic = Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic)
+    affine = RandomPerspective(
+        degrees=hyp.degrees,
+        translate=hyp.translate,
+        scale=hyp.scale,
+        shear=hyp.shear,
+        perspective=hyp.perspective,
+        pre_transform=None if stretch else LetterBox(dsize=(imgsz, imgsz)),
+    )
+    pre_transform = Compose([mosaic, affine])
+    flip_idx = dataset.hyp.get("flip_idx", [])  # for keypoints augmentation
+    return Compose(
+        [
+            pre_transform,
             CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
             Albumentations(p=1.0),
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),

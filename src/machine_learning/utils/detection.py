@@ -740,8 +740,9 @@ def visualize_img_bboxes(
     if class_ids is None:
         color_ls.append(ImageColor.getrgb(color if color != "auto" else "red"))
     else:
+        num_colors = len(CSS_COLORS)
         for i in class_ids:
-            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i)]))
+            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i % num_colors)]))
 
     # deal with conf
     if conf is None:

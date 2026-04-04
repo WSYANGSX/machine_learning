@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MultiModalDatasetBase
-from .datasets import SimpleDataset, YoloDataset, YoloMultiModalDataset
+from .datasets import SimpleDataset, YoloDataset, MultiModalYoloDataset
 from .parsers import (
     ParserBase,
     MinistParser,
@@ -24,7 +24,7 @@ __all__ = [
     "SimpleDataset",
     "YoloDataset",
     "MultiModalDatasetBase",
-    "YoloMultiModalDataset",
+    "MultiModalYoloDataset",
     # parsers
     "ParserBase",
     "MinistParser",
@@ -92,9 +92,9 @@ def build_dataset(
             mode=mode,
         )
 
-    elif type == "YoloMultiModalDataset":
+    elif type == "MultiModalYoloDataset":
         modalities = cfg.get("modalities")
-        return YoloMultiModalDataset(
+        return MultiModalYoloDataset(
             data=parsing["data"],
             labels=parsing["labels"],
             imgsz=cfg.get("imgsz", 640),

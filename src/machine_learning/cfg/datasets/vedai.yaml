@@ -1,6 +1,6 @@
 name: vedai
 path: /home/yangxf/WorkSpace/datasets/..datasets/VEDAI
-dataset_type: YoloMultiModalDataset
+dataset_type: MultiModalYoloDataset
 modalities:
   - img
   - ir

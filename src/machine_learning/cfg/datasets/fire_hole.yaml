@@ -1,6 +1,6 @@
 name: fire_hole
 path: /home/yangxf/WorkSpace/datasets/..datasets/fire_hole
-dataset_type: YoloMultiModalDataset
+dataset_type: MultiModalYoloDataset
 modalities:
   - img
   - ir

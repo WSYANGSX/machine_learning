@@ -1,5 +1,5 @@
 name: minist
-dataset_type: DatasetBase
+dataset_type: SimpleDataset
 path: /home/yangxf/WorkSpace/datasets/..datasets/minist/
 
 train: train

@@ -7,21 +7,27 @@ import torch
 import random
 import psutil
 import numpy as np
+
 from PIL import Image
 from tqdm import tqdm
 from pathlib import Path
 from copy import deepcopy
 from itertools import chain
 from multiprocessing.pool import ThreadPool
+from ultralytics.utils.ops import segments2boxes, resample_segments
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.augmentation import Compose
 from machine_learning.utils.constants import IMG_FORMATS, NUM_THREADS
 from machine_learning.data.dataset.base import DatasetBase, MultiModalDatasetBase
-from machine_learning.utils.augmentation.img_transforms import Format, Instances, LetterBox, v8_transforms
-
-from ultralytics.utils.ops import segments2boxes, resample_segments
+from machine_learning.utils.augmentation.img_transforms import (
+    Format,
+    Instances,
+    LetterBox,
+    v8_transforms,
+    segmentation_transforms,
+)
 
 
 class SimpleDataset(DatasetBase):
@@ -88,12 +94,10 @@ class SimpleDataset(DatasetBase):
         else:
             return label
 
+    # TODO: add data augmentation for classification and generation task
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
-        if self.augment:
-            transforms = v8_transforms(self, self.imgsz, hyp)
-        else:
-            pass
+        ...
 
 
 class YoloDataset(DatasetBase):
@@ -231,7 +235,7 @@ class YoloDataset(DatasetBase):
             assert self.batch_size is not None
             self.set_rectangle()
 
-    def label_read(self, index: int) -> tuple[np.ndarray | None]:
+    def label_read(self, index: int) -> tuple[Any | None]:
         """Read label from a specific path and verify the validity of relative data."""
         im_file, lb_file = self.img_files[index], self.label_files[index]
         # Number (missing, found, empty, corrupt), message, segments, keypoints
@@ -314,7 +318,7 @@ class YoloDataset(DatasetBase):
         else:
             return None
 
-    def update_labels(self, include_class: Optional[list]):
+    def update_labels(self, include_class: Optional[list]) -> None:
         """Update labels to include only these classes (optional)."""
         if include_class is None and not self.single_cls:
             return
@@ -570,7 +574,7 @@ class YoloDataset(DatasetBase):
         return new_batch
 
 
-class YoloMultiModalDataset(MultiModalDatasetBase):
+class MultiModalYoloDataset(MultiModalDatasetBase):
     """
     Dataset class for loading multispectral images with corresponding labels for object detection and/or segmentation
     tasks in YOLO format.
@@ -791,12 +795,12 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                             f"Label class {int(max_cls)} exceeds dataset class count {self.nc}."
                             f"Possible class labels are 0-{self.nc - 1}."
                         )
-                        _, i = np.unique(lb, axis=0, return_index=True)
-                        if len(i) < nl:  # duplicate row check
-                            lb = lb[i]  # remove duplicates
+                        _, j = np.unique(lb, axis=0, return_index=True)
+                        if len(j) < nl:  # duplicate row check
+                            lb = lb[j]  # remove duplicates
                             if segments:
-                                segments = [segments[x] for x in i]
-                            LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
+                                segments = [segments[x] for x in j]
+                            LOGGER.warning(f"{lb_file}: {nl - len(j)} duplicate labels removed.")
                     else:
                         self.num_empty += 1  # label empty
                         lb = np.zeros(
@@ -863,12 +867,12 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
                                 f"{lb_file}: Label class {int(max_cls)} exceeds dataset class count {self.nc}."
                                 f"Possible class labels are 0-{self.nc - 1}."
                             )
-                            _, i = np.unique(lb, axis=0, return_index=True)
-                            if len(i) < nl:  # duplicate row check
-                                lb = lb[i]  # remove duplicates
+                            _, j = np.unique(lb, axis=0, return_index=True)
+                            if len(j) < nl:  # duplicate row check
+                                lb = lb[j]  # remove duplicates
                                 if len(segs) > 0:
-                                    segs = [segs[x] for x in i]
-                                LOGGER.warning(f"{lb_file}: {nl - len(i)} duplicate labels removed.")
+                                    segs = [segs[x] for x in j]
+                                LOGGER.warning(f"{lb_file}: {nl - len(j)} duplicate labels removed.")
                         else:
                             lb_empty.append(True)  # label empty
                             lb = np.zeros(
@@ -1268,4 +1272,570 @@ class YoloMultiModalDataset(MultiModalDatasetBase):
         for i in range(len(new_batch["batch_idx"])):
             new_batch["batch_idx"][i] += i  # add target image index for build_targets()
         new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch
+
+
+class MasksDataset(DatasetBase):
+    """
+    A multimodal Mask dataset compatible with semantic segmentation, instance segmentation, and panoptic segmentation.
+
+    Arguments:
+        - imgs: A list of file paths to img file paths or numpy arrays.
+        - masks: A list of file paths to the corresponding mask images.
+        - num_classes: The number of classes in the segmentation task (including background).
+        - imgsz: The target image size for resizing (default: 640).
+        - cache: Whether to cache data in RAM or on disk (default: False).
+        - augment: Whether to apply data augmentation (default: True).
+        - hyp: A dictionary of hyperparameters for augmentation (default: None).
+        - fraction: The fraction of the dataset to use (default: 1.0).
+        - task: The segmentation task, either "semantic" or "instance/" (default: "semantic").
+        - mode: The dataset mode, one of "train", "val", or "test" (default: "train").
+
+    Note:
+    """
+
+    def __init__(
+        self,
+        imgs: np.ndarray | list[str],
+        masks: np.ndarray | list[str],
+        imgsz: int = 640,
+        nc: int = 80,
+        batch_size: int = 16,
+        rect: bool = False,
+        stride: int = 32,
+        pad: float = 0.5,
+        single_cls: bool = False,
+        classes: list[int] = None,
+        cache: bool | Literal["ram", "disk"] | None = False,
+        augment: bool = True,
+        hyp: dict[str, Any] | None = None,
+        fraction: float = 1.0,
+        task: Literal["semantic", "instance", "panoptic"] = "semantic",
+        panoptic_divisor: Optional[int] = None,
+        mode: Literal["train", "val", "test"] = "train",
+        ignore_value: int | None = None,
+    ):
+        self.task = task
+        self.panoptic_divisor = panoptic_divisor
+        self.nc = nc
+        self.imgsz = imgsz
+        self.rect = rect
+        self.single_cls = single_cls  # Only distinguish between the foreground and the background
+        self.classes = classes  # specific class indices to include, None for all classes
+        self.batch_size = batch_size
+        self.stride = stride
+        self.pad = pad
+        self.ignore_value = ignore_value
+
+        if self.task in {"instance", "panoptic"} and self.panoptic_divisor is None:
+            raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
+
+        super().__init__(
+            data=imgs,
+            labels=masks,
+            cache=cache,
+            augment=augment,
+            hyp=hyp,
+            fraction=fraction,
+            mode=mode,
+        )
+
+    @property
+    def imgs(self) -> list[np.ndarray | str]:
+        return self.data
+
+    @property
+    def img_files(self) -> list[str]:
+        return self.data_files
+
+    @property
+    def img_npy_files(self) -> list[str]:
+        return self.data_npy_files
+
+    @property
+    def masks(self) -> list[np.ndarray | str]:
+        return self.labels
+
+    @property
+    def mask_files(self) -> list[str]:
+        return self.label_files
+
+    @imgs.setter
+    def imgs(self, value: list[np.ndarray | str]) -> None:
+        self.data = value
+
+    @img_files.setter
+    def img_files(self, value: list[str]) -> None:
+        self.data_files = value
+
+    @img_npy_files.setter
+    def img_npy_files(self, value: list[str]) -> None:
+        self.data_npy_files = value
+
+    @masks.setter
+    def masks(self, value: list[np.ndarray | str]) -> None:
+        self.labels = value
+
+    @mask_files.setter
+    def mask_files(self, value: list[str]) -> None:
+        self.label_files = value
+
+    def setup_data_labels(self, data, labels):
+        """Setup labels and data storage. Labels are always cached, data is cached conditionally."""
+        # add mosaic_buffer used for images fusion
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+
+        super().setup_data_labels(data, labels)
+
+    def cache_labels(self):
+        """Get labels from path list to buffers."""
+        # statistical indicators
+        self.num_missing = 0  # all 0 for that mask
+        self.num_found = 0
+        self.num_corrupt = 0
+
+        # description recall fun
+        def get_stats_desc():
+            return f"{self.num_found} images, {self.num_missing} backgrounds, {self.num_corrupt} corrupt."
+
+        super().cache_labels(get_stats_desc)
+
+        # update labels
+        self.update_labels(include_class=self.classes)
+
+        # set rect
+        if self.rect:
+            assert self.batch_size is not None
+            self.set_rectangle()
+
+    def label_read(self, i: int) -> tuple[Any | None]:
+        """Read mask from a specific path and verify the validity of relative data."""
+        im_file, lb_file = self.img_files[i], self.label_files[i]
+
+        try:
+            im = Image.open(im_file)
+            im.verify()  # PIL verify
+            shape = (im.size[1], im.size[0])  # hw
+            assert "." + im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}."
+
+            if os.path.isfile(lb_file):
+                self.num_found += 1  # label found
+
+                if self.task == "semantic":
+                    # Semantic segmentation masks are usually stored as single-channel grayscale images
+                    # the pixel values are the category ids (0, 1, 2...).
+                    mask = cv2.imread(lb_file, cv2.IMREAD_GRAYSCALE)
+
+                    if self.ignore_value is not None:
+                        vaild_mask = (mask != self.ignore_value) & (mask > 0)
+                    else:
+                        vaild_mask = mask > 0
+                    nc = len(np.unique(mask[vaild_mask]))
+                    if nc > self.nc:
+                        LOGGER.warning(f"Mask {lb_file} contains class ID {nc} > num_classes {self.nc}")
+                        mask = None
+
+                elif self.task in {"instance", "panoptic"}:
+                    # Instance and panoptic segmentation masks may be stored as 16-bit images to encode more unique IDs.
+                    # Use IMREAD_UNCHANGED to ensure that 16-bit images
+                    mask = cv2.imread(lb_file, cv2.IMREAD_UNCHANGED)
+
+                if mask is None:
+                    self.num_corrupt += 1
+                    LOGGER.warning(f"Failed to read mask image: {lb_file}")
+                    return None, None, None
+
+            else:
+                self.num_missing += 1  # label missing
+                mask = np.zeros(shape, dtype=np.uint8)  # treat missing mask as all background
+
+            return im_file, mask, shape
+
+        except Exception as e:
+            self.num_corrupt += 1
+            LOGGER.info(f"{im_file}: ignoring corrupt: {e}")
+            return None, None, None
+
+    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
+        """Package the Mask as a dictionary for subsequent pipeline use."""
+        im_file, mask, shape = label
+        if im_file:
+            return {"img_file": im_file, "mask": mask, "shape": shape}
+        else:
+            return None
+
+    def update_labels(self, include_class: Optional[list]) -> None:
+        """Update labels to include only these classes (optional)."""
+        if include_class is None and not self.single_cls:
+            return
+
+        include_class_array = None
+        if include_class is not None:
+            include_class_array = np.array(include_class).reshape(1, -1)
+
+        for i in range(len(self.labels)):
+            if include_class_array is not None:
+                mask = self.labels[i]["mask"]
+                if self.task in ("instance", "panoptic"):
+                    class_ids = mask // self.panoptic_divisor
+                    mask = np.where(np.isin(class_ids, include_class_array), mask, 0)  # set excluded classes to 0
+                    self.labels[i]["mask"] = mask
+                else:
+                    mask = np.where(np.isin(mask, include_class_array), mask, 0)  # set excluded classes to 0
+                    self.labels[i]["mask"] = mask
+
+            if self.single_cls:
+                mask = self.labels[i]["mask"]
+                mask = np.where(mask > 0, 1, 0)  # set all foreground classes to 1
+                self.labels[i]["mask"] = mask
+
+    def set_rectangle(self):
+        """Sets the shape of bounding boxes for YOLO detections as rectangles."""
+        bi = np.floor(np.arange(self.length) / self.batch_size).astype(int)  # batch index
+        nb = bi[-1] + 1  # number of batches
+
+        s = np.array([x.pop("shape") for x in self.labels])  # hw
+        ar = s[:, 0] / s[:, 1]  # aspect ratio
+        irect = ar.argsort()
+        self.img_files = [self.img_files[i] for i in irect]
+        self.labels = [self.labels[i] for i in irect]
+        self.img_npy_files = [self.img_npy_files[i] for i in irect]
+
+        ar = ar[irect]
+
+        # Set training image shapes
+        shapes = [[1, 1]] * nb
+        for i in range(nb):
+            ari = ar[bi == i]
+            mini, maxi = ari.min(), ari.max()
+            if maxi < 1:
+                shapes[i] = [maxi, 1]
+            elif mini > 1:
+                shapes[i] = [1, 1 / mini]
+
+        self.batch_shapes = np.ceil(np.array(shapes) * self.imgsz / self.stride + self.pad).astype(int) * self.stride
+        self.batch = bi  # batch index of image
+
+    def cache_data(self):
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn, storage = (self.load_data, "RAM") if self.cache == "ram" else (self.cache_data_to_disk, "Disk")
+        LOGGER.info(f"Caching {self.mode} data to {storage}...")
+
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(self.length))
+            pbar = tqdm(enumerate(results), total=self.length)
+            for i, x in pbar:
+                if self.cache == "disk":
+                    b += x
+                else:
+                    self.imgs[i], self.im_hw0[i], self.im_hw[i] = x
+                    if self.imgs[i]:
+                        b += self.calculate_cache_size(self.imgs[i])
+                        b += self.calculate_cache_size(self.im_hw0[i])
+                        b += self.calculate_cache_size(self.im_hw[i])
+
+                if i % 100 == 0 or i == self.length - 1:
+                    pbar.desc = f"Caching {self.mode} data ({b / gb:.5f}GB {storage})"
+
+            pbar.close()
+
+    def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
+        """Loads 1 img and label from dataset index 'i', returns (img, label)."""
+        im, imf, imfn = self.imgs[i], self.img_files[i], self.img_npy_files[i]
+
+        # load data
+        if im is None:  # cached in RAM
+            if imfn.exists():  # cached in Disk
+                try:
+                    im = np.load(imfn)
+                except Exception as e:
+                    LOGGER.warning(f"Removing corrupt *.npy image file {imfn} due to: {e}")
+                    Path(imfn).unlink(missing_ok=True)
+                    im = self.file_read(imf)
+            else:
+                im = self.file_read(imf)
+
+            h0, w0 = im.shape[:2]  # orig hw
+            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+
+            # Add to buffer if training with augmentations
+            if self.augment:
+                self.imgs[i], self.im_hw0[i], self.im_hw[i] = (
+                    im,
+                    (h0, w0),
+                    im.shape[:2],
+                )  # im, hw_original, hw_resized
+                self.mosaic_buffer.append(i)
+                if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:  # prevent empty buffer
+                    j = self.mosaic_buffer.pop(0)
+                    if self.cache != "ram":
+                        self.imgs[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+
+            return im, (h0, w0), im.shape[:2]
+
+        return im, self.im_hw0[i], self.im_hw[i]
+
+    def get_sample(self, index: int) -> dict[str, Any]:
+        """Get data and label information from the dataset."""
+        sample = deepcopy(self.labels[index])
+        sample.pop("shape", None)
+        sample["img"], sample["ori_shape"], sample["resized_shape"] = self.load_data(index)
+        sample["ratio_pad"] = (
+            sample["resized_shape"][0] / sample["ori_shape"][0],
+            sample["resized_shape"][1] / sample["ori_shape"][1],
+        )  # for evaluation
+        if self.rect:
+            sample["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_annotations(sample)
+
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """Structure the mask and class labels according to the task type."""
+        hw = sample["resized_shape"]
+        raw_mask = sample.pop("mask")
+        raw_mask = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
+
+        if self.task == "semantic":
+            # Semantic Segmentation: Keep a single channel (H, W) and only retain the category ID
+            sample["mask"] = raw_mask.astype(np.uint8)
+            sample["cls"] = np.unique(sample["mask"])
+
+        elif self.task in ["instance", "panoptic"]:
+            # Instance/Panoptic Segmentation: Split into (N, H, W)
+            unique_ids = np.unique(raw_mask)
+            unique_ids = unique_ids[unique_ids != 0]  # Filter out background 0
+
+            N = len(unique_ids)
+            if N > 0:
+                masks = np.zeros((N, hw[0], hw[1]), dtype=np.uint8)
+                classes = np.zeros(N, dtype=np.int64)
+
+                for idx, uid in enumerate(unique_ids):
+                    masks[idx] = (raw_mask == uid).astype(np.uint8)
+                    classes[idx] = uid // self.panoptic_divisor
+
+                sample["masks"] = masks  # Shape (N, H, W)
+                sample["cls"] = classes  # Shape (N,)
+
+            else:
+                sample["masks"] = np.zeros((0, hw[0], hw[1]), dtype=np.uint8)
+                sample["cls"] = np.zeros((0,), dtype=np.int64)
+
+        return sample
+
+    def check_cache_ram(self, safety_margin=0.5):
+        """Check data caching requirements vs available memory."""
+        b, gb = 0, 1 << 30  # bytes of cached data, bytes per gigabytes
+        n = min(self.length, 100)  # extrapolate from 100 random data
+        skips = 0
+
+        for _ in range(n):
+            i = random.randint(0, self.length - 1)
+            img = self.file_read(self.img_files[i])
+            if img is None:
+                skips += 1
+                continue
+            ratio = self.imgsz / max(img.shape[0], img.shape[1])
+            b += self.calculate_cache_size(img) * ratio**2
+
+        valid_samples = n - skips
+        if valid_samples == 0:
+            self.cache = None
+            LOGGER.warning("All sampled data failed to load. Disabling RAM cache.")
+            return False
+
+        mem_required = b * self.length / valid_samples * (1 + safety_margin)  # GB required to cache data into RAM
+        mem = psutil.virtual_memory()
+
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.info(
+                f"{mem_required / gb:.1f}GB RAM required to cache data "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching data."
+            )
+            return False
+
+        return True
+
+    def create_buffers(self, labels: np.ndarray | list[str]) -> None:
+        """Build buffers for data and labels storage."""
+        super().create_buffers(labels)
+
+        # buffers for image shapes, used for caching data and adjusting mosaic augmentation
+        self.im_hw0 = [None] * self.length
+        self.register_buffer("im_hw0", self.im_hw0)
+        self.im_hw = [None] * self.length
+        self.register_buffer("im_hw", self.im_hw)
+
+    def build_transforms(self, hyp: dict[str, Any] | None = None):
+        """Builds and appends transforms to the list."""
+        if self.augment:
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            transforms = segmentation_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LetterBox((self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=True,
+                return_keypoint=False,
+                return_obb=False,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.mask_overlap,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+            )
+        )
+        return transforms
+
+    @staticmethod
+    def collate_fn(batch):
+        new_batch = {}
+        keys = batch[0].keys()
+
+        for k in keys:
+            values = [b[k] for b in batch]
+
+            if k == "mask":
+                tensors = [torch.from_numpy(v).long() if isinstance(v, np.ndarray) else v.long() for v in values]
+                new_batch[k] = torch.stack(tensors, dim=0)
+
+            elif k in ["masks", "cls"]:
+                new_batch[k] = [torch.from_numpy(v) if isinstance(v, np.ndarray) else v for v in values]
+
+            elif isinstance(values[0], np.ndarray):
+                tensors = [torch.from_numpy(v) for v in values]
+                new_batch[k] = torch.stack(tensors, 0)
+
+            elif isinstance(values[0], torch.Tensor):
+                new_batch[k] = torch.stack(values, 0)
+
+            else:
+                new_batch[k] = values
+
+        return new_batch
+
+
+class MultiModalMasksDataset(MultiModalDatasetBase):
+    """
+    A Dense Mask dataset specifically designed for multimodal semantic/instance segmentation.
+
+    Arguments:
+        - data: A dictionary mapping modality names to lists of file paths or numpy arrays.
+        - masks: A list of file paths to the corresponding mask images (one per sample).
+        - num_classes: The number of classes in the segmentation task (including background).
+        - imgsz: The target image size for resizing (default: 640).
+        - cache: Whether to cache data in RAM or on disk (default: False).
+        - augment: Whether to apply data augmentation (default: True).
+        - hyp: A dictionary of hyperparameters for augmentation (default: None).
+        - fraction: The fraction of the dataset to use (default: 1.0).
+        - modalities: A list of modality names to include (default: None, meaning all).
+        - dropout: Whether to use dropout mode for handling missing/corrupt data (default: False).
+        - mode: The dataset mode, one of "train", "val", or "test" (default: "train").
+    """
+
+    def __init__(
+        self,
+        data: dict[str, np.ndarray | list[str]],
+        masks: np.ndarray | list[str],
+        num_classes: int,
+        imgsz: int = 640,
+        cache: bool | Literal["ram", "disk"] | None = False,
+        augment: bool = True,
+        hyp: dict[str, Any] | None = None,
+        fraction: float = 1.0,
+        modalities: list[str] | None = None,
+        dropout: bool = False,
+        mode: Literal["train", "val", "test"] = "train",
+    ):
+        self.num_classes = num_classes
+        self.imgsz = imgsz
+
+        super().__init__(
+            data=data,
+            labels=masks,
+            cache=cache,
+            augment=augment,
+            hyp=hyp,
+            fraction=fraction,
+            modalities=modalities,
+            dropout=dropout,
+            mode=mode,
+        )
+
+    def label_read(self, i: int) -> np.ndarray | None:
+        "Read single-channel Mask label images."
+        lb_file = self.label_files[i]
+        try:
+            # Segmentation masks are usually stored as single-channel grayscale images
+            # the pixel values are the category ids (0, 1, 2...).
+            mask = cv2.imread(lb_file, cv2.IMREAD_GRAYSCALE)
+            if mask is None:
+                LOGGER.warning(f"Failed to read mask image: {lb_file}")
+                return None
+
+            # Basic verification: Ensure that the pixel values do not exceed the range of the number of categories
+            if mask.max() >= self.num_classes:
+                LOGGER.warning(f"Mask {lb_file} contains class ID {mask.max()} >= num_classes {self.num_classes}")
+
+            return mask
+
+        except Exception as e:
+            LOGGER.error(f"Error reading mask at {lb_file}: {e}")
+            return None
+
+    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
+        """Package the Mask as a dictionary for subsequent pipeline use."""
+        if label is None:
+            return None
+        return {"mask": label}
+
+    def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """
+        Adjust the returned sample.
+        """
+        return sample
+
+    # TODO
+    def build_transforms(self, hyp: dict[str, Any] | None = None):
+        """Builds and appends transforms to the list."""
+        transforms = []
+        if self.augment:
+            # 在这里添加支持 Mask 同步变换的 Albumentations 或自定义 Augmentation
+            pass
+
+        # 最后必须将 numpy HWC 转为 torch CHW
+        # transforms.append(Format(normalize=True))
+        return Compose(transforms) if transforms else None
+
+    @staticmethod
+    def collate_fn(batch):
+        new_batch = {}
+        keys = batch[0].keys()
+
+        for k in keys:
+            values = [b[k] for b in batch]
+
+            if k == "mask":
+                tensors = [torch.from_numpy(v).long() if isinstance(v, np.ndarray) else v for v in values]
+                new_batch[k] = torch.stack(tensors, 0)
+
+            elif isinstance(values[0], np.ndarray):
+                tensors = [torch.from_numpy(v) for v in values]
+                new_batch[k] = torch.stack(tensors, 0)
+
+            elif isinstance(values[0], torch.Tensor):
+                new_batch[k] = torch.stack(values, 0)
+
+            else:
+                new_batch[k] = values
+
         return new_batch
