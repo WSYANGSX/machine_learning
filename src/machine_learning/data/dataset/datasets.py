@@ -1292,6 +1292,7 @@ class MasksDataset(DatasetBase):
         - mode: The dataset mode, one of "train", "val", or "test" (default: "train").
 
     Note:
+        In maskdataset, masks with list[str] format are loaded lazily to avoid memory explosion.
     """
 
     def __init__(
@@ -1313,7 +1314,6 @@ class MasksDataset(DatasetBase):
         task: Literal["semantic", "instance", "panoptic"] = "semantic",
         panoptic_divisor: Optional[int] = None,
         mode: Literal["train", "val", "test"] = "train",
-        ignore_value: int | None = None,
     ):
         self.task = task
         self.panoptic_divisor = panoptic_divisor
@@ -1325,7 +1325,6 @@ class MasksDataset(DatasetBase):
         self.batch_size = batch_size
         self.stride = stride
         self.pad = pad
-        self.ignore_value = ignore_value
 
         if self.task in {"instance", "panoptic"} and self.panoptic_divisor is None:
             raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
@@ -1401,94 +1400,10 @@ class MasksDataset(DatasetBase):
 
         super().cache_labels(get_stats_desc)
 
-        # update labels
-        self.update_labels(include_class=self.classes)
-
         # set rect
         if self.rect:
             assert self.batch_size is not None
             self.set_rectangle()
-
-    def label_read(self, i: int) -> tuple[Any | None]:
-        """Read mask from a specific path and verify the validity of relative data."""
-        im_file, lb_file = self.img_files[i], self.label_files[i]
-
-        try:
-            im = Image.open(im_file)
-            im.verify()  # PIL verify
-            shape = (im.size[1], im.size[0])  # hw
-            assert "." + im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}."
-
-            if os.path.isfile(lb_file):
-                self.num_found += 1  # label found
-
-                if self.task == "semantic":
-                    # Semantic segmentation masks are usually stored as single-channel grayscale images
-                    # the pixel values are the category ids (0, 1, 2...).
-                    mask = cv2.imread(lb_file, cv2.IMREAD_GRAYSCALE)
-
-                    if self.ignore_value is not None:
-                        vaild_mask = (mask != self.ignore_value) & (mask > 0)
-                    else:
-                        vaild_mask = mask > 0
-                    nc = len(np.unique(mask[vaild_mask]))
-                    if nc > self.nc:
-                        LOGGER.warning(f"Mask {lb_file} contains class ID {nc} > num_classes {self.nc}")
-                        mask = None
-
-                elif self.task in {"instance", "panoptic"}:
-                    # Instance and panoptic segmentation masks may be stored as 16-bit images to encode more unique IDs.
-                    # Use IMREAD_UNCHANGED to ensure that 16-bit images
-                    mask = cv2.imread(lb_file, cv2.IMREAD_UNCHANGED)
-
-                if mask is None:
-                    self.num_corrupt += 1
-                    LOGGER.warning(f"Failed to read mask image: {lb_file}")
-                    return None, None, None
-
-            else:
-                self.num_missing += 1  # label missing
-                mask = np.zeros(shape, dtype=np.uint8)  # treat missing mask as all background
-
-            return im_file, mask, shape
-
-        except Exception as e:
-            self.num_corrupt += 1
-            LOGGER.info(f"{im_file}: ignoring corrupt: {e}")
-            return None, None, None
-
-    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
-        """Package the Mask as a dictionary for subsequent pipeline use."""
-        im_file, mask, shape = label
-        if im_file:
-            return {"img_file": im_file, "mask": mask, "shape": shape}
-        else:
-            return None
-
-    def update_labels(self, include_class: Optional[list]) -> None:
-        """Update labels to include only these classes (optional)."""
-        if include_class is None and not self.single_cls:
-            return
-
-        include_class_array = None
-        if include_class is not None:
-            include_class_array = np.array(include_class).reshape(1, -1)
-
-        for i in range(len(self.labels)):
-            if include_class_array is not None:
-                mask = self.labels[i]["mask"]
-                if self.task in ("instance", "panoptic"):
-                    class_ids = mask // self.panoptic_divisor
-                    mask = np.where(np.isin(class_ids, include_class_array), mask, 0)  # set excluded classes to 0
-                    self.labels[i]["mask"] = mask
-                else:
-                    mask = np.where(np.isin(mask, include_class_array), mask, 0)  # set excluded classes to 0
-                    self.labels[i]["mask"] = mask
-
-            if self.single_cls:
-                mask = self.labels[i]["mask"]
-                mask = np.where(mask > 0, 1, 0)  # set all foreground classes to 1
-                self.labels[i]["mask"] = mask
 
     def set_rectangle(self):
         """Sets the shape of bounding boxes for YOLO detections as rectangles."""
@@ -1516,6 +1431,41 @@ class MasksDataset(DatasetBase):
 
         self.batch_shapes = np.ceil(np.array(shapes) * self.imgsz / self.stride + self.pad).astype(int) * self.stride
         self.batch = bi  # batch index of image
+
+    def label_read(self, i: int) -> tuple[Any | None]:
+        """Verify the validity of mask and relative data without loading."""
+        im_file, lb_file = self.img_files[i], self.label_files[i]
+
+        try:
+            # Verify Image
+            im = Image.open(im_file)
+            im.verify()
+            shape = (im.size[1], im.size[0])  # hw
+
+            # Verify Mask
+            if os.path.isfile(lb_file):
+                self.num_found += 1
+                mask_im = Image.open(lb_file)
+                mask_im.verify()
+                mask_file = lb_file
+            else:
+                self.num_missing += 1
+                mask_file = None
+
+            return im_file, mask_file, shape
+
+        except Exception as e:
+            self.num_corrupt += 1
+            LOGGER.info(f"{im_file}: ignoring corrupt: {e}")
+            return None, None, None
+
+    def label_format(self, label: tuple | None) -> dict[str, Any] | None:
+        """Package the Mask as a dictionary for subsequent pipeline use."""
+        im_file, mask_file, shape = label
+        if im_file:
+            return {"img_file": im_file, "mask_file": mask_file, "shape": shape}
+        else:
+            return None
 
     def cache_data(self):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
@@ -1586,29 +1536,56 @@ class MasksDataset(DatasetBase):
         """Get data and label information from the dataset."""
         sample = deepcopy(self.labels[index])
         sample.pop("shape", None)
+
+        # load img
         sample["img"], sample["ori_shape"], sample["resized_shape"] = self.load_data(index)
+
+        # lazy load mask
+        mask_file = sample.pop("mask_file")
+        if mask_file is not None:
+            if self.task == "semantic":
+                mask_raw = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
+            else:
+                mask_raw = cv2.imread(mask_file, cv2.IMREAD_UNCHANGED)
+        else:
+            mask_raw = np.zeros(sample["ori_shape"], dtype=np.uint8)
+
+        sample["mask"] = mask_raw
+
+        # ratio and rectangle
         sample["ratio_pad"] = (
             sample["resized_shape"][0] / sample["ori_shape"][0],
             sample["resized_shape"][1] / sample["ori_shape"][1],
-        )  # for evaluation
+        )
         if self.rect:
             sample["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_annotations(sample)
 
     def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Structure the mask and class labels according to the task type."""
-        hw = sample["resized_shape"]
         raw_mask = sample.pop("mask")
-        raw_mask = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
+        hw = sample["resized_shape"]
+
+        mask_resized = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
+
+        if self.classes is not None:
+            if self.task in ("instance", "panoptic"):
+                class_ids = mask_resized // self.panoptic_divisor
+                mask_resized = np.where(np.isin(class_ids, self.classes), mask_resized, 0)
+            else:
+                mask_resized = np.where(np.isin(mask_resized, self.classes), mask_resized, 0)
+
+        if self.single_cls:
+            mask_resized = np.where(mask_resized > 0, 1, 0)
 
         if self.task == "semantic":
             # Semantic Segmentation: Keep a single channel (H, W) and only retain the category ID
-            sample["mask"] = raw_mask.astype(np.uint8)
+            sample["mask"] = mask_resized.astype(np.uint8)
             sample["cls"] = np.unique(sample["mask"])
 
         elif self.task in ["instance", "panoptic"]:
             # Instance/Panoptic Segmentation: Split into (N, H, W)
-            unique_ids = np.unique(raw_mask)
+            unique_ids = np.unique(mask_resized)
             unique_ids = unique_ids[unique_ids != 0]  # Filter out background 0
 
             N = len(unique_ids)
@@ -1617,7 +1594,7 @@ class MasksDataset(DatasetBase):
                 classes = np.zeros(N, dtype=np.int64)
 
                 for idx, uid in enumerate(unique_ids):
-                    masks[idx] = (raw_mask == uid).astype(np.uint8)
+                    masks[idx] = (mask_resized == uid).astype(np.uint8)
                     classes[idx] = uid // self.panoptic_divisor
 
                 sample["masks"] = masks  # Shape (N, H, W)
@@ -1726,13 +1703,15 @@ class MasksDataset(DatasetBase):
 
 class MultiModalMasksDataset(MultiModalDatasetBase):
     """
-    A Dense Mask dataset specifically designed for multimodal semantic/instance segmentation.
+    A Dense Mask dataset specifically designed for multimodal semantic/instance/panoptic segmentation.
 
     Arguments:
         - data: A dictionary mapping modality names to lists of file paths or numpy arrays.
         - masks: A list of file paths to the corresponding mask images (one per sample).
         - num_classes: The number of classes in the segmentation task (including background).
         - imgsz: The target image size for resizing (default: 640).
+        - task: The segmentation task, either "semantic", "instance", or "panoptic" (default: "semantic").
+        - panoptic_divisor: The divisor used to separate class_id and instance_id in panoptic mode.
         - cache: Whether to cache data in RAM or on disk (default: False).
         - augment: Whether to apply data augmentation (default: True).
         - hyp: A dictionary of hyperparameters for augmentation (default: None).
@@ -1746,18 +1725,37 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
         self,
         data: dict[str, np.ndarray | list[str]],
         masks: np.ndarray | list[str],
-        num_classes: int,
+        nc: int,
         imgsz: int = 640,
+        batch_size: int = 16,
+        rect: bool = False,
+        stride: int = 32,
+        pad: float = 0.5,
+        single_cls: bool = False,
+        classes: list[int] = None,
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
+        task: Literal["semantic", "instance", "panoptic"] = "semantic",
+        panoptic_divisor: Optional[int] = None,
         modalities: list[str] | None = None,
         dropout: bool = False,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        self.num_classes = num_classes
+        self.task = task
+        self.panoptic_divisor = panoptic_divisor
+        self.nc = nc
         self.imgsz = imgsz
+        self.rect = rect
+        self.single_cls = single_cls
+        self.classes = classes
+        self.batch_size = batch_size
+        self.stride = stride
+        self.pad = pad
+
+        if self.task in {"instance", "panoptic"} and self.panoptic_divisor is None:
+            raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
 
         super().__init__(
             data=data,
@@ -1771,50 +1769,350 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
             mode=mode,
         )
 
-    def label_read(self, i: int) -> np.ndarray | None:
-        "Read single-channel Mask label images."
+    @property
+    def masks(self) -> list[np.ndarray | str]:
+        return self.labels
+
+    @property
+    def mask_files(self) -> list[str]:
+        return self.label_files
+
+    @masks.setter
+    def masks(self, value: list[np.ndarray | str]) -> None:
+        self.labels = value
+
+    @mask_files.setter
+    def mask_files(self, value: list[str]) -> None:
+        self.label_files = value
+
+    def setup_data_labels(self, data, labels):
+        self.mosaic_buffer = []
+        self.max_mosaic_buffer_length = min((self.length, self.batch_size * 8, 1000)) if self.augment else 0
+        super().setup_data_labels(data, labels)
+
+    def cache_labels(self):
+        self.num_missing = 0
+        self.num_found = 0
+        self.num_corrupt = 0
+        self.num_skip = 0
+
+        def get_stats_desc():
+            return (
+                f"{self.num_found} valid samples, {self.num_missing} backgrounds, "
+                f"{self.num_skip} skipped, {self.num_corrupt} corrupt."
+            )
+
+        super().cache_labels(get_stats_desc)
+
+        if self.rect:
+            assert self.batch_size is not None
+            self.set_rectangle()
+
+    def set_rectangle(self):
+        """Sets the shape of images for evaluations as rectangles."""
+        bi = np.floor(np.arange(self.length) / self.batch_size).astype(int)
+        nb = bi[-1] + 1
+
+        s = np.array([x["shape"] for x in self.labels])  # hw
+        ar = s[:, 0] / s[:, 1]
+        irect = ar.argsort()
+
+        # Rearrange multi-modal data files
+        for fs in self.data_files.values():
+            fs[:] = [fs[i] for i in irect]
+        for fs in self.data_npy_files.values():
+            fs[:] = [fs[i] for i in irect]
+
+        # Rearrange mask labels
+        self.label_files = [self.label_files[i] for i in irect]
+        self.labels = [self.labels[i] for i in irect]
+
+        ar = ar[irect]
+
+        shapes = [[1, 1]] * nb
+        for i in range(nb):
+            ari = ar[bi == i]
+            mini, maxi = ari.min(), ari.max()
+            if maxi < 1:
+                shapes[i] = [maxi, 1]
+            elif mini > 1:
+                shapes[i] = [1, 1 / mini]
+
+        self.batch_shapes = np.ceil(np.array(shapes) * self.imgsz / self.stride + self.pad).astype(int) * self.stride
+        self.batch = bi
+
+    def label_read(self, i: int) -> tuple | None:
+        """Verify the validity of multi-modal data and mask without loading them into RAM."""
+        # 1. Verify Multi-modal data
+        data_accesses, shapes, files_dict = [], [], {}
+        for name in self.data_names:
+            file = self.data_files[name][i]
+            files_dict[f"{self.modality_maps[name]}_file"] = file
+            try:
+                img = Image.open(file)
+                img.verify()
+                if "." + img.format.lower() not in IMG_FORMATS:
+                    raise TypeError(f"Invalid image format {img.format}.")
+                data_accesses.append(True)
+                shapes.append((img.size[1], img.size[0]))
+            except Exception:
+                data_accesses.append(False)
+
+        # Dropout logic
+        corrupt = all(not acc for acc in data_accesses) if self.dropout else any(not acc for acc in data_accesses)
+        if corrupt:
+            self.num_corrupt += 1
+            LOGGER.info(f"Ignoring corrupt data index {i}.")
+            return None
+
+        if len(set(shapes)) != 1 or len(shapes) == 0:
+            self.num_skip += 1
+            LOGGER.info(f"Multispectral images mismatch in size, skip index {i}.")
+            return None
+
+        shape = shapes[0]
+
+        # 2. Verify Mask
         lb_file = self.label_files[i]
+        mask_file = None
         try:
-            # Segmentation masks are usually stored as single-channel grayscale images
-            # the pixel values are the category ids (0, 1, 2...).
-            mask = cv2.imread(lb_file, cv2.IMREAD_GRAYSCALE)
-            if mask is None:
-                LOGGER.warning(f"Failed to read mask image: {lb_file}")
-                return None
+            if os.path.isfile(lb_file):
+                self.num_found += 1
+                mask_im = Image.open(lb_file)
+                mask_im.verify()
+                mask_file = lb_file
+            else:
+                self.num_missing += 1
 
-            # Basic verification: Ensure that the pixel values do not exceed the range of the number of categories
-            if mask.max() >= self.num_classes:
-                LOGGER.warning(f"Mask {lb_file} contains class ID {mask.max()} >= num_classes {self.num_classes}")
-
-            return mask
+            return files_dict, mask_file, shape
 
         except Exception as e:
-            LOGGER.error(f"Error reading mask at {lb_file}: {e}")
+            self.num_corrupt += 1
+            LOGGER.info(f"Mask file corrupt at {lb_file}: {e}")
             return None
 
-    def label_format(self, label: np.ndarray | None) -> dict[str, Any] | None:
-        """Package the Mask as a dictionary for subsequent pipeline use."""
+    def label_format(self, label: tuple | None) -> dict[str, Any] | None:
         if label is None:
             return None
-        return {"mask": label}
+        files_dict, mask_file, shape = label
+        res = deepcopy(files_dict)
+        res.update({"mask_file": mask_file, "shape": shape})
+        return res
+
+    def load_data(self, i: int, rect_mode: bool = True) -> tuple[dict, tuple, tuple]:
+        """Loads multimodal data and returns a data dict along with shapes."""
+        data, hw0, hw = {}, None, None
+        cached_ram = next(iter(self.data.values()))[i] is not None
+
+        if cached_ram:
+            for name in self.data_names:
+                data[self.modality_maps[name]] = self.data[name][i]
+            hw = self.hw[i]
+            hw0 = self.hw0[i]
+        else:
+            for name in self.data_names:
+                dtf, dtfn = self.data_files[name][i], self.data_npy_files[name][i]
+                if dtfn.exists():
+                    try:
+                        dt = np.load(dtfn)
+                    except Exception as e:
+                        LOGGER.warning(f"Removing corrupt *.npy image file {dtfn} due to: {e}")
+                        Path(dtfn).unlink(missing_ok=True)
+                        dt = self.file_read(dtf)
+                else:
+                    dt = self.file_read(dtf)
+                data[self.modality_maps[name]] = dt
+
+            valid_dts = [dt for dt in data.values() if dt is not None]
+            shapes = set([dt.shape[:2] for dt in valid_dts])
+
+            if len(shapes) > 1:
+                raise ValueError("The height and width of the multispectral images are inconsistent.")
+            elif len(shapes) == 0:
+                hw = hw0 = (self.imgsz, self.imgsz)
+                channels = 3
+            else:
+                h0, w0 = next(iter(shapes))
+                hw = hw0 = (h0, w0)
+                channels = next((dt.shape[2] for dt in valid_dts if len(dt.shape) == 3), 3)
+
+            if rect_mode:
+                r = self.imgsz / max(h0, w0)
+                if r != 1:
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    hw = (h, w)
+            elif not (h0 == w0 == self.imgsz):
+                w = h = self.imgsz
+                hw = (h, w)
+
+            for m, dt in data.items():
+                if dt is not None:
+                    data[m] = cv2.resize(dt, hw[::-1], interpolation=cv2.INTER_LINEAR)
+                    if len(data[m].shape) == 2:
+                        data[m] = data[m][..., None]
+                else:
+                    data[m] = np.zeros((hw[0], hw[1], channels), dtype=np.uint8)
+
+            if self.augment:
+                for name in self.data_names:
+                    self.data[name][i] = data[self.modality_maps[name]]
+                self.hw0[i] = hw0
+                self.hw[i] = hw
+                self.mosaic_buffer.append(i)
+                if 1 < len(self.mosaic_buffer) >= self.max_mosaic_buffer_length:
+                    j = self.mosaic_buffer.pop(0)
+                    if self.cache != "ram":
+                        for name in self.data_names:
+                            self.data[name][j] = None
+                        self.hw0[j], self.hw[j] = None, None
+
+        return data, hw0, hw
+
+    def get_sample(self, index: int) -> dict[str, Any]:
+        """Get multimodal data and lazy-load mask information."""
+        sample = deepcopy(self.labels[index])
+        sample.pop("shape", None)
+
+        # Load multi-modal images
+        data_dict, sample["ori_shape"], sample["resized_shape"] = self.load_data(index)
+        sample.update(data_dict)
+
+        # Lazy load mask
+        mask_file = sample.pop("mask_file")
+        if mask_file is not None:
+            if self.task == "semantic":
+                mask_raw = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
+            else:
+                mask_raw = cv2.imread(mask_file, cv2.IMREAD_UNCHANGED)
+        else:
+            mask_raw = np.zeros(sample["ori_shape"], dtype=np.uint8)
+
+        sample["mask"] = mask_raw
+        sample["ratio_pad"] = (
+            sample["resized_shape"][0] / sample["ori_shape"][0],
+            sample["resized_shape"][1] / sample["ori_shape"][1],
+        )
+
+        if self.rect:
+            sample["rect_shape"] = self.batch_shapes[self.batch[index]]
+
+        return self.update_annotations(sample)
 
     def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
-        """
-        Adjust the returned sample.
-        """
+        """Resize the mask and split it according to the task (semantic or instance)."""
+        raw_mask = sample.pop("mask")
+        hw = sample["resized_shape"]
+
+        # MUST use INTER_NEAREST for masks
+        mask_resized = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
+
+        # Filter classes if specified
+        if self.classes is not None:
+            if self.task in ("instance", "panoptic"):
+                class_ids = mask_resized // self.panoptic_divisor
+                mask_resized = np.where(np.isin(class_ids, self.classes), mask_resized, 0)
+            else:
+                mask_resized = np.where(np.isin(mask_resized, self.classes), mask_resized, 0)
+
+        if self.single_cls:
+            mask_resized = np.where(mask_resized > 0, 1, 0)
+
+        # Format output based on task
+        if self.task == "semantic":
+            sample["mask"] = mask_resized.astype(np.uint8)
+            sample["cls"] = np.unique(sample["mask"])
+
+        elif self.task in ["instance", "panoptic"]:
+            unique_ids = np.unique(mask_resized)
+            unique_ids = unique_ids[unique_ids != 0]
+
+            N = len(unique_ids)
+            if N > 0:
+                masks = np.zeros((N, hw[0], hw[1]), dtype=np.uint8)
+                classes = np.zeros(N, dtype=np.int64)
+
+                for idx, uid in enumerate(unique_ids):
+                    masks[idx] = (mask_resized == uid).astype(np.uint8)
+                    classes[idx] = uid // self.panoptic_divisor
+
+                sample["masks"] = masks
+                sample["cls"] = classes
+            else:
+                sample["masks"] = np.zeros((0, hw[0], hw[1]), dtype=np.uint8)
+                sample["cls"] = np.zeros((0,), dtype=np.int64)
+
         return sample
 
-    # TODO
+    def check_cache_ram(self, safety_margin=0.5):
+        """Check data caching requirements vs available memory."""
+        b, gb = 0, 1 << 30
+        n = min(self.length, 100)
+        skips = 0
+
+        for _ in range(n):
+            i = random.randint(0, self.length - 1)
+            data = []
+            for name in self.data_names:
+                dt = self.file_read(self.data_files[name][i])
+                if dt is None:
+                    data = []
+                    skips += 1
+                    break
+                else:
+                    data.append(dt)
+            if data:
+                # Approximate resized shape footprint
+                ratio = self.imgsz / max(data[0].shape[0], data[0].shape[1])
+                b += np.sum([self.calculate_cache_size(d) * ratio**2 for d in data])
+
+        valid_samples = n - skips
+        if valid_samples == 0:
+            self.cache = None
+            LOGGER.warning("All sampled data failed to load. Disabling RAM cache.")
+            return False
+
+        mem_required = b * self.length / valid_samples * (1 + safety_margin)
+        mem = psutil.virtual_memory()
+
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.info(
+                f"{mem_required / gb:.1f}GB RAM required to cache data "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching data."
+            )
+            return False
+
+        return True
+
+    def create_buffers(self, labels: np.ndarray | list[str] | dict[str, list[str] | np.ndarray]) -> None:
+        super().create_buffers(labels)
+        self.hw0 = [None] * self.length
+        self.register_buffer("hw0", self.hw0)
+        self.hw = [None] * self.length
+        self.register_buffer("hw", self.hw)
+
     def build_transforms(self, hyp: dict[str, Any] | None = None):
         """Builds and appends transforms to the list."""
-        transforms = []
         if self.augment:
-            # 在这里添加支持 Mask 同步变换的 Albumentations 或自定义 Augmentation
-            pass
-
-        # 最后必须将 numpy HWC 转为 torch CHW
-        # transforms.append(Format(normalize=True))
-        return Compose(transforms) if transforms else None
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            transforms = segmentation_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LetterBox((self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=True,
+                return_keypoint=False,
+                return_obb=False,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.mask_overlap,
+                bgr=hyp.bgr if self.augment else 0.0,
+            )
+        )
+        return transforms
 
     @staticmethod
     def collate_fn(batch):
@@ -1824,17 +2122,25 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
         for k in keys:
             values = [b[k] for b in batch]
 
+            # Semantic Mask (Fixed Shape) -> Stack
             if k == "mask":
-                tensors = [torch.from_numpy(v).long() if isinstance(v, np.ndarray) else v for v in values]
-                new_batch[k] = torch.stack(tensors, 0)
+                tensors = [torch.from_numpy(v).long() if isinstance(v, np.ndarray) else v.long() for v in values]
+                new_batch[k] = torch.stack(tensors, dim=0)
 
+            # Instance Masks and Class IDs (Variable Length) -> List
+            elif k in ["masks", "cls"]:
+                new_batch[k] = [torch.from_numpy(v) if isinstance(v, np.ndarray) else v for v in values]
+
+            # Multi-modal Images and other NDArrays -> Stack
             elif isinstance(values[0], np.ndarray):
                 tensors = [torch.from_numpy(v) for v in values]
                 new_batch[k] = torch.stack(tensors, 0)
 
+            # Pre-formatted Tensors -> Stack
             elif isinstance(values[0], torch.Tensor):
                 new_batch[k] = torch.stack(values, 0)
 
+            # Metadata (strings, paths, tuples) -> Keep as List
             else:
                 new_batch[k] = values
 
