@@ -107,6 +107,45 @@ def rescale_masks(
     return masks
 
 
+def visualize_mask(mask: np.ndarray) -> None:
+    """
+    Visualize both semantic mask [H, W] and instance/panoptic masks [N, H, W].
+    """
+    if mask.ndim == 2:
+        H, W = mask.shape
+        title_prefix = "Semantic Segmentation"
+    elif mask.ndim == 3:
+        N, H, W = mask.shape
+        title_prefix = "Instance/Panoptic Segmentation"
+    else:
+        raise ValueError(f"Unsupported mask dimension: {mask.ndim}. Expected 2 or 3.")
+
+    display_mask = np.zeros((H, W, 3), dtype=np.uint8)
+    num_items = 0
+
+    if mask.ndim == 2:
+        unique_cls = np.unique(mask)
+        for i, cls in enumerate(unique_cls):
+            if cls != 0:
+                rgb_color = ImageColor.getrgb(CSS_COLORS[num_items % len(CSS_COLORS)])
+                display_mask[mask == cls] = rgb_color
+                num_items += 1
+
+    elif mask.ndim == 3:
+        for i in range(N):
+            instance_mask = mask[i]
+            if instance_mask.max() > 0:
+                rgb_color = ImageColor.getrgb(CSS_COLORS[num_items % len(CSS_COLORS)])
+                display_mask[instance_mask > 0] = rgb_color
+                num_items += 1
+
+    plt.figure(figsize=(12, 12))
+    plt.axis("off")
+    plt.title(f"{title_prefix} - Total Foreground Items: {num_items}")
+    plt.imshow(display_mask)
+    plt.show()
+
+
 def visualize_segmentation(
     img: torch.Tensor,
     pred_mask: torch.Tensor,
