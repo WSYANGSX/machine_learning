@@ -678,20 +678,9 @@ class Mosaic(MixTransformBase):
         return sample
 
 
-# TODO
 class MixUp(MixTransformBase):
     """
     Applies MixUp augmentation to image datasets.
-
-    This class implements the MixUp augmentation technique as described in the paper "mixup: Beyond Empirical Risk
-    Minimization" (https://arxiv.org/abs/1710.09412). MixUp combines two images and their annotations using a random
-    weight.
-
-    Attributes:
-        dataset (Any): The dataset to which MixUp augmentation will be applied.
-        p (float): Probability of applying MixUp augmentation. Must be in the range [0, 1].
-        alpha (float): Control parameters of the beta distribution.
-        pre_transform (Callable | None): Optional transform to apply before MixUp.
     """
 
     def __init__(
@@ -701,18 +690,6 @@ class MixUp(MixTransformBase):
         alpha: float = 32.0,
         pre_transform: TransformBase | Compose = None,
     ) -> None:
-        """
-        Initializes the MixUp augmentation object.
-
-        MixUp is an image augmentation technique that combines two images by taking a weighted sum of their pixel
-        values and annotations.
-
-        Args:
-            dataset (Any): The dataset to which MixUp augmentation will be applied.
-            p (float): Probability of applying MixUp augmentation. Must be in the range [0, 1].
-            alpha (float): Control parameters of the beta distribution.
-            pre_transform (Callable | None): Optional transform to apply to images before MixUp.
-        """
         super().__init__(dataset=dataset, p=p, pre_transform=pre_transform)
         self.alpha = alpha
 
@@ -748,6 +725,26 @@ class MixUp(MixTransformBase):
         self, instances: Instances, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
     ) -> Instances:
         return Instances.concatenate([instances, mix_samples[0]["instances"]], axis=0)
+
+    def apply_to_mask(
+        self, mask: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
+        mask2 = mix_samples[0].get("mask")
+        if mask2 is not None:
+            # Semantic segmentation cannot perform pixel value blending
+            # instead, directly overlay image 1 with the foreground of Image 2
+            mask = np.where(mask2 > 0, mask2, mask)
+        return mask
+
+    def apply_to_masks(
+        self, masks: np.ndarray, mix_samples: list[dict[str, Any]], **params: dict[str, Any]
+    ) -> np.ndarray:
+        masks2 = mix_samples[0].get("masks")
+        if masks2 is not None and masks2.size > 0:
+            if masks.size == 0:
+                return masks2
+            return np.concatenate([masks, masks2], axis=0)
+        return masks
 
     def update_sample(
         self, sample: dict[str, Any], mix_samples: list[dict[str, Any]], **params: dict[str, Any]
@@ -1033,7 +1030,6 @@ class CutMix(MixTransformBase):
         return sample
 
 
-# TODO
 class CopyPaste(MixTransformBase):
     """CopyPaste class for applying Copy-Paste augmentation to image datasets.
 
@@ -1107,26 +1103,62 @@ class CopyPaste(MixTransformBase):
         instances.convert_bbox(format="xyxy")
         instances.denormalize(w, h)
 
-        im_new = np.zeros(im.shape, np.uint8)
+        has_mask = "mask" in sample1
+        has_masks = "masks" in sample1
+        if has_mask:
+            mask = sample1["mask"].copy()
+        if has_masks:
+            masks = sample1["masks"]
+
+        im_new = np.zeros(im.shape[:2], np.uint8)
         instances2 = sample2.pop("instances", None)
+
         if instances2 is None:
+            # Flip
             instances2 = deepcopy(instances)
             instances2.fliplr(w)
+            result_img = cv2.flip(im, 1)
+            result_cls = cls
+            if has_mask:
+                result_mask = cv2.flip(sample1["mask"], 1)
+            if has_masks:
+                result_masks = np.flip(sample1["masks"], axis=-1)  # W轴是 -1
+        else:
+            # Mixup
+            result_img = sample2.get("img")
+            result_cls = sample2.get("cls")
+            if has_mask:
+                result_mask = sample2.get("mask")
+            if has_masks:
+                result_masks = sample2.get("masks")
+
         ioa = bbox_ioa(instances2.bboxes, instances.bboxes)  # intersection over area, (N, M)
         indexes = np.nonzero((ioa < 0.30).all(1))[0]  # (N, )
         n = len(indexes)
         sorted_idx = np.argsort(ioa.max(1)[indexes])
         indexes = indexes[sorted_idx]
-        for j in indexes[: round(self.p * n)]:
-            cls = np.concatenate((cls, sample2.get("cls", cls)[[j]]), axis=0)
-            instances = Instances.concatenate((instances, instances2[[j]]), axis=0)
-            cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, (1, 1, 1), cv2.FILLED)
 
-        result = sample2.get("img", cv2.flip(im, 1))  # augment segments
-        if result.ndim == 2:  # cv2.flip would eliminate the last dimension for grayscale images
-            result = result[..., None]
-        i = im_new.astype(bool)
-        im[i] = result[i]
+        for j in indexes[: round(self.p * n)]:
+            cls = np.concatenate((cls, result_cls[[j]]), axis=0)
+            instances = Instances.concatenate((instances, instances2[[j]]), axis=0)
+
+            cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, 1, cv2.FILLED)
+
+            if has_masks:
+                masks = np.concatenate((masks, result_masks[[j]]), axis=0)
+
+        if result_img.ndim == 2:
+            result_img = result_img[..., None]
+
+        i = im_new.astype(bool)  # i
+        im[i] = result_img[i]
+
+        if has_mask:
+            mask[i] = result_mask[i]
+            sample1["mask"] = mask
+
+        if has_masks:
+            sample1["masks"] = masks
 
         sample1["img"] = im
         sample1["cls"] = cls
@@ -1738,25 +1770,15 @@ class LetterBox(TransformBase):
         # padding float->int
         top, bottom, left, right = int(top), int(bottom), int(left), int(right)
 
-        h, w, c = target.shape
-        if target.ndim == 3:
-            target = cv2.copyMakeBorder(
-                target,
-                top,
-                bottom,
-                left,
-                right,
-                cv2.BORDER_CONSTANT,
-                value=padding_value,
-            )
-        else:  # (h, w)
-            pad_target = np.full(
-                (h + top + bottom, w + left + right),
-                fill_value=padding_value,
-                dtype=target.dtype,
-            )
-            pad_target[top : top + h, left : left + w] = target
-            target = pad_target
+        target = cv2.copyMakeBorder(
+            target,
+            top,
+            bottom,
+            left,
+            right,
+            cv2.BORDER_CONSTANT,
+            value=padding_value,
+        )
 
         return target
 
@@ -1936,9 +1958,9 @@ class Albumentations(TransformBase):
         else:
             inputs["image"] = np.zeros((h0, w0, 3), dtype=np.uint8)  # pseudo image
         if "ir" in sample:
-            inputs["ir"] = sample["ir"][..., None]  # Albumentations requires images to be 3-dimensional.
+            inputs["ir"] = sample["ir"]  # the direct reading of the channel is three channels
         if "depth" in sample:
-            inputs["depth"] = sample["depth"][..., None]  # Albumentations requires images to be 3-dimensional.
+            inputs["depth"] = sample["depth"]  # the direct reading of the channel is three channels
 
         # bboxes & cls
         has_instances = params.get("has_instances", False)
@@ -1977,9 +1999,9 @@ class Albumentations(TransformBase):
         if "img" in sample:
             sample["img"] = out["image"]
         if "ir" in sample:
-            sample["ir"] = out["ir"].squeeze()
+            sample["ir"] = out["ir"]
         if "depth" in sample:
-            sample["depth"] = out["depth"].squeeze()
+            sample["depth"] = out["depth"]
 
         h, w = next(iter([sample[key].shape[:2] for key in self._targets if key in sample]))
 
