@@ -168,7 +168,7 @@ class PerPixelSegmentation(AlgorithmBase):
     @torch.no_grad()
     def eval(
         self,
-        img_path: str | FilePath,
+        img_source: str | FilePath,
         *args,
         **kwargs,
     ) -> None:
@@ -176,7 +176,7 @@ class PerPixelSegmentation(AlgorithmBase):
         self.set_eval()
 
         # read image
-        img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        img0 = cv2.cvtColor(cv2.imread(img_source, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
         h0, w0, _ = img0.shape
 
         # scale to square

@@ -14,7 +14,7 @@ def main():
     )
 
     # Step 3: Evaluate the model
-    evaluator.eval(5)
+    evaluator.algorithm.eval(5)
 
 
 if __name__ == "__main__":
