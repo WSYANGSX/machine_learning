@@ -20,7 +20,7 @@ def main():
 
     # Step 3: Evaluate the model
     # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
-    evaluator.eval(
+    evaluator.algorithm.eval(
         img_path="/home/yangxf/Downloads/dv/3_co.jpg",
         ir_path="/home/yangxf/Downloads/dv/3_ir.jpg",
         conf_thres=0.25,

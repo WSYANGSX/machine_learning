@@ -16,7 +16,9 @@ def main():
 
     # Step 3: Evaluate the model
     # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
-    evaluator.eval(img_path="/home/yangxf/Downloads/vedai/4_co.png", conf_thres=0.25, iou_thres=0.7, tag_size=0.35)
+    evaluator.algorithm.eval(
+        img_path="/home/yangxf/Downloads/vedai/4_co.png", conf_thres=0.25, iou_thres=0.7, tag_size=0.35
+    )
 
 
 if __name__ == "__main__":

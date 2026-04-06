@@ -16,7 +16,7 @@ def main():
 
     # Step 3: Evaluate the model
     # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
-    evaluator.eval(img_path="/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/train/0ed6904e1004_06.jpg")
+    evaluator.algorithm.eval(img_path="/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/train/0ed6904e1004_06.jpg")
 
 
 if __name__ == "__main__":
