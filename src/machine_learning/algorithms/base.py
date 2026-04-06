@@ -457,48 +457,53 @@ class AlgorithmBase(ABC):
         """Configure the training optimizer"""
         LOGGER.info(f"Initializing the optimizers of {self.name}...")
 
-        self.opt_cfg = self._cfg["optimizer"]
-
         self.optimizer = None
+        opt_cfg = self._cfg["optimizer"]
+        opt_type = opt_cfg.get("opt_type", None)
+        if opt_type is None:
+            raise ValueError("Please provide opt_type parameter in algorithm cfg file under optimizer item.")
 
-        if self.opt_cfg["opt"] == "SGD":
+        if opt_type == "SGD":
             self.optimizer = torch.optim.SGD(
                 params=self.net.parameters(),
-                lr=self.opt_cfg["lr"],
-                momentum=self.opt_cfg["momentum"],
-                weight_decay=self.opt_cfg["weight_decay"],
+                lr=opt_cfg["lr"],
+                momentum=opt_cfg["momentum"],
+                weight_decay=opt_cfg["weight_decay"],
             )
             self._add_optimizer("optimizer", self.optimizer)
 
-        elif self.opt_cfg["opt"] == "Adam":
+        elif opt_type == "Adam":
             self.optimizer = torch.optim.Adam(
                 params=self.net.parameters(),
-                lr=self.opt_cfg["lr"],
-                betas=(self.opt_cfg["beta1"], self.opt_cfg["beta2"]),
-                eps=self.opt_cfg["eps"],
-                weight_decay=self.opt_cfg["weight_decay"],
+                lr=opt_cfg["lr"],
+                betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
+                eps=opt_cfg["eps"],
+                weight_decay=opt_cfg["weight_decay"],
             )
             self._add_optimizer("optimizer", self.optimizer)
 
         else:
-            ValueError(f"Does not support optimizer:{self.opt_cfg['opt']} currently.")
+            raise ValueError(f"Does not support optimizer:{opt_type} currently.")
 
     def _init_schedulers(self):
         """Initialize the learning rate scheduler"""
         LOGGER.info(f"Initializing the schedulers of {self.name}...")
 
-        self.sch_config = self._cfg["scheduler"]
-
         self.scheduler = None
+        sch_cfg = self._cfg["scheduler"]
+        sch_type = sch_cfg.get("sch_type", None)
 
-        if self.sch_config.get("sched") == "ReduceLROnPlateau":
+        if sch_type == "ReduceLROnPlateau":
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
-                mode="min",
-                factor=self.sch_config.get("factor", 0.1),
-                patience=self.sch_config.get("patience", 10),
+                mode=sch_cfg.get("mode", "min"),
+                factor=sch_cfg.get("factor", 0.1),
+                patience=sch_cfg.get("patience", 10),
             )
             self._add_scheduler("scheduler", self.scheduler)
+
+        else:
+            ValueError(f"Does not support optimizer:{sch_type} currently.")
 
     def __str__(self) -> str:
         """Return a summary string of the algorithm instance."""

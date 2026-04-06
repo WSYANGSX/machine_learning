@@ -21,7 +21,7 @@ algorithm:
   nbs: 64 # (int) nominal batch size, -1 represent no 
 
 optimizer:
-  type: "Adam"
+  opt_type: "Adam"
   learning_rate: 1.0e-3
   final_factor: 0.01
   beta1: 0.937
@@ -29,7 +29,7 @@ optimizer:
   eps: 1.0e-8
   weight_decay: 0.0005
 
-  # type: "SGD"
+  # opt_type: "SGD"
   # learning_rate: 0.01
   # final_factor: 0.01
   # momentum: 0.937
@@ -42,11 +42,11 @@ optimizer:
   warmup_bias_lr: 0.0 # 0.1 # (float) warmup initial bias lr
   
 scheduler:
-  # type: "ReduceLROnPlateau"
+  # sch_type: "ReduceLROnPlateau"
   # factor: 0.5
   # patience: 5 
   
-  type: CustomLRDecay
+  sch_type: CustomLRDecay
 
 
 net:

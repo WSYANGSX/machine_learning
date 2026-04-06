@@ -68,7 +68,8 @@ class Trainer:
             yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
 
         # set save_best value for saving the best ckpt
-        if self.algorithm.cfg["algorithm"].get("task", "") in ("detect"):
+        self.task = self.algorithm.cfg["algorithm"].get("task", "")
+        if self.task in ("detect", "segment"):  # mAP, mIOU
             self.save_best = 0.0
         else:
             self.save_best = torch.inf
@@ -105,13 +106,17 @@ class Trainer:
             if len(self.algorithm.schedulers) == 1:  # single net, single optimizer
                 scheduler = self.algorithm.schedulers["scheduler"]
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    scheduler.step(val_metrics["vloss"])
+                    # Give priority to using save best. If not available, degrade to vloss
+                    monitor_metric = val_metrics.get("save_best", val_metrics.get("vloss"))
+                    scheduler.step(monitor_metric)
                 else:
                     scheduler.step()
             elif len(self.algorithm.schedulers) > 1:  # multi nets, multi optimizers
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(val_metrics[name + "loss"])
+                        # For multiple networks, usually their respective losses or the global save best are used
+                        monitor_metric = val_metrics.get("save_best", val_metrics.get(name + "loss"))
+                        scheduler.step(monitor_metric)
                     else:
                         scheduler.step()
 
@@ -131,12 +136,11 @@ class Trainer:
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
             if self.cfg.save_best and "save_best" in val_metrics:
                 current_val = val_metrics["save_best"]
-                task_type = self.algorithm.cfg["algorithm"].get("task", "")
-                if task_type == "detect":
-                    if current_val > self.save_best:  # Take the mAP value as a reference
+                if self.task in ("detect", "segment"):
+                    if current_val > self.save_best:  # mAP, mIOU as references
                         self.save_best = current_val
                         self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
-                else:  # Take the Vloss as a reference
+                else:  # Vloss as a reference
                     if current_val < self.save_best:
                         self.save_best = current_val
                         self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)

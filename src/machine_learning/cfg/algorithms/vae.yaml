@@ -3,7 +3,7 @@ algorithm:
   beta: 0.01
 
 optimizer:
-  type: "Adam"
+  opt_type: "Adam"
   learning_rate: 1.0e-3
   beta1: 0.9
   beta2: 0.999
@@ -12,7 +12,7 @@ optimizer:
   grad_clip: 5.0
 
 scheduler:
-  type: ReduceLROnPlateau
+  sch_type: ReduceLROnPlateau
   factor: 0.5
   patience: 5
 

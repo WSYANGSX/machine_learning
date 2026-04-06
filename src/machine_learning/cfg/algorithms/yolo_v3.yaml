@@ -23,7 +23,7 @@ algorithm:
   nms_threshold: 0.5
 
 optimizer:
-  type: "Adam"
+  opt_type: "Adam"
   learning_rate: 1.0e-4
   beta1: 0.9
   beta2: 0.999
@@ -32,11 +32,11 @@ optimizer:
   grad_clip: 1.0
   
 scheduler:
-  # type: "ReduceLROnPlateau"
+  # sch_type: "ReduceLROnPlateau"
   # factor: 0.5
   # patience: 5 
   
-  type: LRWarnupDecay
+  sch_type: LRWarnupDecay
   epochs: [100, 200]
   scales: [0.1, 0.01]
 

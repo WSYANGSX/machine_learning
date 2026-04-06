@@ -130,7 +130,7 @@ class UNet(BaseNet):
         self.up4 = UpBlock(128, 64, self.bilinear, activation=activation)
 
         # Final prediction head
-        self.outc = nn.Conv2d(64, self.num_classes, kernel_size=1)
+        self.outc = nn.Conv2d(64, self.num_classes + 1, kernel_size=1)
 
     @property
     def dummy_input(self) -> torch.Tensor:

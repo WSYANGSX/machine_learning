@@ -115,7 +115,7 @@ class YoloV8(AlgorithmBase):
             math.ceil(len(self.train_loader.dataset) / max(self.batch_size, self.nbs)) * self.trainer_cfg["epochs"]
         )
         self.optimizer = self.build_optimizer(
-            name=self.opt_cfg.get("opt", "auto"),
+            name=self.opt_cfg.get("opt_type", "auto"),
             lr=self.opt_cfg.get("lr", 0.001),
             momentum=self.opt_cfg.get("momentum", 0.9),
             decay=weight_decay,
@@ -125,9 +125,10 @@ class YoloV8(AlgorithmBase):
         self._add_optimizer("optimizer", self.optimizer)
 
     def _init_schedulers(self) -> None:
-        self.sch_config = self._cfg["scheduler"]
+        sch_config = self._cfg["scheduler"]
+        sch_type = sch_config.get("sch_type")
 
-        if self.sch_config.get("sched") == "CustomLRDecay":
+        if sch_type == "CustomLRDecay":
             self.lf = lambda x: (
                 max(1 - x / self.epochs, 0) * (1.0 - self.opt_cfg["final_factor"]) + self.opt_cfg["final_factor"]
             )  # linear
@@ -135,7 +136,7 @@ class YoloV8(AlgorithmBase):
             self._add_scheduler("scheduler", self.scheduler)
 
         else:
-            LOGGER.warning(f"Unknown scheduler type '{self.sch_config.get('type')}', no scheduler configured.")
+            LOGGER.warning(f"Unknown scheduler type '{sch_type}', no scheduler configured.")
 
     def train_epoch(
         self, epoch: int, writer: SummaryWriter, log_interval: int = 10
