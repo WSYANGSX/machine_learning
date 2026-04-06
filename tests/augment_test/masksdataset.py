@@ -3,6 +3,8 @@ from machine_learning.data.dataset.datasets import MasksDataset
 from machine_learning.data.dataset.parsers import CarParser
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.ops import img_tensor2np
+from machine_learning.utils.segmentation import visualize_mask
+
 
 data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/car.yaml")
 parser = CarParser(data_cfg)
@@ -39,6 +41,7 @@ dataset = MasksDataset(
     fraction=1,
     rect=False,
     hyp=hyp,
+    single_cls=True,
 )
 
 dataset.remove_item(100)
@@ -51,6 +54,6 @@ for i in range(50):
     masks = sample["mask"]
     cls = sample["cls"].numpy().reshape(-1)
     plot_imgs([img_tensor2np(img)])
-    plot_imgs([img_tensor2np(masks)])
+    visualize_mask(img_tensor2np(masks))
 
     print(sample["img_file"], sample["resized_shape"], sample["ori_shape"])
