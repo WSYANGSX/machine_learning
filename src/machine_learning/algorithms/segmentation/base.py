@@ -9,11 +9,12 @@ from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
+from machine_learning.utils.logger import LOGGER
 from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import pad_to_square, resize
-from machine_learning.utils.segmentation import calculate_miou, visualize_segmentation, rescale_masks
+from machine_learning.utils.segmentation import calculate_miou, visualize_mask, rescale_masks
 
 
 class PerPixelSegmentation(AlgorithmBase):
@@ -44,6 +45,8 @@ class PerPixelSegmentation(AlgorithmBase):
         self.loss_weight = self.cfg["algorithm"].get("loss_weight", 1.0)
         self.ignore_value = self.cfg["data"].get("ignore_value", -100)
         self.imgsz = self.cfg["algorithm"]["imgsz"]
+        self.single_cls = self.cfg["data"]["single_cls"]
+        self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
 
     def _init_on_trainer(self, train_cfg, dataset):
         """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
@@ -53,9 +56,19 @@ class PerPixelSegmentation(AlgorithmBase):
 
         self.class_names = self.dataset_cfg["class_names"]
 
+    def _init_on_evaluator(self, ckpt, dataset, use_dataset):
+        super()._init_on_evaluator(ckpt, dataset, use_dataset)
+
+        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
+        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
+
     def train_epoch(self, epoch: int, writer: SummaryWriter, log_interval: int = 10) -> dict[str, float]:
         """Train a single epoch."""
         super().train_epoch(epoch, writer, log_interval)
+
+        # close mosaic
+        if epoch == int(self.close_mosaic_epoch * self.epochs):
+            self.close_dataloader_mosaic()
 
         # metrics
         metrics = {"tloss": 0.0}
@@ -86,6 +99,11 @@ class PerPixelSegmentation(AlgorithmBase):
             self.pbar_log("train", pbar, epoch, **metrics)
 
         return metrics, {}
+
+    def close_dataloader_mosaic(self) -> None:
+        if hasattr(self.train_loader.dataset, "close_mosaic"):
+            LOGGER.info("Closing dataloader mosaic")
+            self.train_loader.dataset.close_mosaic()
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -164,11 +182,13 @@ class PerPixelSegmentation(AlgorithmBase):
         img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
 
         # input image to model
-        masks = self.net(img)
-        preds = rescale_masks(masks, (self.imgsz, self.imgsz), (h0, w0))
+        preds = self.net(img)
+        mask = torch.argmax(preds, dim=1).squeeze(0)
+        # rescale masks
+        mask = rescale_masks(mask, (self.imgsz, self.imgsz), (h0, w0)).cpu().numpy()
 
         # visualize results
-        visualize_segmentation(img=img0, pred_mask=preds, class_maps=self.class_names)
+        visualize_mask(mask=mask)
 
 
 class MaskSegmentation(AlgorithmBase):

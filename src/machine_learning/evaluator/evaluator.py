@@ -10,22 +10,24 @@ class Evaluator:
         algo: AlgorithmBase,
         ckpt: str,
         dataset: str | Mapping[str, Any],
-        use_dataset: bool = True,
+        load_dataset: bool = True,
     ) -> None:
         """
-        The trainer of all machine learning algorithm
+        The evaluator of all machine learning algorithm.
 
         Args:
+            algo (AlgorithmBase): The algorithm to be evaluated.
+            ckpt (str): The checkpoint of the algorithm to be evaluat.
             dataset (str, Mapping[str, Any]): The dataset cfg.
-            algo (AlgorithmBase): The algorithm to be trained.
+            load_dataset (bool): Whether to load the test dataset provided by the evaluator. Defaults to True.
         """
         self.ckpt = ckpt
         self._algorithm = algo
-        self.use_dataset = use_dataset
+        self.load_dataset = load_dataset
 
         # ------------------- add cfg to algo -------------------------
         LOGGER.info("Algorithm initializing by evaluator...")
-        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.use_dataset)
+        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.load_dataset)
         print_cfg("Total configuration", self.algorithm.cfg)
 
     @property

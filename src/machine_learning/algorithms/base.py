@@ -110,19 +110,19 @@ class AlgorithmBase(ABC):
         self._init_optimizers()
         self._init_schedulers()
 
-    def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any], use_dataset: bool) -> None:
+    def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any], load_dataset: bool) -> None:
         """
         Initialize the evaluation dataset, dataloader, net, and load the checkpoint weights.
 
         Args:
             ckpt (FilePath): Checkpoint file path.
             dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
-            use_dataset (bool): Whether to use the dataset provided by the evaluator.
+            load_dataset (bool): Whether to use the dataset provided by the evaluator.
         """
         self.ema_enable = False  # disable ema for evaluation
         self.amp = False
         # init test dataset and test dataloader
-        if use_dataset:
+        if load_dataset:
             self._init_eval_dataset(dataset)
             self._init_eval_dataloader()
         else:
