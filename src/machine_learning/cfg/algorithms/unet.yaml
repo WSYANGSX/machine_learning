@@ -48,6 +48,7 @@ net:
 
 
 data:
+  augment: True
   fraction: 1
   pin_memory: True
   single_cls: True
