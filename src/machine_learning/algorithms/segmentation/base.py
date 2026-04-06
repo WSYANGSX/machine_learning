@@ -174,7 +174,7 @@ class PerPixelSegmentation(AlgorithmBase):
         h0, w0, _ = img0.shape
 
         # scale to square
-        padded_img = pad_to_square(img=img0, pad_values=0)
+        padded_img = pad_to_square(img=img0, pad_values=(114, 114, 114))
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
