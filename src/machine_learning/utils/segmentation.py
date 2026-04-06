@@ -1,17 +1,14 @@
-from typing import Mapping, Sequence
-
 import torch
 import torch.nn.functional as F
 
 import numpy as np
 from PIL import ImageColor
 from matplotlib import pyplot as plt
-import matplotlib.patches as mpatches
 from machine_learning.utils.constants import CSS_COLORS
 
 
 def calculate_miou(
-    predictions: torch.Tensor, targets: torch.Tensor, ignore_value: int = 255
+    predictions: torch.Tensor, targets: torch.Tensor, ignore_value: int = -100
 ) -> tuple[float, tuple[torch.Tensor, torch.Tensor]]:
     """Calculate mean Intersection over Union (mIoU) for the batch."""
     predictions = F.interpolate(predictions, size=targets.shape[-2:], mode="bilinear", align_corners=False)
@@ -141,59 +138,6 @@ def visualize_mask(mask: np.ndarray) -> None:
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    plt.title(f"{title_prefix} - Total Foreground Items: {num_items}")
+    plt.title(f"{title_prefix} - Foreground Items: {num_items}")
     plt.imshow(display_mask)
-    plt.show()
-
-
-def visualize_segmentation(
-    img: torch.Tensor,
-    pred_mask: torch.Tensor,
-    class_maps: Sequence[str] | Mapping[int, str] | None = None,
-    alpha: float = 0.5,
-) -> None:
-    """Visualize segmentation results by overlaying the predicted mask on the input image."""
-    while pred_mask.dim() < 4:
-        pred_mask = pred_mask.unsqueeze(0)
-
-    pred_mask = F.interpolate(pred_mask.float(), size=img.shape[-2:], mode="nearest").squeeze().long()
-
-    class_ids = torch.unique(pred_mask).cpu().tolist()
-
-    color_map = {}
-    legend_patches = []
-
-    for cls_id in class_ids:
-        cls_id = int(cls_id)
-        rgb_color = ImageColor.getrgb(CSS_COLORS[cls_id % len(CSS_COLORS)])
-        color_map[cls_id] = rgb_color
-
-        if class_maps is not None:
-            if isinstance(class_maps, (list, tuple)):
-                label = class_maps[cls_id] if cls_id < len(class_maps) else f"Class {cls_id}"
-            else:  # Mapping (dict)
-                label = class_maps.get(cls_id, f"Class {cls_id}")
-        else:
-            label = f"Class {cls_id}"
-
-        normalized_color = [c / 255.0 for c in rgb_color]
-        patch = mpatches.Patch(color=normalized_color, label=label)
-        legend_patches.append(patch)
-
-    color_mask = torch.zeros((3, *pred_mask.shape), dtype=torch.uint8, device=pred_mask.device)
-    for cls, color in color_map.items():
-        color_mask[:, pred_mask == cls] = torch.tensor(color, device=pred_mask.device).view(3, 1, 1)
-
-    plt.figure(figsize=(12, 12))
-    plt.axis("off")
-
-    display_img = img.permute(1, 2, 0).cpu().numpy()
-    if display_img.dtype != "uint8" and display_img.max() > 1.0:
-        display_img = display_img / 255.0
-
-    plt.imshow(display_img)
-    display_mask = color_mask.permute(1, 2, 0).cpu().numpy()
-    plt.imshow(display_mask, alpha=alpha)
-    plt.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0.0, fontsize=12)
-    plt.tight_layout()
     plt.show()
