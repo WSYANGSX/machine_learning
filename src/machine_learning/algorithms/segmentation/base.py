@@ -42,7 +42,7 @@ class PerPixelSegmentation(AlgorithmBase):
         self.modality = modality
 
         self.loss_weight = self.cfg["algorithm"].get("loss_weight", 1.0)
-        self.ignore_value = self.cfg["data"].get("ignore_value", 255)
+        self.ignore_value = self.cfg["data"].get("ignore_value", -100)
         self.imgsz = self.cfg["algorithm"]["imgsz"]
 
     def _init_on_trainer(self, train_cfg, dataset):
@@ -85,7 +85,7 @@ class PerPixelSegmentation(AlgorithmBase):
 
             self.pbar_log("train", pbar, epoch, **metrics)
 
-        return metrics
+        return metrics, {}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -134,7 +134,7 @@ class PerPixelSegmentation(AlgorithmBase):
             # log
             self.pbar_log("val", pbar, **metrics)
 
-        return metrics
+        return metrics, {}
 
     def criterion(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Calculate the loss between predictions and targets using cross-entropy loss for per-pixel classification."""

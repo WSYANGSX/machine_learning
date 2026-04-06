@@ -2,7 +2,7 @@ algorithm:
   name: "auto_encoder"
 
 optimizer:
-  opt: "Adam"
+  opt_type: "Adam"
   lr: 1.0e-3
   beta1: 0.9
   beta2: 0.999
@@ -11,7 +11,7 @@ optimizer:
   grad_clip: 5.0
   
 scheduler:
-  sched: ReduceLROnPlateau
+  sch_type: ReduceLROnPlateau
   factor: 0.5
   patience: 5  
 

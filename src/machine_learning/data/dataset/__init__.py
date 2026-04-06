@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from .base import DatasetBase, MultiModalDatasetBase
-from .datasets import SimpleDataset, YoloDataset, MultiModalYoloDataset
+from .datasets import SimpleDataset, YoloDataset, MultiModalYoloDataset, MasksDataset, MultiModalMasksDataset
 from .parsers import (
     ParserBase,
     MinistParser,
@@ -21,10 +21,12 @@ from machine_learning.utils.logger import LOGGER
 __all__ = [
     # datasets
     "DatasetBase",
+    "MultiModalDatasetBase",
     "SimpleDataset",
     "YoloDataset",
-    "MultiModalDatasetBase",
     "MultiModalYoloDataset",
+    "MasksDataset",
+    "MultiModalMasksDataset",
     # parsers
     "ParserBase",
     "MinistParser",
@@ -93,13 +95,12 @@ def build_dataset(
         )
 
     elif type == "MultiModalYoloDataset":
-        modalities = cfg.get("modalities")
         return MultiModalYoloDataset(
             data=parsing["data"],
             labels=parsing["labels"],
-            imgsz=cfg.get("imgsz", 640),
             nc=cfg.get("nc"),
-            task=cfg["task"],
+            imgsz=cfg.get("imgsz", 640),
+            batch_size=batch_size,
             rect=cfg["rect"],
             stride=cfg.get("stride", 32),
             pad=0.0 if mode == "train" else 0.5,
@@ -108,9 +109,54 @@ def build_dataset(
             cache=cache,
             augment=augment,
             hyp=cfg,
-            batch_size=batch_size,
-            modalities=modalities,
+            modalities=cfg.get("modalities"),
+            task=cfg["task"],
+            dropout=cfg.get("dropout", False),
             fraction=fraction,
+            mode=mode,
+        )
+
+    elif type == "MasksDataset":
+        return MasksDataset(
+            imgs=parsing["imgs"],
+            masks=parsing["labels"],
+            nc=cfg.get("nc"),
+            imgsz=cfg.get("imgsz", 640),
+            batch_size=batch_size,
+            rect=cfg["rect"],
+            stride=cfg.get("stride", 32),
+            pad=0.0 if mode == "train" else 0.5,
+            single_cls=cfg.get("single_cls", False),
+            classes=cfg.get("class", None),
+            cache=cache,
+            augment=augment,
+            hyp=cfg,
+            fraction=fraction,
+            task_type=cfg["task_type"],
+            panoptic_divisor=cfg.get("panoptic_divisor", None),
+            mode=mode,
+        )
+
+    elif type == "MultiModalMasksDataset":
+        return MultiModalMasksDataset(
+            data=parsing["data"],
+            masks=parsing["labels"],
+            nc=cfg.get("nc"),
+            imgsz=cfg.get("imgsz", 640),
+            batch_size=batch_size,
+            rect=cfg["rect"],
+            stride=cfg.get("stride", 32),
+            pad=0.0 if mode == "train" else 0.5,
+            single_cls=cfg.get("single_cls", False),
+            classes=cfg.get("class", None),
+            cache=cache,
+            augment=augment,
+            hyp=cfg,
+            fraction=fraction,
+            task_type=cfg["task_type"],
+            panoptic_divisor=cfg.get("panoptic_divisor", None),
+            modalities=cfg.get("modalities"),
+            dropout=cfg.get("dropout", False),
             mode=mode,
         )
 

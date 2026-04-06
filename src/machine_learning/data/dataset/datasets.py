@@ -131,8 +131,8 @@ class YoloDataset(DatasetBase):
         self,
         imgs: np.ndarray | list[FilePath],
         labels: np.ndarray | list[FilePath],
+        nc: int,
         imgsz: int = 640,
-        nc: int = 80,
         rect: bool = False,
         stride: int = 32,
         pad: float = 0.5,
@@ -156,10 +156,10 @@ class YoloDataset(DatasetBase):
         self.nc = nc
         self.batch_size = batch_size
 
-        self.task = task
-        self.use_segments = self.task == "segment"
-        self.use_keypoints = self.task == "pose"
-        self.use_obb = self.task == "obb"
+        self.task_type = task
+        self.use_segments = self.task_type == "segment"
+        self.use_keypoints = self.task_type == "pose"
+        self.use_obb = self.task_type == "obb"
 
         super().__init__(
             data=imgs,
@@ -634,10 +634,10 @@ class MultiModalYoloDataset(MultiModalDatasetBase):
         self.nc = nc
         self.batch_size = batch_size
 
-        self.task = task
-        self.use_segments = self.task == "segment"
-        self.use_keypoints = self.task == "pose"
-        self.use_obb = self.task == "obb"
+        self.task_type = task
+        self.use_segments = self.task_type == "segment"
+        self.use_keypoints = self.task_type == "pose"
+        self.use_obb = self.task_type == "obb"
 
         super().__init__(
             data=data,
@@ -1299,8 +1299,8 @@ class MasksDataset(DatasetBase):
         self,
         imgs: np.ndarray | list[str],
         masks: np.ndarray | list[str],
+        nc: int,
         imgsz: int = 640,
-        nc: int = 80,
         batch_size: int = 16,
         rect: bool = False,
         stride: int = 32,
@@ -1311,11 +1311,11 @@ class MasksDataset(DatasetBase):
         augment: bool = True,
         hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
-        task: Literal["semantic", "instance", "panoptic"] = "semantic",
+        task_type: Literal["semantic", "instance", "panoptic"] = "semantic",
         panoptic_divisor: Optional[int] = None,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        self.task = task
+        self.task_type = task_type
         self.panoptic_divisor = panoptic_divisor
         self.nc = nc
         self.imgsz = imgsz
@@ -1326,7 +1326,7 @@ class MasksDataset(DatasetBase):
         self.stride = stride
         self.pad = pad
 
-        if self.task in {"instance", "panoptic"} and self.panoptic_divisor is None:
+        if self.task_type in {"instance", "panoptic"} and self.panoptic_divisor is None:
             raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
 
         super().__init__(
@@ -1543,7 +1543,7 @@ class MasksDataset(DatasetBase):
         # lazy load mask
         mask_file = sample.pop("mask_file")
         if mask_file is not None:
-            if self.task == "semantic":
+            if self.task_type == "semantic":
                 mask_raw = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
             else:
                 mask_raw = cv2.imread(mask_file, cv2.IMREAD_UNCHANGED)
@@ -1569,7 +1569,7 @@ class MasksDataset(DatasetBase):
         mask_resized = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
 
         if self.classes is not None:
-            if self.task in ("instance", "panoptic"):
+            if self.task_type in ("instance", "panoptic"):
                 class_ids = mask_resized // self.panoptic_divisor
                 mask_resized = np.where(np.isin(class_ids, self.classes), mask_resized, 0)
             else:
@@ -1578,12 +1578,12 @@ class MasksDataset(DatasetBase):
         if self.single_cls:
             mask_resized = np.where(mask_resized > 0, 1, 0)
 
-        if self.task == "semantic":
+        if self.task_type == "semantic":
             # Semantic Segmentation: Keep a single channel (H, W) and only retain the category ID
             sample["mask"] = mask_resized.astype(np.uint8)
             sample["cls"] = np.unique(sample["mask"])
 
-        elif self.task in ["instance", "panoptic"]:
+        elif self.task_type in ["instance", "panoptic"]:
             # Instance/Panoptic Segmentation: Split into (N, H, W)
             unique_ids = np.unique(mask_resized)
             unique_ids = unique_ids[unique_ids != 0]  # Filter out background 0
@@ -1737,13 +1737,13 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
         augment: bool = True,
         hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
-        task: Literal["semantic", "instance", "panoptic"] = "semantic",
+        task_type: Literal["semantic", "instance", "panoptic"] = "semantic",
         panoptic_divisor: Optional[int] = None,
         modalities: list[str] | None = None,
         dropout: bool = False,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        self.task = task
+        self.task_type = task_type
         self.panoptic_divisor = panoptic_divisor
         self.nc = nc
         self.imgsz = imgsz
@@ -1754,7 +1754,7 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
         self.stride = stride
         self.pad = pad
 
-        if self.task in {"instance", "panoptic"} and self.panoptic_divisor is None:
+        if self.task_type in {"instance", "panoptic"} and self.panoptic_divisor is None:
             raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
 
         super().__init__(
@@ -1980,7 +1980,7 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
         # Lazy load mask
         mask_file = sample.pop("mask_file")
         if mask_file is not None:
-            if self.task == "semantic":
+            if self.task_type == "semantic":
                 mask_raw = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
             else:
                 mask_raw = cv2.imread(mask_file, cv2.IMREAD_UNCHANGED)
@@ -2008,7 +2008,7 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
 
         # Filter classes if specified
         if self.classes is not None:
-            if self.task in ("instance", "panoptic"):
+            if self.task_type in ("instance", "panoptic"):
                 class_ids = mask_resized // self.panoptic_divisor
                 mask_resized = np.where(np.isin(class_ids, self.classes), mask_resized, 0)
             else:
@@ -2018,11 +2018,11 @@ class MultiModalMasksDataset(MultiModalDatasetBase):
             mask_resized = np.where(mask_resized > 0, 1, 0)
 
         # Format output based on task
-        if self.task == "semantic":
+        if self.task_type == "semantic":
             sample["mask"] = mask_resized.astype(np.uint8)
             sample["cls"] = np.unique(sample["mask"])
 
-        elif self.task in ["instance", "panoptic"]:
+        elif self.task_type in ["instance", "panoptic"]:
             unique_ids = np.unique(mask_resized)
             unique_ids = unique_ids[unique_ids != 0]
 
