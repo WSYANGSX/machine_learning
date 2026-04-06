@@ -8,6 +8,8 @@ algorithm:
   # loss weight
   loss_weight: 1.0 # (float) loss gain
 
+  close_mosaic_epoch: 0.9 # the ratio of the total number of epochs
+
 optimizer:
   opt_type: "Adam"
   lr: 1.0e-3
