@@ -111,7 +111,9 @@ class AlgorithmBase(ABC):
         self._init_optimizers()
         self._init_schedulers()
 
-    def _init_on_evaluator(self, ckpt: str, dataset: str | Mapping[str, Any], load_dataset: bool) -> None:
+    def _init_on_evaluator(
+        self, ckpt: str, dataset: str | Mapping[str, Any] | None = None, load_dataset: bool = True
+    ) -> None:
         """
         Initialize the evaluation dataset, dataloader, net, and load the checkpoint weights.
 
@@ -123,7 +125,7 @@ class AlgorithmBase(ABC):
         self.ema_enable = False  # disable ema for evaluation
         self.amp = False
         # init test dataset and test dataloader
-        if load_dataset:
+        if load_dataset and dataset is not None:
             self._init_eval_dataset(dataset)
             self._init_eval_dataloader()
         else:
@@ -147,18 +149,7 @@ class AlgorithmBase(ABC):
         Args:
             ckpt (FilePath): Checkpoint file path.
         """
-        self.ema_enable = False  # disable ema for predict
-        self.amp = False
-
-        # build net
-        self._build_net(self.provided_net)
-        # load net weights from ema
-        self.load(ckpt, load_ema=True)
-        # set device
-        for net in self.nets.values():
-            net.to(self.device)
-
-        self.set_eval()
+        self._init_on_evaluator(ckpt, None, False)
 
     @property
     def train_dataset(self) -> None | Dataset:
