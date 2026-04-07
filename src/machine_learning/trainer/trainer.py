@@ -67,12 +67,12 @@ class Trainer:
         with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
             yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
 
-        # set save_best value for saving the best ckpt
+        # set best_fitness value for saving the best ckpt
         self.task = self.algorithm.cfg["algorithm"].get("task", "")
         if self.task in ("detect", "segment"):  # mAP, mIOU
-            self.save_best = 0.0
+            self.best_fitness = 0.0
         else:
-            self.save_best = torch.inf
+            self.best_fitness = torch.inf
 
     @property
     def algorithm(self) -> AlgorithmBase:
@@ -135,21 +135,21 @@ class Trainer:
             # save the best model
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
             if self.cfg.save_best and "best_fitness" in val_metrics:
-                current_val = val_metrics["best_fitness"]
+                current_best_fitness = val_metrics["best_fitness"]
                 if self.task in ("detect", "segment"):
-                    if current_val > self.save_best:  # mAP, mIOU as references
-                        self.save_best = current_val
-                        self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
+                    if current_best_fitness > self.best_fitness:  # mAP, mIOU as references
+                        self.best_fitness = current_best_fitness
+                        self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
                 else:  # Vloss as a reference
-                    if current_val < self.save_best:
-                        self.save_best = current_val
-                        self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
+                    if current_best_fitness < self.best_fitness:
+                        self.best_fitness = current_best_fitness
+                        self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
             else:
                 LOGGER.info("Saving of the model with the best fitness skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
-                self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=False)
+                self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
 
             # print epoch information
             if epoch == self.epochs - 1:
@@ -166,7 +166,7 @@ class Trainer:
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)
         start_epoch = state_dict["epoch"] + 1
-        self.best_fitness = state_dict["best_fitness"]
+        self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
         self.record_dir = state_dict["record_dir"]
         self.ckpt_dir = state_dict["ckpt_dir"]
 
