@@ -35,44 +35,76 @@ class StreamBase:
 class VideoStream(StreamBase):
     def __init__(
         self,
-        path: str,
+        path: Union[str, List[str]],
         width: int | None = None,
         height: int | None = None,
         fps: int | None = None,
     ):
-        """Load video from a local file with optional dynamic resizing and downsampling."""
-        self.path = os.path.abspath(path)
-        if not os.path.exists(self.path):
-            raise FileNotFoundError(f"Video file not found: {self.path}")
+        """
+        Load video from one or multiple local files (for multi-modal inference)
+        with optional dynamic resizing and downsampling.
+        """
+        if not isinstance(path, (list, tuple)):
+            paths = [path]
+        else:
+            paths = path
 
-        self.cap = cv2.VideoCapture(self.path)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {self.path}")
+        self.paths = [os.path.abspath(p) for p in paths]
+        self.num_vids = len(self.paths)
+        self.caps = []
 
-        # video original properties
-        self.orig_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.orig_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.orig_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        for p in self.paths:
+            if not os.path.exists(p):
+                raise FileNotFoundError(f"Video file not found: {p}")
 
-        orig_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        self.orig_frames = int(orig_frames) if orig_frames > 0 else float("inf")
+            cap = cv2.VideoCapture(p)
+            if not cap.isOpened():
+                raise RuntimeError(f"Failed to open video: {p}")
+            self.caps.append(cap)
+
+        # Obtain the original attributes
+        self.orig_widths = [int(self.caps[i].get(cv2.CAP_PROP_FRAME_WIDTH)) for i in range(self.num_vids)]
+        self.orig_heights = [int(self.caps[i].get(cv2.CAP_PROP_FRAME_HEIGHT)) for i in range(self.num_vids)]
+        self.orig_fpses = [cap.get(cv2.CAP_PROP_FPS) for cap in self.caps]
+        self.orig_frames = [cap.get(cv2.CAP_PROP_FRAME_COUNT) for cap in self.caps]
+
+        # vaild attributes
+        self.valid_fps = min(self.orig_fpses)
+        self.valid_frames = int(min(self.orig_frames)) if min(self.orig_frames) > 0 else float("inf")
 
         # output properties
-        self.width = width if width else self.orig_width
-        self.height = height if height else self.orig_height
-        self.fps = fps if fps else self.orig_fps
+        self.width = width if width else self.orig_widths[0]
+        self.height = height if height else self.orig_heights[0]
+        if fps is not None:
+            self.fps = min(fps, self.valid_fps)
+            if fps > self.valid_fps:
+                LOGGER.warning(
+                    f"Requested FPS ({fps}) exceeds original video FPS ({self.valid_fps:.2f}). "
+                    f"Capped to {self.fps:.2f} FPS."
+                )
+        else:
+            self.fps = self.valid_fps
 
         # Safely calculate the frame extraction interval
-        if self.fps is not None and self.orig_fps > 0 and self.fps < self.orig_fps:
-            self.stride = max(1, int(round(self.orig_fps / self.fps)))
+        if self.fps is not None and self.valid_fps > 0 and self.fps < self.valid_fps:
+            self.stride = max(1, int(round(self.valid_fps / self.fps)))
         else:
             self.stride = 1
 
         self.count = 0
 
+        paths_str = ", ".join([os.path.basename(p) for p in self.paths])
+        orig_str = " | ".join(
+            [
+                f"{self.orig_widths[i]}x{self.orig_heights[i]} @ {self.orig_fpses[i]:.2f} FPS, "
+                f"{self.orig_frames[i]} frames"
+                for i in range(self.num_vids)
+            ]
+        )
+
         LOGGER.info(
-            f"Loaded Video: '{os.path.basename(self.path)}' | "
-            f"Original: {self.orig_width}x{self.orig_height} @ {self.orig_fps:.2f} FPS, {self.orig_frames} frames | "
+            f"Loaded Video(s): [{paths_str}] | "
+            f"Original:  {orig_str} | "
             f"Output: {self.width}x{self.height} @ {self.fps} FPS (Skip interval: {self.stride - 1})"
         )
 
@@ -80,45 +112,50 @@ class VideoStream(StreamBase):
     def frames(self) -> int:
         return len(self)
 
-    def __iter__(self) -> Iterator[np.ndarray]:
+    def __iter__(self) -> Iterator[Union[np.ndarray, List[np.ndarray]]]:
         self.count = 0
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        for cap in self.caps:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         return self
 
-    def __next__(self) -> np.ndarray:
+    def __next__(self) -> Union[np.ndarray, List[np.ndarray]]:
         for _ in range(self.stride - 1):
-            if self.count >= self.orig_frames:
+            if self.count >= self.valid_frames:
                 break
-            ret = self.cap.grab()  # Only move the pointer, never retrieve
 
-            if not ret:
+            rets = [cap.grab() for cap in self.caps]
+            if not all(rets):
                 break
             self.count += 1
 
-        if self.count >= self.orig_frames:
+        if self.count >= self.valid_frames:
             self.release()
             raise StopIteration
 
-        ret, frame = self.cap.read()  # grab() + retrieve()
-        if not ret:
-            self.release()
-            raise StopIteration
+        frames = []
+        for cap in self.caps:
+            ret, frame = cap.read()
+            if not ret:
+                self.release()
+                raise StopIteration
+            frames.append(frame)
 
         self.count += 1
 
-        # resize
         if self.width is not None and self.height is not None:
-            if (self.width, self.height) != (self.orig_width, self.orig_height):
-                frame = cv2.resize(frame, (self.width, self.height))
+            for i, frame in enumerate(frames):
+                if (self.width, self.height) != (self.orig_widths[i], self.orig_heights[i]):
+                    frames[i] = cv2.resize(frame, (self.width, self.height))
 
-        return frame
+        return frames[0] if self.num_vids == 1 else frames
 
     def release(self):
-        if self.cap.isOpened():
-            self.cap.release()
+        for cap in self.caps:
+            if cap.isOpened():
+                cap.release()
 
     def __len__(self) -> int:
-        return int(self.orig_frames // self.stride) if self.orig_frames != float("inf") else 0
+        return int(self.valid_frames // self.stride) if self.valid_frames != float("inf") else 0
 
 
 class WebcamStream(StreamBase):
@@ -131,7 +168,6 @@ class WebcamStream(StreamBase):
     ):
         """
         Load live stream from one or multiple webcams/RTSP streams for multi-modal inference.
-        Supports software resizing and FPS downsampling (throttling).
         """
         if not isinstance(sources, (list, tuple)):
             sources = [sources]

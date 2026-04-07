@@ -651,8 +651,8 @@ class YoloV8(AlgorithmBase):
         res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
 
         res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
-        cv2.imshow("Prediction", res_img_bgr)
-        cv2.waitKey(0)
+        cv2.imshow("Detection result", res_img_bgr)
+        cv2.waitKey(0)  # Wait for a key press
         cv2.destroyAllWindows()
 
     def _predict_stream(
@@ -685,7 +685,7 @@ class YoloV8(AlgorithmBase):
                 res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
                 show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
 
-            cv2.imshow("Stream Evaluation", show_frame)
+            cv2.imshow("Detection result", show_frame)
 
             if cv2.waitKey(delay) & 0xFF == ord("q"):
                 LOGGER.info("Stream stopped by user.")
@@ -709,7 +709,6 @@ class YoloV8(AlgorithmBase):
 
         # input image to model
         preds = self.net(img)
-
         # decode preds
         detections = self.decode_preds(preds, img.size(2))  # xywh
 
@@ -731,11 +730,11 @@ class YoloV8(AlgorithmBase):
             bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
             cls = [int(cid) for cid in cls]
         else:
-            bboxes, conf, cls = [], [], []
+            bboxes, conf, cls = np.zeros((0, 4)), [], []
 
         # visualization
         res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
-        return res_img if res_img is not None else img0
+        return res_img
 
 
 """

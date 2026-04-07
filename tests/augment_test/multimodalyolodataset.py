@@ -2,7 +2,7 @@ import cv2
 import torch
 import numpy as np
 from machine_learning.utils import load_cfg
-from machine_learning.data.dataset import YoloMultiModalDataset
+from machine_learning.data.dataset import MultiModalYoloDataset
 from machine_learning.data.dataset.parsers import VedaiParser, FlirAlignedParser, DVParser
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
@@ -42,7 +42,7 @@ hyp = {
     "bgr": 0.0,
 }
 
-dataset = YoloMultiModalDataset(
+dataset = MultiModalYoloDataset(
     data=res["train"]["data"],
     labels=res["train"]["labels"],
     nc=data_cfg["nc"],
@@ -63,7 +63,7 @@ for i in range(50):
     ir: torch.Tensor = sample["ir"]
     bboxes = yolo2voc(sample["bboxes"], img.shape[2], img.shape[1])
     cls = sample["cls"].numpy().reshape(-1)
-    visualize_img_bboxes(img_tensor2np(img), bboxes, cls, thickness=1)
+    visualize_img_bboxes(img_tensor2np(img), np.zeros((0, 4), dtype=np.float32), [], thickness=1)
     plot_imgs([img_tensor2np(ir)])
 
     print(sample["img_file"], sample["resized_shape"], sample["ori_shape"])

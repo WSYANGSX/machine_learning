@@ -202,7 +202,6 @@ class MultimodalDetection(YoloV8):
 
         return metrics, info
 
-    # TODO
     @torch.no_grad()
     def predict(
         self,

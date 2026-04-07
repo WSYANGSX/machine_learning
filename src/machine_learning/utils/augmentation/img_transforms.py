@@ -849,8 +849,12 @@ class CutMix(MixTransformBase):
         if len(params["valid_idxs"]) == 0:
             return target
 
-        area = params["cut_areas"][np.random.choice(params["valid_idxs"])]
-        params["process_params"]["area"] = area
+        if "area" not in params["process_params"]:
+            area = params["cut_areas"][np.random.choice(params["valid_idxs"])]
+            params["process_params"]["area"] = area
+        else:
+            area = params["process_params"]["area"]
+
         sample2 = mix_samples[0]
         target2: np.ndarray = sample2[category]
         x1, y1, x2, y2 = area.astype(np.int32)
@@ -863,17 +867,20 @@ class CutMix(MixTransformBase):
                 target2 = np.repeat(target2[..., None], 3, axis=2)
 
         if "instances" not in sample2:  # no bboxes limit
-            # classification task、 mask/masks segment task
             target[y1:y2, x1:x2] = target2[y1:y2, x1:x2]
             return target
 
         else:  # bboxes limit
-            # yolo task
-            ioa2 = bbox_ioa(np.array(area)[None], sample2["instances"].bboxes).squeeze(0)
-            indexes2 = np.nonzero(ioa2 >= (0.01 if params["length"] else 0.1))[0]
-            params["process_params"]["indexes2"] = indexes2
+            if "indexes2" not in params["process_params"]:
+                ioa2 = bbox_ioa(np.array(area)[None], sample2["instances"].bboxes).squeeze(0)
+                indexes2 = np.nonzero(ioa2 >= (0.01 if params["length"] else 0.1))[0]
+                params["process_params"]["indexes2"] = indexes2
+            else:
+                indexes2 = params["process_params"]["indexes2"]
+
             if len(indexes2) == 0:
                 return target
+
             target[y1:y2, x1:x2] = target2[y1:y2, x1:x2]
             return target
 
@@ -883,12 +890,12 @@ class CutMix(MixTransformBase):
         if len(params["valid_idxs"]) == 0:
             return instances
 
-        sample2 = mix_samples[0]
-        area = params["process_params"]["area"]
-
-        indexes2 = params["process_params"]["indexes2"]
+        indexes2 = params["process_params"].get("indexes2", [])
         if len(indexes2) == 0:
             return instances
+
+        sample2 = mix_samples[0]
+        area = params["process_params"]["area"]
 
         instances2 = sample2["instances"][indexes2]
         instances2.convert_bbox("xyxy")
@@ -993,6 +1000,12 @@ class CutMix(MixTransformBase):
         """
         Adjusts the annotations based on the area of the CutMix patch.
         """
+        if len(params["valid_idxs"]) == 0:
+            return sample
+
+        if "instances" in mix_samples[0] and len(params["process_params"].get("indexes2", [])) == 0:
+            return sample
+
         h, w = params["size0"]
         area = params["process_params"]["area"]
 
@@ -1011,7 +1024,7 @@ class CutMix(MixTransformBase):
             else:
                 sample["cls"] = np.concatenate([sample["cls"], mix_samples[0]["cls"][indexes2]], axis=0)
 
-        if "instances" not in sample and "cls" in sample:
+        elif "instances" not in sample and "cls" in sample:
             if "masks" in sample:
                 inside1 = params["process_params"].get("inside1", None)
                 inside2 = params["process_params"].get("inside2", None)
@@ -1025,7 +1038,6 @@ class CutMix(MixTransformBase):
                 alpha = patch_area / float(w * h)
                 # Expect cls to be one-hot or probability vectors
                 sample["cls"] = sample["cls"] * (1.0 - alpha) + mix_samples[0]["cls"] * alpha
-                return sample
 
         return sample
 
