@@ -625,7 +625,7 @@ class YoloV8(AlgorithmBase):
         *args,
         **kwargs,
     ):
-        super().predict(stream)
+        super().predict(stream, *args, **kwargs)
 
         if isinstance(stream, (str, FilePath)):
             self._predict_single_frame(stream, conf_thres, iou_thres, *args, **kwargs)

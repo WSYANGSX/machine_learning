@@ -19,7 +19,7 @@ from machine_learning.utils.streams import VideoStream, WebcamStream
 # cv2.destroyAllWindows()
 
 # camera
-video = WebcamStream(0, width=662, height=376, fps=120)
+video = WebcamStream(0, width=1344, height=376, fps=60)
 print(video.frames, video.fps, video.width, video.height)
 
 

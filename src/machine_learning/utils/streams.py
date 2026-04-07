@@ -148,6 +148,13 @@ class WebcamStream(StreamBase):
         for cap in self.caps:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+            if width is not None:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            if height is not None:
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if fps is not None:
+                cap.set(cv2.CAP_PROP_FPS, fps)
+
         # Retrieve original properties from the primary camera (index 0)
         self.orig_width = int(self.caps[0].get(cv2.CAP_PROP_FRAME_WIDTH))
         self.orig_height = int(self.caps[0].get(cv2.CAP_PROP_FRAME_HEIGHT))
