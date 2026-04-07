@@ -566,7 +566,7 @@ class AlgorithmBase(ABC):
         **kwargs,
     ) -> None:
         args = []
-        format_str = "%-12s" * 2
+        format_str = "%-14s" * 2
 
         if mode == "train":
             epoch_str = "%g/%g" % (epoch + 1, self.cfg["trainer"]["epochs"])
@@ -577,19 +577,19 @@ class AlgorithmBase(ABC):
 
         for _, val in kwargs.items():
             if isinstance(val, Integral):
-                format_str += "%-12d"
+                format_str += "%-14d"
                 args.append(val)
             elif isinstance(val, Real):
-                format_str += "%-12.4g"
+                format_str += "%-14.4g"
                 args.append(val)
             elif isinstance(val, str):
-                format_str += "%-12s"
+                format_str += "%-14s"
                 args.append(val)
             elif val is None:
-                format_str += "%-12s"
+                format_str += "%-14s"
                 args.append("")
             else:
-                format_str += "%-12s"
+                format_str += "%-14s"
                 args.append(str(val))
 
         s = format_str % tuple(args)
@@ -609,9 +609,9 @@ class AlgorithmBase(ABC):
 
     def print_metric_titles(self, mode: Literal["train", "val"], metrics: dict[str, Any]):
         if mode == "train":
-            print(("\n" + "%-12s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
+            print(("\n" + "%-14s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
         elif mode == "val":
-            print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
+            print(("%-14s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
 
     @abstractmethod
     def train_epoch(
