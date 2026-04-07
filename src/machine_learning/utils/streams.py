@@ -9,7 +9,30 @@ import numpy as np
 from machine_learning.utils.logger import LOGGER
 
 
-class VideoStream:
+class StreamBase:
+    def __init__(self):
+        pass
+
+    def __iter__(self):
+        raise NotImplementedError
+
+    def __next__(self):
+        raise NotImplementedError
+
+    def release(self):
+        raise NotImplementedError
+
+    def __len__(self):
+        raise NotImplementedError
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+class VideoStream(StreamBase):
     def __init__(
         self,
         path: str,
@@ -97,14 +120,8 @@ class VideoStream:
     def __len__(self) -> int:
         return int(self.orig_frames // self.stride) if self.orig_frames != float("inf") else 0
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()
-
-
-class WebcamStream:
+class WebcamStream(StreamBase):
     def __init__(
         self,
         sources: Union[int, str, List[Union[int, str]]],
@@ -223,9 +240,3 @@ class WebcamStream:
 
     def __len__(self) -> float:
         return float("inf")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()

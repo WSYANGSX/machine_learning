@@ -1673,6 +1673,12 @@ class MasksDataset(DatasetBase):
         )
         return transforms
 
+    def close_mosaic(self):
+        """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
+        hyp = deepcopy(self.hyp)
+        hyp.mosaic = 0.0
+        self.transforms = self.build_transforms(hyp)
+
     @staticmethod
     def collate_fn(batch):
         new_batch = {}

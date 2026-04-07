@@ -7,18 +7,16 @@ from tqdm import tqdm
 from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
-
+from ..yolo_v8 import YoloV8
 from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
-from ..yolo_v8 import YoloV8
+from machine_learning.utils.logger import LOGGER
+from machine_learning.utils.streams import VideoStream, WebcamStream
 from machine_learning.utils.detection import (
     resize,
     non_max_suppression,
-    box_iou,
-    match_predictions,
-    ap_per_class,
     pad_to_square,
-    visualize_img_bboxes,
+    add_bboxes_to_image,
     rescale_boxes,
 )
 
@@ -115,7 +113,7 @@ class MultimodalDetection(YoloV8):
             "class": "all",
             "images": 0,
             "vloss": 0.0,
-            "save_best": 0.0,
+            "best_fitness": 0.0,
             "labels": 0,
             "precision": 0.0,
             "recall": 0.0,
@@ -140,137 +138,168 @@ class MultimodalDetection(YoloV8):
 
             # metrics
             metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-
-            # prepare preds
-            detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
-            # NMS: Fewer overlapping boxes
-            detections = non_max_suppression(
-                detections.permute(0, 2, 1),
-                conf_thres=self.conf_thres_val,
-                iou_thres=self.iou_thres,
-                multi_label=True,
-                max_det=self.max_det,
-                agnostic=self.single_cls,
-                nc=self.nc,
-            )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
-
-            for si, detection in enumerate(detections):
-                metrics["images"] += 1
-                # get the original frame of the current image (img_id, class_id, x1, y1, x2, y2)
-                pbatch = self.prepare_batch(si, batch)
-                tcls, tbox = pbatch.pop("cls"), pbatch.pop("bbox")
-
-                if len(detection) == 0:
-                    if len(tcls):
-                        stats.append(
-                            (
-                                torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
-                                torch.zeros(0, device=self.device),  # confidence scores
-                                torch.zeros(0, device=self.device),  # pred_classes
-                                tcls,  # ground truth classes
-                            )
-                        )
-                    continue
-
-                # Prediction box format: [x1, y1, x2, y2, conf, class]
-                detection = self.prepare_pred(detection, pbatch)
-                detection = detection[detection[:, 4].argsort(descending=True)]
-                pred_boxes = detection[:, :4]
-                pred_scores = detection[:, 4]
-                pred_classes = detection[:, 5]
-
-                # calculate IoU
-                iou = box_iou(tbox, pred_boxes)  # shape: [n_gt, n_pred]
-                # Determine whether each prediction box is regarded as a correct detection under each IoU threshold
-                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
-
-                # record statistical information
-                stats.append((tp, pred_scores, pred_classes, tcls))
+            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            metrics["images"] += img_num
 
             if i == self.val_batches - 1:
                 # calculate mAP metrics
-                stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
-
-                if len(stats) and stats[0].any():
-                    p, r, ap, f1, ap_class = ap_per_class(
-                        *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
-                    )
-                    ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
-
-                    # AP value for each category
-                    info["ap_per_class"] = {}
-                    for idx, class_idx in enumerate(ap_class):
-                        class_name = (
-                            self.class_names[class_idx]
-                            if hasattr(self, "class_names") and self.class_names
-                            else f"Class {class_idx}"
-                        )
-                        info["ap_per_class"][class_name] = (float(ap50[idx]), float(ap75[idx]), float(ap[idx]))
-
-                    mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
-                    nt = np.bincount(
-                        stats[3].cpu().numpy().astype(np.int64), minlength=self.nc
-                    )  # number of targets per class
-                    metrics["mAP.5"] = map50
-                    metrics["mAP.75"] = map75
-                    metrics["mAP.5-.95"] = map
-                    metrics["precision"] = mp
-                    metrics["recall"] = mr
-
-                else:
-                    nt = np.zeros(1, dtype=np.uint8)
-
+                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
                 metrics["labels"] = nt.sum()
-                metrics["save_best"] = metrics["mAP.5-.95"]
+                metrics["best_fitness"] = metrics["mAP.5-.95"]
 
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
 
     @torch.no_grad()
-    def eval(
+    def eval(self) -> None:
+        """Evaluate the preformece of the model on test dataset."""
+        super().eval()
+
+        if self.test_loader is None:
+            raise ValueError("Test dataloader is not available.")
+
+        metrics = {
+            "class": "all",
+            "images": 0,
+            "labels": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "mAP.5": 0.0,
+            "mAP.75": 0.0,
+            "mAP.5-.95": 0.0,
+        }
+        info = {}
+        self.print_metric_titles("val", metrics)
+
+        pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
+        for i, batch in pbar:
+            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
+            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
+
+            preds = self.net(imgs, irs)
+
+            # metrics
+            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            metrics["images"] += img_num
+
+            if i == self.val_batches - 1:
+                # calculate mAP metrics
+                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
+                metrics["labels"] = nt.sum()
+
+            self.pbar_log("val", pbar, **metrics)
+
+        return metrics, info
+
+    # TODO
+    @torch.no_grad()
+    def predict(
         self,
-        img_path: str | FilePath,
-        ir_path: str | FilePath,
+        stream: str | FilePath | VideoStream | WebcamStream,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
-        modal: str | None = None,
         *args,
         **kwargs,
-    ) -> None:
-        """
-        Evaluation of multimodal detection models.
+    ):
+        super().predict(stream)
 
-        Args:
-            img_path: The path of RGB image for detection.
-            ir_path: The path of infrared image for detection.
-            conf_thres: The confidence threshold during detection.
-            iou_thres: The IOU threshold during detection.
-            modal: The modal base plate to show the detection box.
-        """
-        self.set_eval()
+        if isinstance(stream, (str, FilePath)):
+            self._predict_single_frame(stream, conf_thres, iou_thres, *args, **kwargs)
 
+        elif isinstance(stream, (VideoStream, WebcamStream)):
+            self._predict_stream(stream, conf_thres, iou_thres, *args, **kwargs)
+
+    def _predict_single_frame(
+        self,
+        img_path: str | FilePath,
+        conf_thres: float | None = None,
+        iou_thres: float | None = None,
+        *args,
+        **kwargs,
+    ):
+        """Evaluate the single-frame image."""
         # read image
-        img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-        ir0 = cv2.cvtColor(cv2.imread(ir_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        img0 = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        if img0 is None:
+            raise FileNotFoundError(f"Failed to read image: {img_path}")
+        img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
+
+        res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
+
+        res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
+        cv2.imshow("Prediction", res_img_bgr)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    def _predict_stream(
+        self,
+        stream: VideoStream | WebcamStream,
+        conf_thres: float | None = None,
+        iou_thres: float | None = None,
+        *args,
+        **kwargs,
+    ):
+        """Evaluate video images or live data streams."""
+        # Calculate the exact inter-frame delay required for offline video
+        # The camera is internally limited, so delay=1
+        is_video = isinstance(stream, VideoStream)
+        delay = max(1, int(1000 / stream.fps)) if is_video and stream.fps > 0 else 1
+
+        LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
+
+        for frames in stream:
+            if isinstance(frames, list):
+                processed_frames = []
+                for f in frames:
+                    f_rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                    res_rgb = self._inference_and_visualize(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+                    processed_frames.append(cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR))
+
+                show_frame = np.hstack(processed_frames)
+            else:
+                f_rgb = cv2.cvtColor(frames, cv2.COLOR_BGR2RGB)
+                res_rgb = self._inference_and_visualize(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+                show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
+
+            cv2.imshow("Stream Evaluation", show_frame)
+
+            if cv2.waitKey(delay) & 0xFF == ord("q"):
+                LOGGER.info("Stream stopped by user.")
+                break
+
+        cv2.destroyAllWindows()
+
+    def _inference_and_preparation(
+        self, img0: np.ndarray, conf_thres: float | None, iou_thres: float | None, *args, **kwargs
+    ) -> np.ndarray:
+        """Core reasoning and rendering logic."""
         h0, w0, _ = img0.shape
 
         # scale to square
-        padded_img = pad_to_square(img=img0, pad_values=0)
-        padded_ir = pad_to_square(img=ir0, pad_values=0)
+        padded_img = pad_to_square(img=img0, pad_values=(114, 114, 114))
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
         img = tfs(padded_img)
         img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
-        ir = tfs(padded_ir)
-        ir = resize(ir, size=self.imgsz).unsqueeze(0).to(self.device)
 
         # input image to model
-        preds = self.net(img, ir)
+        preds = self.net(img)
 
         # decode preds
         detections = self.decode_preds(preds, img.size(2))  # xywh
+
         # NMS
         detections = non_max_suppression(
             detections.permute(0, 2, 1),
@@ -281,15 +310,16 @@ class MultimodalDetection(YoloV8):
             agnostic=self.single_cls,
         )  # xyxy
 
-        # rescale to img coordiante
+        # rescale to img coordinate
         detection = detections[0]
 
-        bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
-        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
-        cls = [int(cid) for cid in cls]
+        if len(detection) > 0:
+            bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
+            bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
+            cls = [int(cid) for cid in cls]
+        else:
+            bboxes, conf, cls = [], [], []
 
-        # visiualization
-        if modal is None or modal == "img":
-            visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
-        elif modal == "ir":
-            visualize_img_bboxes(ir0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        # visualization
+        res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        return res_img if res_img is not None else img0

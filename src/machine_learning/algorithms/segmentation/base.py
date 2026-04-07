@@ -16,9 +16,6 @@ from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.detection import pad_to_square, resize
 from machine_learning.utils.segmentation import calculate_miou, visualize_mask, rescale_masks
 
-from machine_learning.utils.ops import img_tensor2np
-from machine_learning.utils.plots import plot_imgs
-
 
 class PerPixelSegmentation(AlgorithmBase):
     """
@@ -84,9 +81,6 @@ class PerPixelSegmentation(AlgorithmBase):
             # preprocess input and target
             imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
             targets = batch["mask"].to(self.device)
-
-            img0 = img_tensor2np(imgs[0])
-            plot_imgs([img0])
 
             with autocast(
                 device_type=str(self.device), enabled=self.amp

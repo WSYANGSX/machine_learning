@@ -13,6 +13,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 
 from machine_learning.utils.logger import LOGGER
+from machine_learning.utils.streams import StreamBase
 from machine_learning.networks import BaseNet, NET_MAPS
 from machine_learning.utils.torch_utils import ModelEMA
 from machine_learning.utils import get_gpu_mem, load_cfg
@@ -128,6 +129,26 @@ class AlgorithmBase(ABC):
         else:
             self.parse_dataset(dataset)  # add dataset_cfg
             self._flatten_cfg = self.cfg_flat(self.cfg)  # used for building net
+
+        # build net
+        self._build_net(self.provided_net)
+        # load net weights from ema
+        self.load(ckpt, load_ema=True)
+        # set device
+        for net in self.nets.values():
+            net.to(self.device)
+
+        self.set_eval()
+
+    def _init_on_predictor(self, ckpt: str) -> None:
+        """
+        Initialize the net, and load the checkpoint weights.
+
+        Args:
+            ckpt (FilePath): Checkpoint file path.
+        """
+        self.ema_enable = False  # disable ema for predict
+        self.amp = False
 
         # build net
         self._build_net(self.provided_net)
@@ -601,12 +622,14 @@ class AlgorithmBase(ABC):
         elif mode == "val":
             print(("%-12s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
 
+    @abstractmethod
     def train_epoch(
         self, epoch: int, writer: SummaryWriter, log_interval: int
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Returns training metrics and info dict for the epoch."""
         self.set_train()
 
+    @abstractmethod
     def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Returns val metrics and info dict for the epoch."""
         self.set_eval()
@@ -638,22 +661,33 @@ class AlgorithmBase(ABC):
             self.last_opt_step = batches
 
     @abstractmethod
-    def eval(self, *args, **kwargs) -> None:
+    def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """
-        Evaluate the model of the algorithm.
+        Evaluate the preformece of the model on test dataset.
 
-        The parameters change according to the specific implementation logic of the subclass
+        Note:
+            Verify the objective metrics (mAP, mIoU, Loss) of the model on the test set.
         """
-        pass
+        self.set_eval()
+
+    @abstractmethod
+    def predict(self, streams: str | StreamBase, *args, **kwargs) -> None:
+        """
+        Make predictions from different special data stream.
+
+        Note:
+            Deploy the model to the real world, observe the actual operation effect and output the results.
+        """
+        self.set_eval()
 
     def save(
-        self, epoch: int, val_info: dict, best_loss: float, save_path: str, record_dir: str, ckpt_dir: str
+        self, epoch: int, val_info: dict, best_fitness: float, save_path: str, record_dir: str, ckpt_dir: str
     ) -> None:
         """Save checkpoint."""
         state = {
             "epoch": epoch,
             "cfg": self.cfg,
-            "best_loss": best_loss,
+            "best_fitness": best_fitness,
             "nets": {},
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
@@ -795,7 +829,7 @@ class AlgorithmBase(ABC):
         LOGGER.info(f"Successfully loaded checkpoint from {checkpoint}.")
         if "epoch" in state:
             LOGGER.info(f"Checkpoint epoch: {state['epoch']}")
-        if "best_loss" in state:
-            LOGGER.info(f"Checkpoint best loss: {state['best_loss']:.4f}")
+        if "best_fitness" in state:
+            LOGGER.info(f"Checkpoint best_fitness: {state['best_fitness']:.4f}")
 
         return state

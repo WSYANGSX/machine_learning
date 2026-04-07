@@ -603,12 +603,11 @@ def add_bbox(
     Returns:
         np.ndarray: The image with bounding box.
     """
-    img_copy = deepcopy(img)
-    h, w = img_copy.shape[:2]
+    h, w = img.shape[:2]
     x_min, y_min, x_max, y_max = map(int, bbox)
 
     # Add bbox
-    cv2.rectangle(img=img_copy, pt1=(x_min, y_min), pt2=(x_max, y_max), color=color, thickness=thickness)
+    cv2.rectangle(img=img, pt1=(x_min, y_min), pt2=(x_max, y_max), color=color, thickness=thickness)
 
     if class_name is not None or conf is not None:
         # Build the displayed text
@@ -688,12 +687,10 @@ def add_bbox(
         label_y_bottom = min(h, label_y_bottom)
 
         # Draw the label background and text
-        cv2.rectangle(img_copy, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, -1)
-        cv2.rectangle(
-            img_copy, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, max(1, thickness // 2)
-        )
+        cv2.rectangle(img, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, -1)
+        cv2.rectangle(img, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, max(1, thickness // 2))
         cv2.putText(
-            img_copy,
+            img,
             text=display_text,
             org=(text_x, text_y),
             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
@@ -703,7 +700,94 @@ def add_bbox(
             lineType=cv2.LINE_AA,
         )
 
-    return img_copy
+    return img
+
+
+def add_bboxes_to_image(
+    img: np.ndarray,
+    bboxes: np.ndarray,
+    class_ids: np.ndarray | Sequence[int] | None = None,
+    conf: np.ndarray | Sequence[float] | None = None,
+    class_maps: Sequence[str] | Mapping[int, str] | None = None,
+    color: str = "auto",
+    tag_size: float = 0.5,
+    thickness: int = 2,
+    cmap: str | None = None,
+    *args: Any,
+    **kwargs: Any,
+) -> np.ndarray:
+    """Add multiple bounding boxes to the image.
+
+    Args:
+        img (np.ndarray): The image to which bounding boxes are to be added.
+        bboxes (np.ndarray): The Bounding boxes parameters with voc format (x_min, y_min, x_max, y_max).
+        class_ids (Sequence[int] | np.ndarray): The class numbers of objects in the bounding box.
+        conf (Sequence[float] | np.ndarray): The conf of objects.
+        class_maps (Sequence[str] | Mapping[int, str]): The names corresponding to the class numbers of objects.
+        color (str): The color of the bboxes. Default to "auto", one color for each class.
+        tag_size (float): The size of category tag.
+        thickness (int): The thickness of the bboxes lines. Default to 2.
+        cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot',
+        rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any
+        color mapping, such as cmap='viridis r'.
+    """
+    res_img = img.copy()
+
+    # deal with color
+    color_ls = []
+    if class_ids is None:
+        color_ls.append(ImageColor.getrgb(color if color != "auto" else "red"))
+    else:
+        num_colors = len(CSS_COLORS)
+        for i in class_ids:
+            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i % num_colors)]))
+
+    # deal with conf
+    if conf is None:
+        conf = [None] * len(bboxes)
+
+    if class_ids is None:
+        for bbox, cf in zip(bboxes, conf):
+            res_img = add_bbox(
+                img=res_img,
+                bbox=bbox,
+                conf=cf,
+                color=color_ls[0],
+                tag_size=tag_size,
+                thickness=thickness,
+            )
+    else:
+        assert len(class_ids) == len(bboxes) and len(class_ids) == len(conf), (
+            "The length of bboxes, conf and class_ids must be the same."
+        )
+
+        if class_maps is not None:
+            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
+                class_name = class_maps[class_id]
+                res_img = add_bbox(
+                    img=res_img,
+                    bbox=bbox,
+                    conf=cf,
+                    class_name=class_name,
+                    color=clr,
+                    tag_size=tag_size,
+                    thickness=thickness,
+                )
+        else:
+            class_maps = {i: str(i) for i in class_ids}
+            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
+                class_name = class_maps[class_id]
+                res_img = add_bbox(
+                    img=res_img,
+                    bbox=bbox,
+                    conf=cf,
+                    class_name=class_name,
+                    color=clr,
+                    tag_size=tag_size,
+                    thickness=thickness,
+                )
+
+    return res_img
 
 
 def visualize_img_bboxes(
@@ -717,7 +801,7 @@ def visualize_img_bboxes(
     thickness: int = 2,
     cmap: str | None = None,
     *args: Any,
-    **kwargs: dict[str, Any],
+    **kwargs: Any,
 ) -> None:
     """Plot the image with bounding boxes.
 
@@ -735,63 +819,23 @@ def visualize_img_bboxes(
         color mapping, such as cmap='viridis r'.
     """
 
-    # deal with color
-    color_ls = []
-    if class_ids is None:
-        color_ls.append(ImageColor.getrgb(color if color != "auto" else "red"))
-    else:
-        num_colors = len(CSS_COLORS)
-        for i in class_ids:
-            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i % num_colors)]))
-
-    # deal with conf
-    if conf is None:
-        conf = [None] * len(bboxes)
-
-    if class_ids is None:
-        for bbox, cf in zip(bboxes, conf):
-            img = add_bbox(
-                img=img,
-                bbox=bbox,
-                conf=cf,
-                color=color_ls[0],
-                tag_size=tag_size,
-                thickness=thickness,
-            )
-    else:
-        assert len(class_ids) == len(bboxes) and len(class_ids) == len(conf), (
-            "The length of bboxes, conf and class_ids must be the same."
-        )
-
-        if class_maps is not None:
-            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
-                class_name = class_maps[class_id]
-                img = add_bbox(
-                    img=img,
-                    bbox=bbox,
-                    conf=cf,
-                    class_name=class_name,
-                    color=clr,
-                    tag_size=tag_size,
-                    thickness=thickness,
-                )
-        else:
-            class_maps = {i: str(i) for i in class_ids}
-            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
-                class_name = class_maps[class_id]
-                img = add_bbox(
-                    img=img,
-                    bbox=bbox,
-                    conf=cf,
-                    class_name=class_name,
-                    color=clr,
-                    tag_size=tag_size,
-                    thickness=thickness,
-                )
+    res_img = add_bboxes_to_image(
+        img=img,
+        bboxes=bboxes,
+        class_ids=class_ids,
+        conf=conf,
+        class_maps=class_maps,
+        color=color,
+        tag_size=tag_size,
+        thickness=thickness,
+        cmap=cmap,
+        *args,
+        **kwargs,
+    )
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    plt.imshow(img, cmap)
+    plt.imshow(res_img, cmap)
     plt.show()
 
 

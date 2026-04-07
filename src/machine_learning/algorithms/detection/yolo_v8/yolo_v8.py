@@ -14,6 +14,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils.streams import VideoStream, WebcamStream
 from machine_learning.utils.detection import (
     resize,
     non_max_suppression,
@@ -22,7 +23,7 @@ from machine_learning.utils.detection import (
     match_predictions,
     ap_per_class,
     pad_to_square,
-    visualize_img_bboxes,
+    add_bboxes_to_image,
     rescale_boxes,
 )
 from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
@@ -101,8 +102,14 @@ class YoloV8(AlgorithmBase):
 
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
 
-    def _init_on_evaluator(self, ckpt, dataset, use_dataset):
-        super()._init_on_evaluator(ckpt, dataset, use_dataset)
+    def _init_on_evaluator(self, ckpt, dataset, load_dataset):
+        super()._init_on_evaluator(ckpt, dataset, load_dataset)
+
+        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
+        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
+
+    def _init_on_predictor(self, ckpt):
+        super()._init_on_predictor(ckpt)
 
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
@@ -123,6 +130,71 @@ class YoloV8(AlgorithmBase):
         )
 
         self._add_optimizer("optimizer", self.optimizer)
+
+    def build_optimizer(self, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+        """
+        Constructs an optimizer for the given model, based on the specified optimizer name, learning rate, momentum,
+        weight decay, and number of iterations.
+
+        Args:
+            model (torch.nn.Module): The model for which to build an optimizer.
+            name (str, optional): The name of the optimizer to use. If 'auto', the optimizer is selected
+                based on the number of iterations. Default: 'auto'.
+            lr (float, optional): The learning rate for the optimizer. Default: 0.001.
+            momentum (float, optional): The momentum factor for the optimizer. Default: 0.9.
+            decay (float, optional): The weight decay for the optimizer. Default: 1e-5.
+            iterations (float, optional): The number of iterations, which determines the optimizer if
+                name is 'auto'. Default: 1e5.
+
+        Returns:
+            (torch.optim.Optimizer): The constructed optimizer.
+        """
+        g = [], [], []  # optimizer parameter groups
+        bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
+        if name == "auto":
+            LOGGER.info(
+                f"{colorstr('optimizer:')} 'optimizer=auto' found, "
+                f"ignoring 'lr={self.opt_cfg['lr']}' and 'momentum={self.opt_cfg['momentum']}' and "
+                f"determining best 'optimizer', 'lr' and 'momentum' automatically... "
+            )
+            lr_fit = round(0.002 * 5 / (4 + self.dataset_cfg["nc"]), 6)  # lr0 fit equation to 6 decimal places
+            name, lr, momentum = ("SGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
+            self.opt_cfg["warmup_bias_lr"] = 0.0  # no higher than 0.01 for Adam
+
+        for module_name, module in self.net.named_modules():
+            for param_name, param in module.named_parameters(recurse=False):
+                fullname = f"{module_name}.{param_name}" if module_name else param_name
+                if "bias" in fullname:  # bias (no decay)
+                    g[2].append(param)
+                elif isinstance(module, bn):  # weight (no decay)
+                    g[1].append(param)
+                else:  # weight (with decay)
+                    g[0].append(param)
+
+        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
+        name = {x.lower(): x for x in optimizers}.get(name.lower())
+        if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
+            optimizer = getattr(torch.optim, name, torch.optim.Adam)(
+                g[2], lr=lr, betas=(momentum, 0.999), weight_decay=0.0
+            )
+        elif name == "RMSProp":
+            optimizer = torch.optim.RMSprop(g[2], lr=lr, momentum=momentum)
+        elif name == "SGD":
+            optimizer = torch.optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        else:
+            raise NotImplementedError(
+                f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
+                "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
+            )
+
+        optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
+        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
+        LOGGER.info(
+            f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
+            f"{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias(decay=0.0)"
+        )
+
+        return optimizer
 
     def _init_schedulers(self) -> None:
         sch_config = self._cfg["scheduler"]
@@ -195,6 +267,28 @@ class YoloV8(AlgorithmBase):
 
         return metrics, {}
 
+    def warmup(self, batch_inters: int, epoch: int) -> int:
+        wb = (
+            max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
+            if self.opt_cfg["warmup_epochs"] > 0
+            else -1
+        )  # warmup batches
+
+        if batch_inters <= wb:
+            xi = [0, wb]  # x interp
+            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
+            for j, x in enumerate(self.optimizer.param_groups):
+                # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                x["lr"] = np.interp(
+                    batch_inters,
+                    xi,
+                    [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
+                )
+                if "momentum" in x:
+                    x["momentum"] = np.interp(
+                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
+                    )
+
     def close_dataloader_mosaic(self) -> None:
         if hasattr(self.train_loader.dataset, "close_mosaic"):
             LOGGER.info("Closing dataloader mosaic")
@@ -205,12 +299,11 @@ class YoloV8(AlgorithmBase):
         super().validate()
 
         # log metrics
-        stats = []
         metrics = {
             "class": "all",
             "images": 0,
             "vloss": 0.0,
-            "save_best": 0.0,
+            "best_fitness": 0.0,
             "labels": 0,
             "precision": 0.0,
             "recall": 0.0,
@@ -228,102 +321,102 @@ class YoloV8(AlgorithmBase):
                 self.device
             )  # (img_ids, class_ids, bboxes)
 
-            preds = self.net(imgs)
+            net = self.net if not self.ema_enable else self.emas["net"].ema
+            preds = net(imgs)
             loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
 
             # metrics
             metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-
-            # prepare preds
-            detections = self.decode_preds(preds, imgs.size(2))  # [bs, sum(h*w), 4 + nc]
-            # NMS: Fewer overlapping boxes
-            detections = non_max_suppression(
-                detections.permute(0, 2, 1),
-                conf_thres=self.conf_thres_val,
-                iou_thres=self.iou_thres,
-                multi_label=True,
-                max_det=self.max_det,
-                agnostic=self.single_cls,
-            )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
-
-            # # prepare targets
-            # scale = torch.tensor([imgs.shape[3], imgs.shape[2]] * 2, device=self.device)
-            # targets_abs = targets.clone()
-            # bbox_abs = targets[:, 2:6] * scale  # convert to abs xywh
-            # targets_abs[:, 2:6] = xywh2xyxy(bbox_abs)  # convert to xyxy (img_ids, class_ids, bboxes)
-
-            for si, detection in enumerate(detections):
-                metrics["images"] += 1
-                # get the original frame of the current image (img_id, class_id, x1, y1, x2, y2)
-                pbatch = self.prepare_batch(si, batch)
-                tcls, tbox = pbatch.pop("cls"), pbatch.pop("bbox")
-
-                if len(detection) == 0:
-                    if len(tcls):
-                        stats.append(
-                            (
-                                torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
-                                torch.zeros(0, device=self.device),  # confidence scores
-                                torch.zeros(0, device=self.device),  # pred_classes
-                                tcls,  # ground truth classes
-                            )
-                        )
-                    continue
-
-                # Prediction box format: [x1, y1, x2, y2, conf, class]
-                detection = self.prepare_pred(detection, pbatch)
-                detection = detection[detection[:, 4].argsort(descending=True)]
-                pred_boxes = detection[:, :4]
-                pred_scores = detection[:, 4]
-                pred_classes = detection[:, 5]
-
-                # calculate IoU
-                iou = box_iou(tbox, pred_boxes)  # shape: [n_gt, n_pred]
-                # Determine whether each prediction box is regarded as a correct detection under each IoU threshold
-                tp = match_predictions(pred_classes, tcls, iou, self.iouv)
-
-                # record statistical information
-                stats.append((tp, pred_scores, pred_classes, tcls))
+            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            metrics["images"] += img_num
 
             if i == self.val_batches - 1:
                 # calculate mAP metrics
-                stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
-
-                if len(stats) and stats[0].any():
-                    p, r, ap, f1, ap_class = ap_per_class(
-                        *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
-                    )
-                    ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
-
-                    # AP value for each category
-                    info["ap_per_class"] = {}
-                    for idx, class_idx in enumerate(ap_class):
-                        class_name = (
-                            self.class_names[class_idx]
-                            if hasattr(self, "class_names") and self.class_names
-                            else f"Class {class_idx}"
-                        )
-                        info["ap_per_class"][class_name] = (float(ap50[idx]), float(ap75[idx]), float(ap[idx]))
-
-                    mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
-                    nt = np.bincount(
-                        stats[3].cpu().numpy().astype(np.int64), minlength=self.nc
-                    )  # number of targets per class
-                    metrics["mAP.5"] = map50
-                    metrics["mAP.75"] = map75
-                    metrics["mAP.5-.95"] = map
-                    metrics["precision"] = mp
-                    metrics["recall"] = mr
-
-                else:
-                    nt = np.zeros(1, dtype=np.uint8)
-
+                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
                 metrics["labels"] = nt.sum()
-                metrics["save_best"] = metrics["mAP.5-.95"]
+                metrics["best_fitness"] = metrics["mAP.5-.95"]
 
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
+
+    def get_statistics(
+        self, preds: torch.Tensor, imgsz: int, batch: dict[str, Any]
+    ) -> tuple[list[tuple[torch.Tensor]], int]:
+        """Calculate statistics used for validation and evaluation."""
+        stats = []
+        img_num = 0
+
+        # prepare preds
+        detections = self.decode_preds(preds, imgsz)  # [bs, sum(h*w), 4 + nc]
+        # NMS: Fewer overlapping boxes
+        detections = non_max_suppression(
+            detections.permute(0, 2, 1),
+            conf_thres=self.conf_thres_val,
+            iou_thres=self.iou_thres,
+            multi_label=True,
+            max_det=self.max_det,
+            agnostic=self.single_cls,
+            nc=self.nc,
+        )  # xyxy [(num_kept_boxes, 6 + num_masks)]*bs
+
+        for si, detection in enumerate(detections):
+            img_num += 1
+            # get the original frame of the current image (img_id, class_id, x1, y1, x2, y2)
+            pbatch = self.prepare_batch(si, batch)
+            tcls, tbox = pbatch.pop("cls"), pbatch.pop("bbox")
+
+            if len(detection) == 0:
+                if len(tcls):
+                    stats.append(
+                        (
+                            torch.zeros(0, self.niou, dtype=torch.bool, device=self.device),  # TP
+                            torch.zeros(0, device=self.device),  # confidence scores
+                            torch.zeros(0, device=self.device),  # pred_classes
+                            tcls,  # ground truth classes
+                        )
+                    )
+                continue
+
+            # Prediction box format: [x1, y1, x2, y2, conf, class]
+            detection = self.prepare_pred(detection, pbatch)
+            detection = detection[detection[:, 4].argsort(descending=True)]
+            pred_boxes = detection[:, :4]
+            pred_scores = detection[:, 4]
+            pred_classes = detection[:, 5]
+
+            # calculate IoU
+            iou = box_iou(tbox, pred_boxes)  # shape: [n_gt, n_pred]
+            # Determine whether each prediction box is regarded as a correct detection under each IoU threshold
+            tp = match_predictions(pred_classes, tcls, iou, self.iouv)
+
+            # record statistical information
+            stats.append((tp, pred_scores, pred_classes, tcls))
+
+        return stats, img_num
+
+    def decode_preds(self, preds: torch.Tensor, img_size: int) -> torch.Tensor:
+        # decode preds
+        x = []
+        for pred in preds:
+            bs, _, h, w = pred.shape
+            pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
+            x.append(pred)
+        x = torch.cat(x, 1)  # [bs， sum(h*w), nc + 4*reg_max]
+        # Separate the bounding box from the category score
+        box, cls = x.split((self.reg_max * 4, self.nc), 2)
+
+        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
+        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
+        dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
+        detections = torch.cat((dbox, cls.sigmoid()), 2)
+
+        return detections  # [bs, sum(h*w), 4 + nc]
 
     def prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
         """
@@ -358,24 +451,6 @@ class YoloV8(AlgorithmBase):
             predn[:, :4], pbatch["imgsz"], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
         )  # native-space pred
         return predn
-
-    def decode_preds(self, preds: torch.Tensor, img_size: int) -> torch.Tensor:
-        # decode preds
-        x = []
-        for pred in preds:
-            bs, _, h, w = pred.shape
-            pred = pred.permute(0, 2, 3, 1).reshape(bs, h * w, -1)
-            x.append(pred)
-        x = torch.cat(x, 1)  # [bs， sum(h*w), nc + 4*reg_max]
-        # Separate the bounding box from the category score
-        box, cls = x.split((self.reg_max * 4, self.nc), 2)
-
-        strides = torch.tensor([img_size // pred.size(2) for pred in preds], device=self.device)
-        anchor_points, stride_tensor = make_anchors(preds, strides, 0.5)
-        dbox = self.bbox_decode(anchor_points, box, xywh=True) * stride_tensor
-        detections = torch.cat((dbox, cls.sigmoid()), 2)
-
-        return detections  # [bs, sum(h*w), 4 + nc]
 
     def criterion(self, preds: Sequence[torch.Tensor], targets: torch.Tensor, imgs_shape: tuple[int]):
         closs = torch.zeros(1, device=self.device)
@@ -470,22 +545,162 @@ class YoloV8(AlgorithmBase):
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
     @torch.no_grad()
-    def eval(
+    def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Evaluate the preformece of the model on test dataset."""
+        super().eval()
+
+        if self.test_loader is None:
+            raise ValueError("Test dataloader is not available.")
+
+        metrics = {
+            "class": "all",
+            "images": 0,
+            "labels": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "mAP.5": 0.0,
+            "mAP.75": 0.0,
+            "mAP.5-.95": 0.0,
+        }
+        info = {}
+        self.print_metric_titles("val", metrics)
+
+        pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
+        for i, batch in pbar:
+            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
+
+            preds = self.net(imgs)
+            stats = self.get_statistics(preds, imgs.size(2), batch)
+            metrics["images"] += stats[1]
+
+            if i == self.val_batches - 1:
+                # calculate mAP metrics
+                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
+                metrics["labels"] = nt.sum()
+
+            self.pbar_log("val", pbar, **metrics)
+
+        return metrics, info
+
+    def calculate_map(
+        self, stats: list[tuple[torch.Tensor]], info: dict[str, Any]
+    ) -> tuple[float, float, float, float, float, np.ndarray]:
+        """Calculate mAP metrics."""
+        stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
+
+        if len(stats) and stats[0].any():
+            p, r, ap, f1, ap_class = ap_per_class(
+                *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
+            )
+            ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
+
+            # AP value for each category
+            info["ap_per_class"] = {}
+            for idx, class_idx in enumerate(ap_class):
+                class_name = (
+                    self.class_names[class_idx]
+                    if hasattr(self, "class_names") and self.class_names
+                    else f"Class {class_idx}"
+                )
+                info["ap_per_class"][class_name] = (float(ap50[idx]), float(ap75[idx]), float(ap[idx]))
+
+            mp, mr, map50, map75, map = p.mean(), r.mean(), ap50.mean(), ap75.mean(), ap.mean()
+            nt = np.bincount(stats[3].cpu().numpy().astype(np.int64), minlength=self.nc)  # number of targets per class
+
+            return mp, mr, map50, map75, map, nt
+        else:
+            return 0.0, 0.0, 0.0, 0.0, 0.0, np.zeros(1, dtype=np.uint8)
+
+    @torch.no_grad()
+    def predict(
+        self,
+        stream: str | FilePath | VideoStream | WebcamStream,
+        conf_thres: float | None = None,
+        iou_thres: float | None = None,
+        *args,
+        **kwargs,
+    ):
+        super().predict(stream)
+
+        if isinstance(stream, (str, FilePath)):
+            self._predict_single_frame(stream, conf_thres, iou_thres, *args, **kwargs)
+
+        elif isinstance(stream, (VideoStream, WebcamStream)):
+            self._predict_stream(stream, conf_thres, iou_thres, *args, **kwargs)
+
+    def _predict_single_frame(
         self,
         img_path: str | FilePath,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
         *args,
         **kwargs,
-    ) -> None:
-        self.set_eval()
-
+    ):
+        """Evaluate the single-frame image."""
         # read image
-        img0 = cv2.cvtColor(cv2.imread(img_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        img0 = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        if img0 is None:
+            raise FileNotFoundError(f"Failed to read image: {img_path}")
+        img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
+
+        res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
+
+        res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
+        cv2.imshow("Prediction", res_img_bgr)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    def _predict_stream(
+        self,
+        stream: VideoStream | WebcamStream,
+        conf_thres: float | None = None,
+        iou_thres: float | None = None,
+        *args,
+        **kwargs,
+    ):
+        """Evaluate video images or live data streams."""
+        # Calculate the exact inter-frame delay required for offline video
+        # The camera is internally limited, so delay=1
+        is_video = isinstance(stream, VideoStream)
+        delay = max(1, int(1000 / stream.fps)) if is_video and stream.fps > 0 else 1
+
+        LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
+
+        for frames in stream:
+            if isinstance(frames, list):
+                processed_frames = []
+                for f in frames:
+                    f_rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                    res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+                    processed_frames.append(cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR))
+
+                show_frame = np.hstack(processed_frames)
+            else:
+                f_rgb = cv2.cvtColor(frames, cv2.COLOR_BGR2RGB)
+                res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+                show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
+
+            cv2.imshow("Stream Evaluation", show_frame)
+
+            if cv2.waitKey(delay) & 0xFF == ord("q"):
+                LOGGER.info("Stream stopped by user.")
+                break
+
+        cv2.destroyAllWindows()
+
+    def _inference_and_preparation(
+        self, img0: np.ndarray, conf_thres: float | None, iou_thres: float | None, *args, **kwargs
+    ) -> np.ndarray:
+        """Core reasoning and rendering logic."""
         h0, w0, _ = img0.shape
 
         # scale to square
-        padded_img = pad_to_square(img=img0, pad_values=0)
+        padded_img = pad_to_square(img=img0, pad_values=(114, 114, 114))
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
@@ -497,6 +712,7 @@ class YoloV8(AlgorithmBase):
 
         # decode preds
         detections = self.decode_preds(preds, img.size(2))  # xywh
+
         # NMS
         detections = non_max_suppression(
             detections.permute(0, 2, 1),
@@ -507,102 +723,19 @@ class YoloV8(AlgorithmBase):
             agnostic=self.single_cls,
         )  # xyxy
 
-        # rescale to img coordiante
+        # rescale to img coordinate
         detection = detections[0]
 
-        bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
-        bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
-        cls = [int(cid) for cid in cls]
-
-        # visiualization
-        visualize_img_bboxes(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
-
-    def warmup(self, batch_inters: int, epoch: int) -> int:
-        wb = (
-            max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
-            if self.opt_cfg["warmup_epochs"] > 0
-            else -1
-        )  # warmup batches
-
-        if batch_inters <= wb:
-            xi = [0, wb]  # x interp
-            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
-            for j, x in enumerate(self.optimizer.param_groups):
-                # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                x["lr"] = np.interp(
-                    batch_inters,
-                    xi,
-                    [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
-                )
-                if "momentum" in x:
-                    x["momentum"] = np.interp(
-                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
-                    )
-
-    def build_optimizer(self, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
-        """
-        Constructs an optimizer for the given model, based on the specified optimizer name, learning rate, momentum,
-        weight decay, and number of iterations.
-
-        Args:
-            model (torch.nn.Module): The model for which to build an optimizer.
-            name (str, optional): The name of the optimizer to use. If 'auto', the optimizer is selected
-                based on the number of iterations. Default: 'auto'.
-            lr (float, optional): The learning rate for the optimizer. Default: 0.001.
-            momentum (float, optional): The momentum factor for the optimizer. Default: 0.9.
-            decay (float, optional): The weight decay for the optimizer. Default: 1e-5.
-            iterations (float, optional): The number of iterations, which determines the optimizer if
-                name is 'auto'. Default: 1e5.
-
-        Returns:
-            (torch.optim.Optimizer): The constructed optimizer.
-        """
-        g = [], [], []  # optimizer parameter groups
-        bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
-        if name == "auto":
-            LOGGER.info(
-                f"{colorstr('optimizer:')} 'optimizer=auto' found, "
-                f"ignoring 'lr={self.opt_cfg['lr']}' and 'momentum={self.opt_cfg['momentum']}' and "
-                f"determining best 'optimizer', 'lr' and 'momentum' automatically... "
-            )
-            lr_fit = round(0.002 * 5 / (4 + self.dataset_cfg["nc"]), 6)  # lr0 fit equation to 6 decimal places
-            name, lr, momentum = ("SGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
-            self.opt_cfg["warmup_bias_lr"] = 0.0  # no higher than 0.01 for Adam
-
-        for module_name, module in self.net.named_modules():
-            for param_name, param in module.named_parameters(recurse=False):
-                fullname = f"{module_name}.{param_name}" if module_name else param_name
-                if "bias" in fullname:  # bias (no decay)
-                    g[2].append(param)
-                elif isinstance(module, bn):  # weight (no decay)
-                    g[1].append(param)
-                else:  # weight (with decay)
-                    g[0].append(param)
-
-        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
-        name = {x.lower(): x for x in optimizers}.get(name.lower())
-        if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
-            optimizer = getattr(torch.optim, name, torch.optim.Adam)(
-                g[2], lr=lr, betas=(momentum, 0.999), weight_decay=0.0
-            )
-        elif name == "RMSProp":
-            optimizer = torch.optim.RMSprop(g[2], lr=lr, momentum=momentum)
-        elif name == "SGD":
-            optimizer = torch.optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        if len(detection) > 0:
+            bboxes, conf, cls = detection.split((4, 1, 1), dim=1)
+            bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
+            cls = [int(cid) for cid in cls]
         else:
-            raise NotImplementedError(
-                f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
-                "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
-            )
+            bboxes, conf, cls = [], [], []
 
-        optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
-        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
-        LOGGER.info(
-            f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
-            f"{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias(decay=0.0)"
-        )
-
-        return optimizer
+        # visualization
+        res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        return res_img if res_img is not None else img0
 
 
 """
