@@ -78,10 +78,10 @@ def print_dict(input_dict: dict, indent: int = 0) -> None:
 
 def print_cfg(title: str, cfg: dict) -> None:
     """Print cfg dict nicely."""
-    print("=" * 110)
+    print("=" * 150)
     print(f"{title}:")
     print_dict(cfg)
-    print("=" * 110)
+    print("=" * 150)
 
 
 def cfg2dict(cfg: BaseCfg) -> dict:

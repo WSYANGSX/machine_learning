@@ -13,6 +13,7 @@ from machine_learning.utils.logger import LOGGER
 from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils.streams import VideoStream, WebcamStream
 from machine_learning.utils.detection import pad_to_square, resize
 from machine_learning.utils.segmentation import calculate_miou, visualize_mask, rescale_masks
 
@@ -113,7 +114,7 @@ class PerPixelSegmentation(AlgorithmBase):
         # metrics
         total_intersection = None
         total_union = None
-        metrics = {"vloss": 0.0, "save_best": 0.0, "batch_miou": 0.0, "miou": 0.0}
+        metrics = {"vloss": 0.0, "best_fitness": 0.0, "batch_miou": 0.0, "miou": 0.0}
         self.print_metric_titles("val", metrics)
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
@@ -122,7 +123,8 @@ class PerPixelSegmentation(AlgorithmBase):
             imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
             targets = batch["mask"].to(self.device)
 
-            predictions = self.net(imgs)
+            net = self.net if not self.ema_enable else self.emas["net"].ema
+            predictions = net(imgs)
             loss = self.criterion(predictions, targets)
 
             # calculate batch mIoU
@@ -147,7 +149,7 @@ class PerPixelSegmentation(AlgorithmBase):
                 else:
                     overall_miou = 0.0
                 metrics["miou"] = overall_miou
-                metrics["save_best"] = metrics["miou"]
+                metrics["best_fitness"] = metrics["miou"]
 
             # log
             self.pbar_log("val", pbar, **metrics)
@@ -189,6 +191,11 @@ class PerPixelSegmentation(AlgorithmBase):
 
         # visualize results
         visualize_mask(mask=mask)
+
+    @torch.no_grad()
+    def predict(self, streams: str | VideoStream | WebcamStream, *args, **kwargs) -> None:
+        """Make predictions from different special data stream."""
+        super().predict(streams, *args, **kwargs)
 
 
 class MaskSegmentation(AlgorithmBase):
