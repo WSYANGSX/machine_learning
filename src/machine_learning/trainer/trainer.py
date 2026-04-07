@@ -107,7 +107,7 @@ class Trainer:
                 scheduler = self.algorithm.schedulers["scheduler"]
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     # Give priority to using save best. If not available, degrade to vloss
-                    monitor_metric = val_metrics.get("save_best", val_metrics.get("vloss"))
+                    monitor_metric = val_metrics.get("best_fitness", val_metrics.get("vloss"))
                     scheduler.step(monitor_metric)
                 else:
                     scheduler.step()
@@ -115,7 +115,7 @@ class Trainer:
                 for name, scheduler in self.algorithm.schedulers.items():
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         # For multiple networks, usually their respective losses or the global save best are used
-                        monitor_metric = val_metrics.get("save_best", val_metrics.get(name + "loss"))
+                        monitor_metric = val_metrics.get("best_fitness", val_metrics.get(name + "loss"))
                         scheduler.step(monitor_metric)
                     else:
                         scheduler.step()
@@ -134,8 +134,8 @@ class Trainer:
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
-            if self.cfg.save_best and "save_best" in val_metrics:
-                current_val = val_metrics["save_best"]
+            if self.cfg.save_best and "best_fitness" in val_metrics:
+                current_val = val_metrics["best_fitness"]
                 if self.task in ("detect", "segment"):
                     if current_val > self.save_best:  # mAP, mIOU as references
                         self.save_best = current_val
@@ -145,7 +145,7 @@ class Trainer:
                         self.save_best = current_val
                         self.save_checkpoint(epoch, val_metrics, self.save_best, is_best=True)
             else:
-                LOGGER.info("Saving of the best loss model skipped.")
+                LOGGER.info("Saving of the model with the best fitness skipped.")
 
             # save the model regularly
             if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
@@ -166,13 +166,13 @@ class Trainer:
     def train_from_checkpoint(self, checkpoint: str) -> None:
         state_dict = self._algorithm.load(checkpoint)
         start_epoch = state_dict["epoch"] + 1
-        self.best_loss = state_dict.get("best_loss", torch.inf)
+        self.best_fitness = state_dict["best_fitness"]
         self.record_dir = state_dict["record_dir"]
         self.ckpt_dir = state_dict["ckpt_dir"]
 
         self.train(start_epoch)
 
-    def save_checkpoint(self, epoch: int, val_return: dict, best_loss: float, is_best: bool = False) -> None:
+    def save_checkpoint(self, epoch: int, val_return: dict, best_fitness: float, is_best: bool = False) -> None:
         try:
             os.makedirs(self.ckpt_dir, exist_ok=True)
         except OSError as e:
@@ -183,7 +183,7 @@ class Trainer:
             filename = "best_model.pth"
         save_path = os.path.join(self.ckpt_dir, filename)
 
-        self._algorithm.save(epoch, val_return, best_loss, save_path, self.record_dir, self.ckpt_dir)
+        self._algorithm.save(epoch, val_return, best_fitness, save_path, self.record_dir, self.ckpt_dir)
 
     def epoch_info(
         self,
@@ -236,7 +236,7 @@ class Trainer:
 
         if val_metrics:
             for k, v in val_metrics.items():
-                style = "bold green" if k == "save_best" else None
+                style = "bold green" if k == "best_fitness" else None
                 val_str = _format_value(v)
                 if style:
                     pass
