@@ -35,7 +35,7 @@ class StreamBase:
 class VideoStream(StreamBase):
     def __init__(
         self,
-        path: Union[str, List[str]],
+        path: Union[str, dict[str, str]],
         width: int | None = None,
         height: int | None = None,
         fps: int | None = None,
@@ -44,12 +44,14 @@ class VideoStream(StreamBase):
         Load video from one or multiple local files (for multi-modal inference)
         with optional dynamic resizing and downsampling.
         """
-        if not isinstance(path, (list, tuple)):
-            paths = [path]
+        self.input_is_dict = isinstance(path, dict)
+        if not self.input_is_dict:
+            paths_dict = {"img": path}
         else:
-            paths = path
+            paths_dict = path
 
-        self.paths = [os.path.abspath(p) for p in paths]
+        self.keys = list(paths_dict.keys())
+        self.paths = [os.path.abspath(p) for p in paths_dict.values()]
         self.num_vids = len(self.paths)
         self.caps = []
 
@@ -75,6 +77,7 @@ class VideoStream(StreamBase):
         # output properties
         self.width = width if width else self.orig_widths[0]
         self.height = height if height else self.orig_heights[0]
+
         if fps is not None:
             self.fps = min(fps, self.valid_fps)
             if fps > self.valid_fps:
@@ -93,18 +96,17 @@ class VideoStream(StreamBase):
 
         self.count = 0
 
-        paths_str = ", ".join([os.path.basename(p) for p in self.paths])
+        paths_str = ", ".join([f"{k}: {os.path.basename(p)}" for k, p in zip(self.keys, self.paths)])
         orig_str = " | ".join(
             [
-                f"{self.orig_widths[i]}x{self.orig_heights[i]} @ {self.orig_fpses[i]:.2f} FPS, "
-                f"{self.orig_frames[i]} frames"
-                for i in range(self.num_vids)
+                f"{k}({self.orig_widths[i]}x{self.orig_heights[i]} @ {self.orig_fpses[i]:.2f} FPS, {self.orig_frames[i]} frames)"
+                for i, k in enumerate(self.keys)
             ]
         )
 
         LOGGER.info(
             f"Loaded Video(s): [{paths_str}] | "
-            f"Original:  {orig_str} | "
+            f"Original: {orig_str} | "
             f"Output: {self.width}x{self.height} @ {self.fps} FPS (Skip interval: {self.stride - 1})"
         )
 
@@ -112,13 +114,13 @@ class VideoStream(StreamBase):
     def frames(self) -> int:
         return len(self)
 
-    def __iter__(self) -> Iterator[Union[np.ndarray, List[np.ndarray]]]:
+    def __iter__(self) -> Iterator[Union[np.ndarray, dict[str, np.ndarray]]]:
         self.count = 0
         for cap in self.caps:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         return self
 
-    def __next__(self) -> Union[np.ndarray, List[np.ndarray]]:
+    def __next__(self) -> Union[np.ndarray, dict[str, np.ndarray]]:
         for _ in range(self.stride - 1):
             if self.count >= self.valid_frames:
                 break
@@ -147,7 +149,7 @@ class VideoStream(StreamBase):
                 if (self.width, self.height) != (self.orig_widths[i], self.orig_heights[i]):
                     frames[i] = cv2.resize(frame, (self.width, self.height))
 
-        return frames[0] if self.num_vids == 1 else frames
+        return {k: f for k, f in zip(self.keys, frames)} if self.input_is_dict else frames[0]
 
     def release(self):
         for cap in self.caps:
@@ -157,11 +159,17 @@ class VideoStream(StreamBase):
     def __len__(self) -> int:
         return int(self.valid_frames // self.stride) if self.valid_frames != float("inf") else 0
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
 
 class WebcamStream(StreamBase):
     def __init__(
         self,
-        sources: Union[int, str, List[Union[int, str]]],
+        sources: Union[int, str, dict[str, Union[int, str]]],
         width: int | None = None,
         height: int | None = None,
         fps: int | None = None,
@@ -169,12 +177,16 @@ class WebcamStream(StreamBase):
         """
         Load live stream from one or multiple webcams/RTSP streams for multi-modal inference.
         """
-        if not isinstance(sources, (list, tuple)):
-            sources = [sources]
+        self.input_is_dict = isinstance(sources, dict)
+        if not self.input_is_dict:
+            sources_dict = {"img": sources}
+        else:
+            sources_dict = sources
 
-        self.sources = sources
-        self.num_cams = len(sources)
-        self.caps = [cv2.VideoCapture(s) for s in sources]
+        self.keys = list(sources_dict.keys())
+        self.sources = list(sources_dict.values())
+        self.num_cams = len(self.sources)
+        self.caps = [cv2.VideoCapture(s) for s in self.sources]
 
         for s, cap in zip(self.sources, self.caps):
             if not cap.isOpened():
@@ -204,7 +216,6 @@ class WebcamStream(StreamBase):
         self.fps = fps if fps else self.orig_fps
 
         # FPS Throttling for live stream
-        # Instead of skipping frames, we compute the target delay between yields
         self.target_delay = 1.0 / self.fps if self.fps < self.orig_fps else 0.0
         self.last_yield_time = 0.0
 
@@ -220,7 +231,7 @@ class WebcamStream(StreamBase):
         while not all(img is not None for img in self.imgs) and self.running:
             time.sleep(0.01)
 
-        sources_str = ", ".join([str(s) for s in self.sources])
+        sources_str = ", ".join([f"{k}: {s}" for k, s in zip(self.keys, self.sources)])
         LOGGER.info(
             f"Loaded Webcam: [{sources_str}] | "
             f"Original: {self.orig_width}x{self.orig_height} @ {self.orig_fps:.2f} FPS | "
@@ -233,7 +244,6 @@ class WebcamStream(StreamBase):
 
     def _update(self):
         """Background thread to read frames continuously to avoid buffer accumulation."""
-        # Polling slightly faster than hardware FPS to ensure the buffer is always drained
         poll_interval = 1.0 / (self.orig_fps * 1.5)
 
         while self.running:
@@ -249,10 +259,10 @@ class WebcamStream(StreamBase):
 
             time.sleep(poll_interval)  # yield thread
 
-    def __iter__(self) -> Iterator[Union[np.ndarray, List[np.ndarray]]]:
+    def __iter__(self) -> Iterator[Union[np.ndarray, dict[str, np.ndarray]]]:
         return self
 
-    def __next__(self) -> Union[np.ndarray, List[np.ndarray]]:
+    def __next__(self) -> Union[np.ndarray, dict[str, np.ndarray]]:
         if not self.running:
             raise StopIteration
 
@@ -270,8 +280,7 @@ class WebcamStream(StreamBase):
         if (self.width, self.height) != (self.orig_width, self.orig_height):
             frames = [cv2.resize(f, (self.width, self.height)) for f in frames]
 
-        # If single camera, return the array directly; if multi-modal, return the list
-        return frames[0] if self.num_cams == 1 else frames
+        return {k: f for k, f in zip(self.keys, frames)} if self.input_is_dict else frames[0]
 
     def release(self):
         self.running = False
@@ -283,3 +292,9 @@ class WebcamStream(StreamBase):
 
     def __len__(self) -> float:
         return float("inf")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
