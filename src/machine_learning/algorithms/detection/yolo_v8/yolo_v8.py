@@ -5,8 +5,6 @@ import math
 import torch
 import numpy as np
 import torch.nn as nn
-from tqdm import tqdm
-from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
 
@@ -108,12 +106,6 @@ class YoloV8(AlgorithmBase):
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
 
-    def _init_on_predictor(self, ckpt):
-        super()._init_on_predictor(ckpt)
-
-        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
-
     def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]
 
@@ -210,64 +202,148 @@ class YoloV8(AlgorithmBase):
         else:
             LOGGER.warning(f"Unknown scheduler type '{sch_type}', no scheduler configured.")
 
-    def train_epoch(
-        self, epoch: int, writer: SummaryWriter, log_interval: int = 10
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        super().train_epoch(epoch, writer, log_interval)
-
+    def on_epoch_start(self, epoch: int) -> None:
+        """Lifecycle hook. etc. close Mosaic."""
         # close mosaic
         if epoch == int(self.close_mosaic_epoch * self.epochs):
             self.close_dataloader_mosaic()
 
-        # log metrics
-        metrics = {"tloss": 0.0, "bloss": 0.0, "dloss": 0.0, "closs": 0.0, "instances": 0, "img_size": None}
-        self.print_metric_titles("train", metrics)
+    def _init_metrics(self, mode: Literal["train", "val", "test"]) -> dict[str, Any]:
+        """Design the metrics used for different mode to print information to console."""
+        if mode == "train":
+            return {
+                "tloss": 0.0,
+                "bloss": 0.0,
+                "dloss": 0.0,
+                "closs": 0.0,
+                "instances": 0,
+                "img_size": None,
+            }
+        elif mode == "val":
+            return {
+                "class": "all",
+                "images": 0,
+                "vloss": 0.0,
+                "best_fitness": 0.0,
+                "labels": 0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "mAP.5": 0.0,
+                "mAP.75": 0.0,
+                "mAP.5-.95": 0.0,
+            }
+        else:
+            return {
+                "class": "all",
+                "images": 0,
+                "labels": 0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "mAP.5": 0.0,
+                "mAP.75": 0.0,
+                "mAP.5-.95": 0.0,
+            }
 
-        pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
-        for i, batch in pbar:
-            # Warmup
-            batches = epoch * self.train_batches + i
-            self.warmup(batches, epoch)
+    def _prepare_batch(self, batch: dict[str, Any], mode: Literal["train", "val", "test"]) -> dict[str, Any]:
+        """Prepare different batch data for different modes."""
+        data = {}
 
-            # Load data
-            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
+        imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
+        data["imgs"] = imgs
+
+        if mode in ("train", "val"):
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
+            data["targets"] = targets
+
+        return data
+
+    def _forward_batch(
+        self,
+        net: BaseNet,
+        data: dict[str, Any],
+        mode: Literal["train", "val", "test"],
+    ) -> dict[str, Any]:
+        if mode in ("train", "val"):
+            imgs = data["imgs"]
+            targets = data["targets"]
+            imgs_shape = imgs.shape
 
             # Loss calculation
-            with autocast(
-                device_type=str(self.device), enabled=self.amp
-            ):  # Ensure that the autocast scope correctly covers the forward computation
-                preds = self.net(imgs)
-                loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
+            preds = net(imgs)
+            loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs_shape)
 
-            # Gradient backpropagation
-            self.backward(loss)
-            # Parameter optimization
-            self.optimizer_step(batches)
+            return {"loss": loss, "lc": lc, "preds": preds}
+        else:
+            imgs = data["imgs"]
+            preds = net(imgs)
 
-            # Metrics
+            return {"preds": preds}
+
+    def _post_process(
+        self,
+        batch_idx: int,
+        res: dict[str, Any],
+        batch: dict[str, Any],
+        data: dict[str, Any],
+        metrics: dict[str, Any],
+        statistics: dict[str, Any],
+        info: dict[str, Any],
+        mode: Literal["train", "val", "test"],
+    ) -> None:
+        if mode == "train":
+            loss, lc = res["loss"], res["lc"]
             bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
 
-            metrics["tloss"] = (metrics["tloss"] * i + loss.item()) / (i + 1)  # tloss
-            metrics["bloss"] = (metrics["bloss"] * i + bloss) / (i + 1)
-            metrics["closs"] = (metrics["closs"] * i + closs) / (i + 1)
-            metrics["dloss"] = (metrics["dloss"] * i + dloss) / (i + 1)
-            metrics["img_size"] = imgs.size(2)
-            metrics["instances"] = targets.size(0)
+            metrics["tloss"] = (metrics["tloss"] * batch_idx + loss.item()) / (batch_idx + 1)  # tloss
+            metrics["bloss"] = (metrics["bloss"] * batch_idx + bloss) / (batch_idx + 1)
+            metrics["closs"] = (metrics["closs"] * batch_idx + closs) / (batch_idx + 1)
+            metrics["dloss"] = (metrics["dloss"] * batch_idx + dloss) / (batch_idx + 1)
+            metrics["img_size"] = data["imgs"].size(2)
+            metrics["instances"] = data["targets"].size(0)
 
-            if i % log_interval == 0:
-                writer.add_scalar("bloss/train_batch", bloss, batches)
-                writer.add_scalar("closs/train_batch", closs, batches)
-                writer.add_scalar("dloss/train_batch", dloss, batches)
+        elif mode == "val":
+            loss, preds = res["loss"], res["preds"]
+            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
+            statistics.extend(batch_stats)
 
-            # log
-            self.pbar_log("train", pbar, epoch, **metrics)
+            metrics["vloss"] = (metrics["vloss"] * batch_idx + loss.item()) / (batch_idx + 1)
+            metrics["images"] += img_num
 
-        return metrics, {}
+            if batch_idx == self.val_batches - 1:
+                # calculate mAP metrics
+                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
+                metrics["labels"] = nt.sum()
+                metrics["best_fitness"] = metrics["mAP.5-.95"]
 
-    def warmup(self, batch_inters: int, epoch: int) -> int:
+        else:
+            preds = res["preds"]
+            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
+            statistics.extend(batch_stats)
+            metrics["images"] += img_num
+
+            if batch_idx == self.test_batches - 1:
+                # calculate mAP metrics
+                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
+                metrics["mAP.5"] = map50
+                metrics["mAP.75"] = map75
+                metrics["mAP.5-.95"] = map
+                metrics["precision"] = mp
+                metrics["recall"] = mr
+                metrics["labels"] = nt.sum()
+
+    def write(self, batches: int, writer: SummaryWriter, res: dict[str, Any], metrics: dict[str, Any]) -> None:
+        writer.add_scalar("bloss/train_batch", metrics["bloss"], batches)
+        writer.add_scalar("closs/train_batch", metrics["closs"], batches)
+        writer.add_scalar("dloss/train_batch", metrics["dloss"], batches)
+
+    def warmup(self, batch_inters: int, epoch: int) -> None:
         wb = (
             max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
             if self.opt_cfg["warmup_epochs"] > 0
@@ -294,60 +370,7 @@ class YoloV8(AlgorithmBase):
             LOGGER.info("Closing dataloader mosaic")
             self.train_loader.dataset.close_mosaic()
 
-    @torch.no_grad()
-    def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        super().validate()
-
-        # log metrics
-        metrics = {
-            "class": "all",
-            "images": 0,
-            "vloss": 0.0,
-            "best_fitness": 0.0,
-            "labels": 0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "mAP.5": 0.0,
-            "mAP.75": 0.0,
-            "mAP.5-.95": 0.0,
-        }
-        info = {}
-        self.print_metric_titles("val", metrics)
-
-        pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
-        for i, batch in pbar:
-            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
-            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
-                self.device
-            )  # (img_ids, class_ids, bboxes)
-
-            net = self.net if not self.ema_enable else self.emas["net"].ema
-            preds = net(imgs)
-            loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
-
-            # metrics
-            metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
-            metrics["images"] += img_num
-
-            if i == self.val_batches - 1:
-                # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
-                metrics["mAP.5"] = map50
-                metrics["mAP.75"] = map75
-                metrics["mAP.5-.95"] = map
-                metrics["precision"] = mp
-                metrics["recall"] = mr
-                metrics["labels"] = nt.sum()
-                metrics["best_fitness"] = metrics["mAP.5-.95"]
-
-            self.pbar_log("val", pbar, **metrics)
-
-        return metrics, info
-
-    def get_statistics(
-        self, preds: torch.Tensor, imgsz: int, batch: dict[str, Any]
-    ) -> tuple[list[tuple[torch.Tensor]], int]:
+    def get_statistics(self, preds: torch.Tensor, imgsz: int, batch: dict[str, Any]) -> tuple[tuple[torch.Tensor], int]:
         """Calculate statistics used for validation and evaluation."""
         stats = []
         img_num = 0
@@ -544,49 +567,6 @@ class YoloV8(AlgorithmBase):
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=xywh)
 
-    @torch.no_grad()
-    def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Evaluate the preformece of the model on test dataset."""
-        super().eval()
-
-        if self.test_loader is None:
-            raise ValueError("Test dataloader is not available.")
-
-        metrics = {
-            "class": "all",
-            "images": 0,
-            "labels": 0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "mAP.5": 0.0,
-            "mAP.75": 0.0,
-            "mAP.5-.95": 0.0,
-        }
-        info = {}
-        self.print_metric_titles("val", metrics)
-
-        pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
-        for i, batch in pbar:
-            imgs = batch[self.modality].to(self.device, non_blocking=True).float() / 255
-
-            preds = self.net(imgs)
-            stats = self.get_statistics(preds, imgs.size(2), batch)
-            metrics["images"] += stats[1]
-
-            if i == self.val_batches - 1:
-                # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
-                metrics["mAP.5"] = map50
-                metrics["mAP.75"] = map75
-                metrics["mAP.5-.95"] = map
-                metrics["precision"] = mp
-                metrics["recall"] = mr
-                metrics["labels"] = nt.sum()
-
-            self.pbar_log("val", pbar, **metrics)
-
-        return metrics, info
-
     def calculate_map(
         self, stats: list[tuple[torch.Tensor]], info: dict[str, Any]
     ) -> tuple[float, float, float, float, float, np.ndarray]:
@@ -672,18 +652,17 @@ class YoloV8(AlgorithmBase):
         LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
 
         for frames in stream:
-            if isinstance(frames, list):
-                processed_frames = []
-                for f in frames:
-                    f_rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-                    res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
-                    processed_frames.append(cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR))
+            if isinstance(frames, dict):
+                frame = frames.get(self.modality)
+                if frame is None:
+                    raise ValueError(f"Stream does not contain required modality: {self.modality}")
 
-                show_frame = np.hstack(processed_frames)
             else:
-                f_rgb = cv2.cvtColor(frames, cv2.COLOR_BGR2RGB)
-                res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
-                show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
+                frame = frames
+
+            f_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+            show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
 
             cv2.imshow("Detection result", show_frame)
 

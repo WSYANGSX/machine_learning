@@ -6,7 +6,7 @@ from numbers import Integral, Real
 from abc import ABC, abstractmethod
 
 import torch
-from torch.amp import GradScaler
+from torch.amp import autocast, GradScaler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LRScheduler
@@ -560,19 +560,19 @@ class AlgorithmBase(ABC):
 
     def pbar_log(
         self,
-        mode: Literal["train", "val"],
+        mode: Literal["train", "val", "test"],
         pbar: tqdm,
         epoch: int | None = None,
         **kwargs,
     ) -> None:
         args = []
-        format_str = "%-14s" * 2
+        format_str = "%-14s" * 2 if mode in ("train", "val") else ""
 
         if mode == "train":
             epoch_str = "%g/%g" % (epoch + 1, self.cfg["trainer"]["epochs"])
             mem = "%.3gG" % get_gpu_mem()
             args.extend([epoch_str, mem])
-        else:
+        elif mode == "val":
             args.extend(["", ""])
 
         for _, val in kwargs.items():
@@ -595,6 +595,14 @@ class AlgorithmBase(ABC):
         s = format_str % tuple(args)
         pbar.set_description(s)
 
+    def print_metric_titles(self, mode: Literal["train", "val", "test"], metrics: dict[str, Any]):
+        if mode == "train":
+            print(("\n" + "%-14s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
+        elif mode == "val":
+            print(("%-14s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
+        else:
+            print(("%-14s" * len(metrics)) % tuple(metrics.keys()))
+
     def set_train(self) -> None:
         """Set the pattern of all the nets in the algorithm to training"""
         for net in self.nets.values():
@@ -607,23 +615,148 @@ class AlgorithmBase(ABC):
             net.eval()
         self.training = False
 
-    def print_metric_titles(self, mode: Literal["train", "val"], metrics: dict[str, Any]):
-        if mode == "train":
-            print(("\n" + "%-14s" * (len(metrics) + 2)) % ("Epoch", "gpu_mem", *metrics.keys()))
-        elif mode == "val":
-            print(("%-14s" * (len(metrics) + 2)) % ("", "", *metrics.keys()))
-
-    @abstractmethod
     def train_epoch(
         self, epoch: int, writer: SummaryWriter, log_interval: int
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Returns training metrics and info dict for the epoch."""
         self.set_train()
+        self.on_epoch_start(epoch)
+
+        info = {}  # Record the information of each epoch.
+        statistics = []  # Record the process data of each batch for the calculation of the final indicators.
+        metrics = self._init_metrics("train")
+        self.print_metric_titles("train", metrics)
+
+        pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
+        for i, batch in pbar:
+            # Warmup
+            batches = epoch * self.train_batches + i
+            self.warmup(batches, epoch)
+
+            data = self._prepare_batch(batch, "train")
+
+            # Loss calculation
+            with autocast(device_type=str(self.device), enabled=self.amp):  # covers the forward computation
+                res = self._forward_batch(self.net, data, "train")
+                loss = res["loss"]
+
+            # Gradient backpropagation
+            self.backward(loss)
+            # Parameter optimization
+            self.optimizer_step(batches)
+
+            # Metrics
+            self._post_process(i, res, batch, data, metrics, statistics, info, "train")
+
+            if i % log_interval == 0:
+                self.write(batches, writer, res, metrics)
+
+            # log
+            self.pbar_log("train", pbar, epoch, **metrics)
+
+        return metrics, info
+
+    def on_epoch_start(self, epoch: int) -> None:
+        """Lifecycle hook. etc. close Mosaic."""
+        pass
+
+    def warmup(self, batches: int, epoch: int) -> None:
+        """Learning rate warm up."""
+        pass
 
     @abstractmethod
+    def _init_metrics(self, mode: Literal["train", "val", "test"]) -> dict[str, Any]:
+        """Metrics used for different mode to print information to console."""
+        raise NotImplementedError("_init_metrics method must be implemented.")
+
+    @abstractmethod
+    def _prepare_batch(self, batch: dict[str, Any], mode: Literal["train", "val", "test"]) -> dict[str, Any]:
+        """Prepare different batch data for different modes."""
+        raise NotImplementedError("_prepare_batch method must be implemented.")
+
+    @abstractmethod
+    def _forward_batch(
+        self, net: BaseNet, data: dict[str, Any], mode: Literal["train", "val", "test"]
+    ) -> dict[str, Any]:
+        """Compute loss, preds and other statistics for different modes."""
+        raise NotImplementedError("_forward_batch method must be implemented.")
+
+    @abstractmethod
+    def _post_process(
+        self,
+        batch_idx: int,
+        res: dict[str, Any],
+        batch: dict[str, Any],
+        data: dict[str, Any],
+        metrics: dict[str, Any],
+        statistics: dict[str, Any],
+        info: dict[str, Any],
+        mode: Literal["train", "val", "test"],
+    ) -> None:
+        """
+        Post-process batch results, including compute metrics, collect statistics and record information.
+
+        Note:
+            metrics: Used to record and update the loss and other metrics in real time for each batch, and to output
+            them to the console.
+            statistics: Used to record the statistical data for each batch, and for calculating the global indicators
+            at the end of each round.
+            info: Used to record other data in round, and print the summary by trainer at the end of the round.
+        """
+        raise NotImplementedError("_post_batch method must be implemented.")
+
+    @abstractmethod
+    def write(self, batches: int, writer: SummaryWriter, res: dict[str, Any], metrics: dict[str, Any]) -> None:
+        """Focus on the recording of batch-based data, while epoch-based data is recorded by the trainer."""
+        raise NotImplementedError("write method must be implemented.")
+
+    @torch.no_grad()
     def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Returns val metrics and info dict for the epoch."""
         self.set_eval()
+
+        info = {}
+        statistics = []
+        metrics = self._init_metrics("val")
+        self.print_metric_titles("val", metrics)
+
+        pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
+        for i, batch in pbar:
+            data = self._prepare_batch(batch, "val")
+            net = self.net if not self.ema_enable else self.emas["net"].ema
+            res = self._forward_batch(net, data, "val")
+
+            self._post_process(i, res, batch, data, metrics, statistics, info, "val")
+            self.pbar_log("val", pbar, **metrics)
+
+        return metrics, info
+
+    @torch.no_grad()
+    def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Evaluate the preformece of the model on test dataset.
+
+        Note:
+            Verify the objective metrics (mAP, mIoU, Loss) of the model on the test set.
+        """
+        self.set_eval()
+        if self.test_loader is None:
+            raise ValueError("Test dataloader is not available.")
+
+        info = {}
+        statistics = []
+        metrics = self._init_metrics("test")
+        self.print_metric_titles("test", metrics)
+
+        pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
+        for i, batch in pbar:
+            data = self._prepare_batch(batch, "test")
+            res = self._forward_batch(self.net, data, "test")
+
+            self._post_process(i, res, batch, data, metrics, statistics, info, "test")
+            self.pbar_log("test", pbar, **metrics)
+
+        return metrics, info
 
     def backward(self, loss: torch.Tensor) -> None:
         if self.scaler:
@@ -650,16 +783,6 @@ class AlgorithmBase(ABC):
 
             self.optimizer.zero_grad()
             self.last_opt_step = batches
-
-    @abstractmethod
-    def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        Evaluate the preformece of the model on test dataset.
-
-        Note:
-            Verify the objective metrics (mAP, mIoU, Loss) of the model on the test set.
-        """
-        self.set_eval()
 
     @abstractmethod
     def predict(self, streams: str | StreamBase, *args, **kwargs) -> None:
