@@ -9,7 +9,7 @@ def main():
     # Step 2: Build the evaluate
     evaluator = Evaluator(
         unet,
-        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_car_2026-04-06_12-00/ckpt/best_model.pth",
+        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_car_2026-04-07_10-52/ckpt/best_model.pth",
         "car.yaml",
         False,
     )

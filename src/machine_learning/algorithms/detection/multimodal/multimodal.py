@@ -159,7 +159,7 @@ class MultimodalDetection(YoloV8):
     @torch.no_grad()
     def eval(self) -> None:
         """Evaluate the preformece of the model on test dataset."""
-        super().eval()
+        super(YoloV8, self).eval()
 
         if self.test_loader is None:
             raise ValueError("Test dataloader is not available.")
@@ -205,39 +205,50 @@ class MultimodalDetection(YoloV8):
     @torch.no_grad()
     def predict(
         self,
-        stream: str | FilePath | VideoStream | WebcamStream,
+        stream: dict[str, str] | VideoStream | WebcamStream,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
+        base: str = "img",
         *args,
         **kwargs,
     ):
-        super().predict(stream)
+        super(YoloV8, self).predict(stream)
 
-        if isinstance(stream, (str, FilePath)):
-            self._predict_single_frame(stream, conf_thres, iou_thres, *args, **kwargs)
+        if isinstance(stream, dict):
+            self._predict_single_frame(stream, conf_thres, iou_thres, base, *args, **kwargs)
 
         elif isinstance(stream, (VideoStream, WebcamStream)):
-            self._predict_stream(stream, conf_thres, iou_thres, *args, **kwargs)
+            self._predict_stream(stream, conf_thres, iou_thres, base, *args, **kwargs)
 
     def _predict_single_frame(
         self,
-        img_path: str | FilePath,
+        paths: dict[str, str],
         conf_thres: float | None = None,
         iou_thres: float | None = None,
+        base: str = "img",
         *args,
         **kwargs,
     ):
         """Evaluate the single-frame image."""
         # read image
-        img0 = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        img_path = paths["img"]
+        ir_path = paths["ir"]
+
+        img0 = cv2.imread(paths["img"], cv2.IMREAD_COLOR)
         if img0 is None:
             raise FileNotFoundError(f"Failed to read image: {img_path}")
+
+        ir0 = cv2.imread(paths["ir"], cv2.IMREAD_COLOR)
+        if ir0 is None:
+            raise FileNotFoundError(f"Failed to read image: {ir_path}")
+
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
+        ir0 = cv2.cvtColor(ir0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
-        res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
+        res = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base, *args, **kwargs)
 
-        res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
-        cv2.imshow("Prediction", res_img_bgr)
+        res_bgr = cv2.cvtColor(res, cv2.COLOR_RGB2BGR)
+        cv2.imshow("Prediction", res_bgr)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
@@ -246,6 +257,7 @@ class MultimodalDetection(YoloV8):
         stream: VideoStream | WebcamStream,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
+        base: str = "img",
         *args,
         **kwargs,
     ):
@@ -258,19 +270,13 @@ class MultimodalDetection(YoloV8):
         LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
 
         for frames in stream:
-            if isinstance(frames, list):
-                processed_frames = []
-                for f in frames:
-                    f_rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-                    res_rgb = self._inference_and_visualize(f_rgb, conf_thres, iou_thres, *args, **kwargs)
-                    processed_frames.append(cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR))
+            if not isinstance(frames, dict):
+                raise ValueError("Multimodal detection requires a dictionary of frames from the stream.")
 
-                show_frame = np.hstack(processed_frames)
-            else:
-                f_rgb = cv2.cvtColor(frames, cv2.COLOR_BGR2RGB)
-                res_rgb = self._inference_and_visualize(f_rgb, conf_thres, iou_thres, *args, **kwargs)
-                show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
-
+            img0 = cv2.cvtColor(frames["img"], cv2.COLOR_BGR2RGB)
+            ir0 = cv2.cvtColor(frames["ir"], cv2.COLOR_BGR2RGB)
+            res_rgb = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base, *args, **kwargs)
+            show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
             cv2.imshow("Stream Evaluation", show_frame)
 
             if cv2.waitKey(delay) & 0xFF == ord("q"):
@@ -280,21 +286,32 @@ class MultimodalDetection(YoloV8):
         cv2.destroyAllWindows()
 
     def _inference_and_preparation(
-        self, img0: np.ndarray, conf_thres: float | None, iou_thres: float | None, *args, **kwargs
+        self,
+        img0: np.ndarray,
+        ir0: np.ndarray,
+        conf_thres: float | None,
+        iou_thres: float | None,
+        base: str,
+        *args,
+        **kwargs,
     ) -> np.ndarray:
         """Core reasoning and rendering logic."""
+        assert img0.shape[:2] == ir0.shape[:2], f"Input img and ir have different shapes: {img0.shape} vs {ir0.shape}."
         h0, w0, _ = img0.shape
 
         # scale to square
         padded_img = pad_to_square(img=img0, pad_values=(114, 114, 114))
+        padded_ir = pad_to_square(img=ir0, pad_values=(0, 0, 0))
 
         # to tensor / normalize
         tfs = Compose([ToTensor(), Normalize(mean=[0, 0, 0], std=[1, 1, 1])])
         img = tfs(padded_img)
         img = resize(img, size=self.imgsz).unsqueeze(0).to(self.device)
+        ir = tfs(padded_ir)
+        ir = resize(ir, size=self.imgsz).unsqueeze(0).to(self.device)
 
         # input image to model
-        preds = self.net(img)
+        preds = self.net(img, ir)
 
         # decode preds
         detections = self.decode_preds(preds, img.size(2))  # xywh
@@ -317,8 +334,12 @@ class MultimodalDetection(YoloV8):
             bboxes = rescale_boxes(np.array(bboxes.cpu(), dtype=np.float32), (self.imgsz, self.imgsz), (h0, w0))
             cls = [int(cid) for cid in cls]
         else:
-            bboxes, conf, cls = [], [], []
+            bboxes, conf, cls = np.zeros((0, 4)), [], []
 
         # visualization
-        res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
-        return res_img if res_img is not None else img0
+        if base == "img":
+            res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        elif base == "ir":
+            res_img = add_bboxes_to_image(ir0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+
+        return res_img
