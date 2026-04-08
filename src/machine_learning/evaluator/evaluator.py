@@ -20,6 +20,8 @@ class Evaluator:
         ckpt: str,
         dataset: str | Mapping[str, Any],
         load_dataset: bool = True,
+        plot: bool = False,
+        save_dir: str | None = None,
     ) -> None:
         """Evaluator of all the algorithms."""
         self.ckpt = ckpt
@@ -27,7 +29,7 @@ class Evaluator:
         self.load_dataset = load_dataset
 
         LOGGER.info("Algorithm initializing by evaluator...")
-        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.load_dataset)
+        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.load_dataset, plot, save_dir)
 
     @property
     def algorithm(self) -> AlgorithmBase:

@@ -112,7 +112,12 @@ class AlgorithmBase(ABC):
         self._init_schedulers()
 
     def _init_on_evaluator(
-        self, ckpt: str, dataset: str | Mapping[str, Any] | None = None, load_dataset: bool = True
+        self,
+        ckpt: str,
+        dataset: str | Mapping[str, Any] | None = None,
+        load_dataset: bool = True,
+        plot: bool = False,
+        save_dir: str | None = None,
     ) -> None:
         """
         Initialize the evaluation dataset, dataloader, net, and load the checkpoint weights.
@@ -122,6 +127,9 @@ class AlgorithmBase(ABC):
             dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
             load_dataset (bool): Whether to use the dataset provided by the evaluator.
         """
+        self.plot = plot
+        self.save_dir = save_dir if save_dir is not None else "./"
+
         self.ema_enable = False  # disable ema for evaluation
         self.amp = False
         # init test dataset and test dataloader
@@ -142,14 +150,18 @@ class AlgorithmBase(ABC):
 
         self.set_eval()
 
-    def _init_on_predictor(self, ckpt: str) -> None:
+    def _init_on_predictor(
+        self,
+        ckpt: str,
+        dataset: str | Mapping[str, Any] | None = None,
+    ) -> None:
         """
         Initialize the net, and load the checkpoint weights.
 
         Args:
             ckpt (FilePath): Checkpoint file path.
         """
-        self._init_on_evaluator(ckpt, None, False)
+        self._init_on_evaluator(ckpt, dataset, False)
 
     @property
     def train_dataset(self) -> None | Dataset:
