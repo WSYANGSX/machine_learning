@@ -108,7 +108,6 @@ class MultimodalDetection(YoloV8):
         super(YoloV8, self).validate()
 
         # log metrics
-        stats = []
         metrics = {
             "class": "all",
             "images": 0,
@@ -122,6 +121,7 @@ class MultimodalDetection(YoloV8):
             "mAP.5-.95": 0.0,
         }
         info = {}
+        stats = []
         self.print_metric_titles("val", metrics)
 
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
@@ -138,7 +138,8 @@ class MultimodalDetection(YoloV8):
 
             # metrics
             metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            batch_stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            stats.extend(batch_stats)
             metrics["images"] += img_num
 
             if i == self.val_batches - 1:
@@ -175,6 +176,7 @@ class MultimodalDetection(YoloV8):
             "mAP.5-.95": 0.0,
         }
         info = {}
+        stats = []
         self.print_metric_titles("val", metrics)
 
         pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
@@ -185,10 +187,11 @@ class MultimodalDetection(YoloV8):
             preds = self.net(imgs, irs)
 
             # metrics
-            stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            batch_stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
+            stats.extend(batch_stats)
             metrics["images"] += img_num
 
-            if i == self.val_batches - 1:
+            if i == self.test_batches - 1:
                 # calculate mAP metrics
                 mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
                 metrics["mAP.5"] = map50
