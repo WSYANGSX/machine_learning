@@ -701,7 +701,7 @@ class AlgorithmBase(ABC):
         batch: dict[str, Any],
         data: dict[str, Any],
         metrics: dict[str, Any],
-        statistics: dict[str, Any],
+        statistics: list,
         info: dict[str, Any],
         mode: Literal["train", "val", "test"],
     ) -> None:

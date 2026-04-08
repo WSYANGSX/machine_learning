@@ -3,9 +3,7 @@ from typing import Literal, Mapping, Any
 import cv2
 import torch
 import numpy as np
-from tqdm import tqdm
-from torch.amp import autocast
-from torch.utils.tensorboard import SummaryWriter
+
 from torchvision.transforms import Compose, ToTensor, Normalize
 from ..yolo_v8 import YoloV8
 from machine_learning.networks import BaseNet
@@ -45,106 +43,80 @@ class MultimodalDetection(YoloV8):
         """
         super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
 
-    def train_epoch(
-        self, epoch: int, writer: SummaryWriter, log_interval: int = 10
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Returns training metrics and info dict for the epoch."""
-        super(YoloV8, self).train_epoch(epoch, writer, log_interval)
+    def _prepare_batch(self, batch: dict[str, Any], mode: Literal["train", "val", "test"]) -> dict[str, Any]:
+        """Prepare different batch data for different modes."""
+        data = {}
 
-        # close mosaic
-        if epoch == int(self.close_mosaic_epoch * self.epochs):
-            self.close_dataloader_mosaic()
+        imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
+        irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
+        data["imgs"] = imgs
+        data["irs"] = irs
 
-        # log metrics
-        metrics = {"tloss": 0.0, "bloss": 0.0, "dloss": 0.0, "closs": 0.0, "instances": 0, "img_size": None}
-        self.print_metric_titles("train", metrics)
-
-        pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
-        for i, batch in pbar:
-            # Warmup
-            batches = epoch * self.train_batches + i
-            self.warmup(batches, epoch)
-
-            # load data
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
-            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
+        if mode in ("train", "val"):
             targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
                 self.device
             )  # (img_ids, class_ids, bboxes)
+            data["targets"] = targets
 
-            with autocast(
-                device_type=str(self.device), enabled=self.amp
-            ):  # Ensure that the autocast scope correctly covers the forward computation
-                preds = self.net(imgs, irs)
-                loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
+        return data
 
-            # Gradient backpropagation
-            self.backward(loss)
-            # Parameter optimization
-            self.optimizer_step(batches)
+    def _forward_batch(
+        self,
+        net: BaseNet,
+        data: dict[str, Any],
+        mode: Literal["train", "val", "test"],
+    ) -> dict[str, Any]:
+        if mode in ("train", "val"):
+            imgs = data["imgs"]
+            irs = data["irs"]
+            targets = data["targets"]
+            imgs_shape = imgs.shape
 
-            # Metrics
+            # Loss calculation
+            preds = net(imgs, irs)
+            loss, lc = self.criterion(preds=preds, targets=targets, imgs_shape=imgs_shape)
+
+            return {"loss": loss, "lc": lc, "preds": preds}
+        else:
+            imgs = data["imgs"]
+            irs = data["irs"]
+            preds = net(imgs, irs)
+
+            return {"preds": preds}
+
+    def _post_process(
+        self,
+        batch_idx: int,
+        res: dict[str, Any],
+        batch: dict[str, Any],
+        data: dict[str, Any],
+        metrics: dict[str, Any],
+        statistics: dict[str, Any],
+        info: dict[str, Any],
+        mode: Literal["train", "val", "test"],
+    ) -> None:
+        if mode == "train":
+            loss, lc = res["loss"], res["lc"]
             bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
 
-            metrics["tloss"] = (metrics["tloss"] * i + loss.item()) / (i + 1)  # tloss
-            metrics["bloss"] = (metrics["bloss"] * i + bloss) / (i + 1)
-            metrics["closs"] = (metrics["closs"] * i + closs) / (i + 1)
-            metrics["dloss"] = (metrics["dloss"] * i + dloss) / (i + 1)
-            metrics["img_size"] = imgs.size(2)
-            metrics["instances"] = targets.size(0)
+            metrics["tloss"] = (metrics["tloss"] * batch_idx + loss.item()) / (batch_idx + 1)  # tloss
+            metrics["bloss"] = (metrics["bloss"] * batch_idx + bloss) / (batch_idx + 1)
+            metrics["closs"] = (metrics["closs"] * batch_idx + closs) / (batch_idx + 1)
+            metrics["dloss"] = (metrics["dloss"] * batch_idx + dloss) / (batch_idx + 1)
+            metrics["img_size"] = data["imgs"].size(2)
+            metrics["instances"] = data["targets"].size(0)
 
-            if i % log_interval == 0:
-                writer.add_scalar("bloss/train_batch", bloss, batches)
-                writer.add_scalar("closs/train_batch", closs, batches)
-                writer.add_scalar("dloss/train_batch", dloss, batches)
+        elif mode == "val":
+            loss, preds = res["loss"], res["preds"]
+            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
+            statistics.extend(batch_stats)
 
-            # log
-            self.pbar_log("train", pbar, epoch, **metrics)
-
-        return metrics, {}
-
-    @torch.no_grad()
-    def validate(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        super(YoloV8, self).validate()
-
-        # log metrics
-        metrics = {
-            "class": "all",
-            "images": 0,
-            "vloss": 0.0,
-            "best_fitness": 0.0,
-            "labels": 0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "mAP.5": 0.0,
-            "mAP.75": 0.0,
-            "mAP.5-.95": 0.0,
-        }
-        info = {}
-        stats = []
-        self.print_metric_titles("val", metrics)
-
-        pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
-        for i, batch in pbar:
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
-            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
-            targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1).to(
-                self.device
-            )  # (img_ids, class_ids, bboxes)
-
-            net = self.net if not self.ema_enable else self.emas["net"].ema
-            preds = net(imgs, irs)
-            loss, _ = self.criterion(preds=preds, targets=targets, imgs_shape=imgs.shape)
-
-            # metrics
-            metrics["vloss"] = (metrics["vloss"] * i + loss.item()) / (i + 1)
-            batch_stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
-            stats.extend(batch_stats)
+            metrics["vloss"] = (metrics["vloss"] * batch_idx + loss.item()) / (batch_idx + 1)
             metrics["images"] += img_num
 
-            if i == self.val_batches - 1:
+            if batch_idx == self.val_batches - 1:
                 # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
                 metrics["mAP.5"] = map50
                 metrics["mAP.75"] = map75
                 metrics["mAP.5-.95"] = map
@@ -153,57 +125,21 @@ class MultimodalDetection(YoloV8):
                 metrics["labels"] = nt.sum()
                 metrics["best_fitness"] = metrics["mAP.5-.95"]
 
-            self.pbar_log("val", pbar, **metrics)
-
-        return metrics, info
-
-    @torch.no_grad()
-    def eval(self) -> None:
-        """Evaluate the preformece of the model on test dataset."""
-        super(YoloV8, self).eval()
-
-        if self.test_loader is None:
-            raise ValueError("Test dataloader is not available.")
-
-        metrics = {
-            "class": "all",
-            "images": 0,
-            "labels": 0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "mAP.5": 0.0,
-            "mAP.75": 0.0,
-            "mAP.5-.95": 0.0,
-        }
-        info = {}
-        stats = []
-        self.print_metric_titles("val", metrics)
-
-        pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
-        for i, batch in pbar:
-            imgs = batch["img"].to(self.device, non_blocking=True).float() / 255.0
-            irs = batch["ir"].to(self.device, non_blocking=True).float() / 255.0  # convert ir to unit8 in advance
-
-            preds = self.net(imgs, irs)
-
-            # metrics
-            batch_stats, img_num = self.get_statistics(preds, imgs.size(2), batch)
-            stats.extend(batch_stats)
+        else:
+            preds = res["preds"]
+            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
+            statistics.extend(batch_stats)
             metrics["images"] += img_num
 
-            if i == self.test_batches - 1:
+            if batch_idx == self.test_batches - 1:
                 # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(stats, info)
+                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
                 metrics["mAP.5"] = map50
                 metrics["mAP.75"] = map75
                 metrics["mAP.5-.95"] = map
                 metrics["precision"] = mp
                 metrics["recall"] = mr
                 metrics["labels"] = nt.sum()
-
-            self.pbar_log("val", pbar, **metrics)
-
-        return metrics, info
 
     @torch.no_grad()
     def predict(
@@ -215,7 +151,7 @@ class MultimodalDetection(YoloV8):
         *args,
         **kwargs,
     ):
-        super(YoloV8, self).predict(stream)
+        self.set_eval()
 
         if isinstance(stream, dict):
             self._predict_single_frame(stream, conf_thres, iou_thres, base, *args, **kwargs)
