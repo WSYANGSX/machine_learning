@@ -99,13 +99,14 @@ class VideoStream(StreamBase):
         paths_str = ", ".join([f"{k}: {os.path.basename(p)}" for k, p in zip(self.keys, self.paths)])
         orig_str = " | ".join(
             [
-                f"{k}({self.orig_widths[i]}x{self.orig_heights[i]} @ {self.orig_fpses[i]:.2f} FPS, {self.orig_frames[i]} frames)"
+                f"{k} ({self.orig_widths[i]}x{self.orig_heights[i]} @ {self.orig_fpses[i]:.2f} FPS,"
+                f" {self.orig_frames[i]} frames)"
                 for i, k in enumerate(self.keys)
             ]
         )
 
         LOGGER.info(
-            f"Loaded Video(s): [{paths_str}] | "
+            f"Loaded Video(s): {{{paths_str}}} | "
             f"Original: {orig_str} | "
             f"Output: {self.width}x{self.height} @ {self.fps} FPS (Skip interval: {self.stride - 1})"
         )
@@ -233,7 +234,7 @@ class WebcamStream(StreamBase):
 
         sources_str = ", ".join([f"{k}: {s}" for k, s in zip(self.keys, self.sources)])
         LOGGER.info(
-            f"Loaded Webcam: [{sources_str}] | "
+            f"Loaded Webcam: {{{sources_str}}} | "
             f"Original: {self.orig_width}x{self.orig_height} @ {self.orig_fps:.2f} FPS | "
             f"Output: {self.width}x{self.height} @ {self.fps} FPS"
         )
