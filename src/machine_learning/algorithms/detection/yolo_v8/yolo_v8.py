@@ -100,8 +100,8 @@ class YoloV8(AlgorithmBase):
 
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
 
-    def _init_on_evaluator(self, ckpt, dataset, load_dataset):
-        super()._init_on_evaluator(ckpt, dataset, load_dataset)
+    def _init_on_evaluator(self, ckpt, dataset, load_dataset, plot=False, save_dir=None):
+        super()._init_on_evaluator(ckpt, dataset, load_dataset, plot, save_dir)
 
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
@@ -574,9 +574,14 @@ class YoloV8(AlgorithmBase):
         stats = [torch.cat(x, 0) for x in zip(*stats)]  # to torch
 
         if len(stats) and stats[0].any():
-            p, r, ap, f1, ap_class = ap_per_class(
-                *stats, plot=self.plot, save_dir=self.trainer_cfg["record_dir"], names=self.class_names
-            )
+            save_dir = None
+            if self.plot:
+                if hasattr(self, "trainer_cfg") and "record_dir" in self.trainer_cfg:  # training
+                    save_dir = self.trainer_cfg["record_dir"]
+                else:  # evaluation
+                    save_dir = self.save_dir if self.save_dir is not None else "./"  # 或临时目录
+
+            p, r, ap, f1, ap_class = ap_per_class(*stats, plot=self.plot, save_dir=save_dir, names=self.class_names)
             ap50, ap75, ap = ap[:, 0], ap[:, 5], ap.mean(1)  # AP@0.5, AP@0.75, AP@0.5:0.95
 
             # AP value for each category
@@ -599,7 +604,7 @@ class YoloV8(AlgorithmBase):
     @torch.no_grad()
     def predict(
         self,
-        stream: str | FilePath | VideoStream | WebcamStream,
+        stream: FilePath | VideoStream | WebcamStream,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
         *args,
@@ -615,7 +620,7 @@ class YoloV8(AlgorithmBase):
 
     def _predict_single_frame(
         self,
-        img_path: str | FilePath,
+        img_path: FilePath,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
         *args,
