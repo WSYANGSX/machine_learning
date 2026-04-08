@@ -288,7 +288,7 @@ class YoloV8(AlgorithmBase):
         batch: dict[str, Any],
         data: dict[str, Any],
         metrics: dict[str, Any],
-        statistics: dict[str, Any],
+        statistics: list[Any],
         info: dict[str, Any],
         mode: Literal["train", "val", "test"],
     ) -> None:
@@ -419,7 +419,9 @@ class YoloV8(AlgorithmBase):
             tp = match_predictions(pred_classes, tcls, iou, self.iouv)
 
             # record statistical information
-            stats.append((tp, pred_scores, pred_classes, tcls))
+            stats.append(
+                (tp.detach().cpu(), pred_scores.detach().cpu(), pred_classes.detach().cpu(), tcls.detach().cpu())
+            )  # put data on cpu to save CPU resources
 
         return stats, img_num
 
