@@ -1,5 +1,4 @@
 from typing import TypeVar, Generic, Mapping, Any
-
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms.base import AlgorithmBase
 
