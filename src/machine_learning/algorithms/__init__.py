@@ -1,7 +1,15 @@
 from .base import AlgorithmBase
 from .generation import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 from .detection import YoloV3, YoloV8, MultimodalDetection
-from .segmentation import YoloV8Segmentation, MaskFormer, Mask2Former, MultimodalSegmentation
+from .segmentation import (
+    YoloV8Segmentation,
+    MaskFormer,
+    Mask2Former,
+    PerPixelSegmentation,
+    MaskSegmentation,
+    MultimodalPerPixelSegmentation,
+    MultimodalMaskSegmentation,
+)
 
 __all__ = [
     "AlgorithmBase",
@@ -17,5 +25,8 @@ __all__ = [
     "YoloV8Segmentation",
     "MaskFormer",
     "Mask2Former",
-    "MultimodalSegmentation",
+    "PerPixelSegmentation",
+    "MaskSegmentation",
+    "MultimodalPerPixelSegmentation",
+    "MultimodalMaskSegmentation",
 ]

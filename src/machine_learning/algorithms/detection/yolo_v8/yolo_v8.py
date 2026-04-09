@@ -636,8 +636,10 @@ class YoloV8(AlgorithmBase):
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
         res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
-
         res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
+
+        cv2.namedWindow("Detection result", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Detection result", 1280, 720)
         cv2.imshow("Detection result", res_img_bgr)
         cv2.waitKey(0)  # Wait for a key press
         cv2.destroyAllWindows()
@@ -658,6 +660,8 @@ class YoloV8(AlgorithmBase):
 
         LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
 
+        cv2.namedWindow("Detection result", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Detection result", 1280, 720)
         for frames in stream:
             if isinstance(frames, dict):
                 frame = frames.get(self.modality)

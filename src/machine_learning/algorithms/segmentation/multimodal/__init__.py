@@ -1,3 +1,3 @@
-from .multimodal import MultimodalSegmentation
+from .multimodal import MultimodalPerPixelSegmentation, MultimodalMaskSegmentation
 
-__all__ = ["MultimodalSegmentation"]
+__all__ = ["MultimodalPerPixelSegmentation", "MultimodalMaskSegmentation"]

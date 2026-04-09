@@ -8,13 +8,12 @@ import numpy as np
 import torch.nn.functional as F
 
 from pathlib import Path
-from copy import deepcopy
 from PIL import ImageColor
 from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
-from machine_learning.utils.constants import CSS_COLORS
+from machine_learning.utils.segmentation import generate_distinct_color
 
 
 def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
@@ -688,7 +687,6 @@ def add_bbox(
 
         # Draw the label background and text
         cv2.rectangle(img, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, -1)
-        cv2.rectangle(img, (label_x_left, label_y_top), (label_x_right, label_y_bottom), color, max(1, thickness // 2))
         cv2.putText(
             img,
             text=display_text,
@@ -712,9 +710,6 @@ def add_bboxes_to_image(
     color: str = "auto",
     tag_size: float = 0.5,
     thickness: int = 2,
-    cmap: str | None = None,
-    *args: Any,
-    **kwargs: Any,
 ) -> np.ndarray:
     """Add multiple bounding boxes to the image.
 
@@ -727,65 +722,47 @@ def add_bboxes_to_image(
         color (str): The color of the bboxes. Default to "auto", one color for each class.
         tag_size (float): The size of category tag.
         thickness (int): The thickness of the bboxes lines. Default to 2.
-        cmap (str): Color map. Grayscale image: cmap='gray' or cmap='Greys', heatmap: cmap='hot',
-        rainbow image: cmap='rainbow', blue-green gradient: cmap='viridis' (default), reversed color: Add r after any
-        color mapping, such as cmap='viridis r'.
     """
     res_img = img.copy()
-
-    # deal with color
-    color_ls = []
-    if class_ids is None:
-        color_ls.append(ImageColor.getrgb(color if color != "auto" else "red"))
-    else:
-        num_colors = len(CSS_COLORS)
-        for i in class_ids:
-            color_ls.append(ImageColor.getrgb(color if color != "auto" else CSS_COLORS[int(i % num_colors)]))
 
     # deal with conf
     if conf is None:
         conf = [None] * len(bboxes)
 
+    # deal with color
     if class_ids is None:
+        clr = ImageColor.getrgb(color if color != "auto" else "red")
         for bbox, cf in zip(bboxes, conf):
             res_img = add_bbox(
                 img=res_img,
                 bbox=bbox,
                 conf=cf,
-                color=color_ls[0],
+                color=clr,
                 tag_size=tag_size,
                 thickness=thickness,
             )
-    else:
-        assert len(class_ids) == len(bboxes) and len(class_ids) == len(conf), (
-            "The length of bboxes, conf and class_ids must be the same."
-        )
+        return res_img
 
-        if class_maps is not None:
-            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
-                class_name = class_maps[class_id]
-                res_img = add_bbox(
-                    img=res_img,
-                    bbox=bbox,
-                    conf=cf,
-                    class_name=class_name,
-                    color=clr,
-                    tag_size=tag_size,
-                    thickness=thickness,
-                )
-        else:
-            class_maps = {i: str(i) for i in class_ids}
-            for bbox, cf, class_id, clr in zip(bboxes, conf, class_ids, color_ls):
-                class_name = class_maps[class_id]
-                res_img = add_bbox(
-                    img=res_img,
-                    bbox=bbox,
-                    conf=cf,
-                    class_name=class_name,
-                    color=clr,
-                    tag_size=tag_size,
-                    thickness=thickness,
-                )
+    assert len(class_ids) == len(bboxes) and len(class_ids) == len(conf), (
+        "The length of bboxes, conf and class_ids must be the same."
+    )
+
+    if class_maps is None:
+        class_maps = {int(i): str(i) for i in class_ids}
+
+    for bbox, cf, class_id in zip(bboxes, conf, class_ids):
+        clr = ImageColor.getrgb(color) if color != "auto" else generate_distinct_color(int(class_id))
+        class_name = class_maps[class_id]
+
+        res_img = add_bbox(
+            img=res_img,
+            bbox=bbox,
+            conf=cf,
+            class_name=class_name,
+            color=clr,
+            tag_size=tag_size,
+            thickness=thickness,
+        )
 
     return res_img
 
@@ -800,8 +777,6 @@ def visualize_img_bboxes(
     tag_size: float = 0.5,
     thickness: int = 2,
     cmap: str | None = None,
-    *args: Any,
-    **kwargs: Any,
 ) -> None:
     """Plot the image with bounding boxes.
 
@@ -828,14 +803,11 @@ def visualize_img_bboxes(
         color=color,
         tag_size=tag_size,
         thickness=thickness,
-        cmap=cmap,
-        *args,
-        **kwargs,
     )
 
     plt.figure(figsize=(12, 12))
     plt.axis("off")
-    plt.imshow(res_img, cmap)
+    plt.imshow(res_img, cmap=cmap)
     plt.show()
 
 

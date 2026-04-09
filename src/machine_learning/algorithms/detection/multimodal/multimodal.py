@@ -84,63 +84,6 @@ class MultimodalDetection(YoloV8):
 
             return {"preds": preds}
 
-    def _post_process(
-        self,
-        batch_idx: int,
-        res: dict[str, Any],
-        batch: dict[str, Any],
-        data: dict[str, Any],
-        metrics: dict[str, Any],
-        statistics: dict[str, Any],
-        info: dict[str, Any],
-        mode: Literal["train", "val", "test"],
-    ) -> None:
-        if mode == "train":
-            loss, lc = res["loss"], res["lc"]
-            bloss, closs, dloss = lc["bloss"], lc["closs"], lc["dloss"]  # component loss
-
-            metrics["tloss"] = (metrics["tloss"] * batch_idx + loss.item()) / (batch_idx + 1)  # tloss
-            metrics["bloss"] = (metrics["bloss"] * batch_idx + bloss) / (batch_idx + 1)
-            metrics["closs"] = (metrics["closs"] * batch_idx + closs) / (batch_idx + 1)
-            metrics["dloss"] = (metrics["dloss"] * batch_idx + dloss) / (batch_idx + 1)
-            metrics["img_size"] = data["imgs"].size(2)
-            metrics["instances"] = data["targets"].size(0)
-
-        elif mode == "val":
-            loss, preds = res["loss"], res["preds"]
-            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
-            statistics.extend(batch_stats)
-
-            metrics["vloss"] = (metrics["vloss"] * batch_idx + loss.item()) / (batch_idx + 1)
-            metrics["images"] += img_num
-
-            if batch_idx == self.val_batches - 1:
-                # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
-                metrics["mAP.5"] = map50
-                metrics["mAP.75"] = map75
-                metrics["mAP.5-.95"] = map
-                metrics["precision"] = mp
-                metrics["recall"] = mr
-                metrics["labels"] = nt.sum()
-                metrics["best_fitness"] = metrics["mAP.5-.95"]
-
-        else:
-            preds = res["preds"]
-            batch_stats, img_num = self.get_statistics(preds, data["imgs"].size(2), batch)
-            statistics.extend(batch_stats)
-            metrics["images"] += img_num
-
-            if batch_idx == self.test_batches - 1:
-                # calculate mAP metrics
-                mp, mr, map50, map75, map, nt = self.calculate_map(statistics, info)
-                metrics["mAP.5"] = map50
-                metrics["mAP.75"] = map75
-                metrics["mAP.5-.95"] = map
-                metrics["precision"] = mp
-                metrics["recall"] = mr
-                metrics["labels"] = nt.sum()
-
     @torch.no_grad()
     def predict(
         self,
@@ -176,7 +119,6 @@ class MultimodalDetection(YoloV8):
         img0 = cv2.imread(paths["img"], cv2.IMREAD_COLOR)
         if img0 is None:
             raise FileNotFoundError(f"Failed to read image: {img_path}")
-
         ir0 = cv2.imread(paths["ir"], cv2.IMREAD_COLOR)
         if ir0 is None:
             raise FileNotFoundError(f"Failed to read image: {ir_path}")
@@ -187,6 +129,8 @@ class MultimodalDetection(YoloV8):
         res = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base, *args, **kwargs)
 
         res_bgr = cv2.cvtColor(res, cv2.COLOR_RGB2BGR)
+        cv2.namedWindow("Prediction", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Prediction", 1280, 720)
         cv2.imshow("Prediction", res_bgr)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
@@ -207,6 +151,9 @@ class MultimodalDetection(YoloV8):
         delay = max(1, int(1000 / stream.fps)) if is_video and stream.fps > 0 else 1
 
         LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
+
+        cv2.namedWindow("Prediction", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Prediction", 1280, 720)
 
         for frames in stream:
             if not isinstance(frames, dict):

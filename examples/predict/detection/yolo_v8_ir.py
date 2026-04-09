@@ -18,8 +18,8 @@ def main():
         stream="/home/yangxf/WorkSpace/datasets/..datasets/VEDAI/images/00000038_ir.png",
         conf_thres=0.25,
         iou_thres=0.7,
-        tag_size=0.2,
-        thickness=10
+        tag_size=0.4,
+        thickness=2
     )
 
 

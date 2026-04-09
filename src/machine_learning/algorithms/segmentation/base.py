@@ -3,10 +3,10 @@ from typing import Any, Mapping, Literal
 import cv2
 import torch
 import numpy as np
-from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
 
+from tqdm import tqdm
 from torch.amp import autocast
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose, ToTensor, Normalize
@@ -86,17 +86,16 @@ class PerPixelSegmentation(AlgorithmBase):
     def _forward_batch(
         self, net: BaseNet, data: dict[str, Any], mode: Literal["train", "val", "test"]
     ) -> dict[str, Any]:
-        if mode in ("train", "val"):
-            imgs = data["imgs"]
-            targets = data["targets"]
+        imgs = data["imgs"]
 
+        if mode in ("train", "val"):
+            targets = data["targets"]
             # Loss calculation
             preds = net(imgs)
             loss = self.criterion(preds, targets)
 
             return {"loss": loss, "preds": preds}
         else:
-            imgs = data["imgs"]
             preds = net(imgs)
 
             return {"preds": preds}
@@ -121,7 +120,7 @@ class PerPixelSegmentation(AlgorithmBase):
             metrics["vloss"] = (metrics["vloss"] * batch_idx + loss.item()) / (batch_idx + 1)
 
             targets = data["targets"]
-            batch_miou, (intersection, union) = calculate_miou(preds, targets, ignore_value=self.ignore_value)
+            batch_miou, intersection, union = calculate_miou(preds, targets, ignore_value=self.ignore_value)
             metrics["batch_miou"] = (metrics["batch_miou"] * batch_idx + batch_miou) / (batch_idx + 1)
 
             # accumulate intersection and union for overall mIoU calculation
@@ -144,7 +143,7 @@ class PerPixelSegmentation(AlgorithmBase):
         else:
             preds = res["preds"]
             targets = data["targets"]
-            _, (intersection, union) = calculate_miou(preds, targets, ignore_value=self.ignore_value)
+            _, intersection, union = calculate_miou(preds, targets, ignore_value=self.ignore_value)
 
             # accumulate intersection and union for overall mIoU calculation
             if len(statistics) == 0:
@@ -175,19 +174,18 @@ class PerPixelSegmentation(AlgorithmBase):
         predictions = F.interpolate(predictions, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         return nn.CrossEntropyLoss(ignore_index=self.ignore_value)(predictions, targets) * self.loss_weight
 
-    # TODO
     @torch.no_grad()
     def predict(self, stream: str | VideoStream | WebcamStream, *args, **kwargs) -> None:
         """Make predictions from different special data stream."""
         super().predict(stream, *args, **kwargs)
 
         if isinstance(stream, (str, FilePath)):
-            self._predict_single_frame(stream, *args, **kwargs)
+            self._predict_single_frame(stream)
 
         elif isinstance(stream, (VideoStream, WebcamStream)):
-            self._predict_stream(stream, *args, **kwargs)
+            self._predict_stream(stream)
 
-    def _predict_single_frame(self, img_path: FilePath, *args, **kwargs):
+    def _predict_single_frame(self, img_path: FilePath):
         """Evaluate the single-frame image."""
         # read image
         img0 = cv2.imread(img_path, cv2.IMREAD_COLOR)
@@ -195,14 +193,16 @@ class PerPixelSegmentation(AlgorithmBase):
             raise FileNotFoundError(f"Failed to read image: {img_path}")
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
-        res_img = self._inference_and_preparation(img0, *args, **kwargs)
-
+        res_img = self._inference_and_preparation(img0)
         res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
-        cv2.imshow("Detection result", res_img_bgr)
+
+        cv2.namedWindow("Segment result", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Segment result", 1280, 720)
+        cv2.imshow("Segment result", res_img_bgr)
         cv2.waitKey(0)  # Wait for a key press
         cv2.destroyAllWindows()
 
-    def _predict_stream(self, stream: VideoStream | WebcamStream, *args, **kwargs):
+    def _predict_stream(self, stream: VideoStream | WebcamStream):
         """Evaluate video images or live data streams."""
         # Calculate the exact inter-frame delay required for offline video
         # The camera is internally limited, so delay=1
@@ -211,6 +211,8 @@ class PerPixelSegmentation(AlgorithmBase):
 
         LOGGER.info("Starting stream evaluation. Press 'q' to stop.")
 
+        cv2.namedWindow("Segment result", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Segment result", 1280, 720)
         for frames in stream:
             if isinstance(frames, dict):
                 frame = frames.get(self.modality)
@@ -221,10 +223,10 @@ class PerPixelSegmentation(AlgorithmBase):
                 frame = frames
 
             f_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res_rgb = self._inference_and_preparation(f_rgb, *args, **kwargs)
+            res_rgb = self._inference_and_preparation(f_rgb)
             show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
 
-            cv2.imshow("Detection result", show_frame)
+            cv2.imshow("Segment result", show_frame)
 
             if cv2.waitKey(delay) & 0xFF == ord("q"):
                 LOGGER.info("Stream stopped by user.")
@@ -232,7 +234,7 @@ class PerPixelSegmentation(AlgorithmBase):
 
         cv2.destroyAllWindows()
 
-    def _inference_and_preparation(self, img0: np.ndarray, *args, **kwargs) -> np.ndarray:
+    def _inference_and_preparation(self, img0: np.ndarray) -> np.ndarray:
         """Core reasoning and rendering logic."""
         # read image
         h0, w0, _ = img0.shape
@@ -250,7 +252,9 @@ class PerPixelSegmentation(AlgorithmBase):
         mask = torch.argmax(preds, dim=1).squeeze(0)
         # rescale masks
         mask = rescale_masks(mask, (self.imgsz, self.imgsz), (h0, w0)).cpu().numpy()
-        mask, num_items = colour_mask(mask)
+        mask, _ = colour_mask(mask)
+
+        return mask
 
 
 class MaskSegmentation(AlgorithmBase):
