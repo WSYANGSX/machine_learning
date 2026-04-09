@@ -185,7 +185,7 @@ class PerPixelSegmentation(AlgorithmBase):
         elif isinstance(stream, (VideoStream, WebcamStream)):
             self._predict_stream(stream)
 
-    def _predict_single_frame(self, img_path: FilePath):
+    def _predict_single_frame(self, img_path: FilePath) -> None:
         """Evaluate the single-frame image."""
         # read image
         img0 = cv2.imread(img_path, cv2.IMREAD_COLOR)
@@ -202,7 +202,7 @@ class PerPixelSegmentation(AlgorithmBase):
         cv2.waitKey(0)  # Wait for a key press
         cv2.destroyAllWindows()
 
-    def _predict_stream(self, stream: VideoStream | WebcamStream):
+    def _predict_stream(self, stream: VideoStream | WebcamStream) -> None:
         """Evaluate video images or live data streams."""
         # Calculate the exact inter-frame delay required for offline video
         # The camera is internally limited, so delay=1
