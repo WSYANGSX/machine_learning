@@ -70,12 +70,15 @@ class MultimodalPerPixelSegmentation(PerPixelSegmentation):
 
             return {"preds": preds}
 
-    def _predict_single_frame(
-        self,
-        paths: dict[str, str],
-        *args,
-        **kwargs,
-    ):
+    @torch.no_grad()
+    def predict(self, stream: dict[str, str] | VideoStream | WebcamStream, *args, **kwargs) -> None:
+        """Make predictions from different special data stream."""
+        super().predict(stream, *args, **kwargs)
+
+        if isinstance(stream, dict):
+            self._predict_single_frame(stream)
+
+    def _predict_single_frame(self, paths: dict[str, str]) -> None:
         """Evaluate the single-frame image."""
         # read image
         img_path = paths["img"]
@@ -92,7 +95,7 @@ class MultimodalPerPixelSegmentation(PerPixelSegmentation):
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
         ir0 = cv2.cvtColor(ir0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
-        res = self._inference_and_preparation(img0, ir0, *args, **kwargs)
+        res = self._inference_and_preparation(img0, ir0)
 
         res_bgr = cv2.cvtColor(res, cv2.COLOR_RGB2BGR)
         cv2.namedWindow("Segment result", cv2.WINDOW_NORMAL)
@@ -101,7 +104,7 @@ class MultimodalPerPixelSegmentation(PerPixelSegmentation):
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    def _predict_stream(self, stream: VideoStream | WebcamStream):
+    def _predict_stream(self, stream: VideoStream | WebcamStream) -> None:
         """Evaluate video images or live data streams."""
         # Calculate the exact inter-frame delay required for offline video
         # The camera is internally limited, so delay=1

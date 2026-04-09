@@ -94,13 +94,10 @@ class MultimodalDetection(YoloV8):
         *args,
         **kwargs,
     ):
-        self.set_eval()
+        super().predict(stream, *args, **kwargs)
 
         if isinstance(stream, dict):
-            self._predict_single_frame(stream, conf_thres, iou_thres, base, *args, **kwargs)
-
-        elif isinstance(stream, (VideoStream, WebcamStream)):
-            self._predict_stream(stream, conf_thres, iou_thres, base, *args, **kwargs)
+            self._predict_single_frame(stream, conf_thres, iou_thres, base)
 
     def _predict_single_frame(
         self,
@@ -108,8 +105,6 @@ class MultimodalDetection(YoloV8):
         conf_thres: float | None = None,
         iou_thres: float | None = None,
         base: str = "img",
-        *args,
-        **kwargs,
     ):
         """Evaluate the single-frame image."""
         # read image
@@ -126,7 +121,7 @@ class MultimodalDetection(YoloV8):
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
         ir0 = cv2.cvtColor(ir0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
-        res = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base, *args, **kwargs)
+        res = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base)
 
         res_bgr = cv2.cvtColor(res, cv2.COLOR_RGB2BGR)
         cv2.namedWindow("Prediction", cv2.WINDOW_NORMAL)
@@ -141,8 +136,6 @@ class MultimodalDetection(YoloV8):
         conf_thres: float | None = None,
         iou_thres: float | None = None,
         base: str = "img",
-        *args,
-        **kwargs,
     ):
         """Evaluate video images or live data streams."""
         # Calculate the exact inter-frame delay required for offline video
@@ -161,7 +154,7 @@ class MultimodalDetection(YoloV8):
 
             img0 = cv2.cvtColor(frames["img"], cv2.COLOR_BGR2RGB)
             ir0 = cv2.cvtColor(frames["ir"], cv2.COLOR_BGR2RGB)
-            res_rgb = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base, *args, **kwargs)
+            res_rgb = self._inference_and_preparation(img0, ir0, conf_thres, iou_thres, base)
             show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
             cv2.imshow("Stream Evaluation", show_frame)
 
@@ -178,8 +171,6 @@ class MultimodalDetection(YoloV8):
         conf_thres: float | None,
         iou_thres: float | None,
         base: str,
-        *args,
-        **kwargs,
     ) -> np.ndarray:
         """Core reasoning and rendering logic."""
         assert img0.shape[:2] == ir0.shape[:2], f"Input img and ir have different shapes: {img0.shape} vs {ir0.shape}."
@@ -224,8 +215,8 @@ class MultimodalDetection(YoloV8):
 
         # visualization
         if base == "img":
-            res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+            res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names)
         elif base == "ir":
-            res_img = add_bboxes_to_image(ir0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+            res_img = add_bboxes_to_image(ir0, bboxes, cls, conf, self.class_names)
 
         return res_img

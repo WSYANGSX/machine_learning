@@ -615,18 +615,16 @@ class YoloV8(AlgorithmBase):
         super().predict(stream, *args, **kwargs)
 
         if isinstance(stream, (str, FilePath)):
-            self._predict_single_frame(stream, conf_thres, iou_thres, *args, **kwargs)
+            self._predict_single_frame(stream, conf_thres, iou_thres)
 
         elif isinstance(stream, (VideoStream, WebcamStream)):
-            self._predict_stream(stream, conf_thres, iou_thres, *args, **kwargs)
+            self._predict_stream(stream, conf_thres, iou_thres)
 
     def _predict_single_frame(
         self,
         img_path: FilePath,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
-        *args,
-        **kwargs,
     ):
         """Evaluate the single-frame image."""
         # read image
@@ -635,7 +633,7 @@ class YoloV8(AlgorithmBase):
             raise FileNotFoundError(f"Failed to read image: {img_path}")
         img0 = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)  # BGR -> RGB
 
-        res_img = self._inference_and_preparation(img0, conf_thres, iou_thres, *args, **kwargs)
+        res_img = self._inference_and_preparation(img0, conf_thres, iou_thres)
         res_img_bgr = cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR)
 
         cv2.namedWindow("Detection result", cv2.WINDOW_NORMAL)
@@ -649,8 +647,6 @@ class YoloV8(AlgorithmBase):
         stream: VideoStream | WebcamStream,
         conf_thres: float | None = None,
         iou_thres: float | None = None,
-        *args,
-        **kwargs,
     ):
         """Evaluate video images or live data streams."""
         # Calculate the exact inter-frame delay required for offline video
@@ -672,7 +668,7 @@ class YoloV8(AlgorithmBase):
                 frame = frames
 
             f_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres, *args, **kwargs)
+            res_rgb = self._inference_and_preparation(f_rgb, conf_thres, iou_thres)
             show_frame = cv2.cvtColor(res_rgb, cv2.COLOR_RGB2BGR)
 
             cv2.imshow("Detection result", show_frame)
@@ -684,7 +680,7 @@ class YoloV8(AlgorithmBase):
         cv2.destroyAllWindows()
 
     def _inference_and_preparation(
-        self, img0: np.ndarray, conf_thres: float | None, iou_thres: float | None, *args, **kwargs
+        self, img0: np.ndarray, conf_thres: float | None, iou_thres: float | None
     ) -> np.ndarray:
         """Core reasoning and rendering logic."""
         h0, w0, _ = img0.shape
@@ -723,7 +719,7 @@ class YoloV8(AlgorithmBase):
             bboxes, conf, cls = np.zeros((0, 4)), [], []
 
         # visualization
-        res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names, *args, **kwargs)
+        res_img = add_bboxes_to_image(img0, bboxes, cls, conf, self.class_names)
         return res_img
 
 
