@@ -1484,7 +1484,7 @@ class SemanticMaskDataset(DatasetBase):
 
             pbar.close()
 
-    def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None]:
+    def load_data(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray | None, tuple[int, int], tuple[int, int]]:
         """Loads 1 img and label from dataset index 'i', returns (img, label)."""
         im, imf, imfn = self.imgs[i], self.img_files[i], self.img_npy_files[i]
 
@@ -1679,6 +1679,13 @@ class SemanticMaskDataset(DatasetBase):
         return new_batch
 
 
+# TODO
+class InstanceMaskDataset(DatasetBase):
+    def __init__(self, data, labels, cache=False, augment=False, hyp=None, fraction=1, mode="train"):
+        super().__init__(data, labels, cache, augment, hyp, fraction, mode)
+
+
+# TODO
 class MultiModalMasksDataset(MultiModalDatasetBase):
     """
     A Dense Mask dataset specifically designed for multimodal semantic/instance/panoptic segmentation.

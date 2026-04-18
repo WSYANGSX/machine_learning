@@ -1,6 +1,6 @@
 from machine_learning.utils import load_cfg
 from machine_learning.data.dataset.datasets import SemanticMaskDataset
-from machine_learning.data.dataset.parsers import SBDParser
+from machine_learning.data.dataset.parsers import SBDParser, CarParser
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.ops import img_tensor2np
 from machine_learning.utils.segment import visualize_mask, generate_gt_edges
@@ -9,8 +9,8 @@ import torch
 torch.set_printoptions(threshold=torch.inf)
 
 
-data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/sbd.yaml")
-parser = SBDParser(data_cfg)
+data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/car.yaml")
+parser = CarParser(data_cfg)
 res = parser.parse()
 # res["train"]["data"] = {"imgs": imgs, "irs": irs}
 
