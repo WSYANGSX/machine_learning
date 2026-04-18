@@ -1,6 +1,6 @@
 name: fire_hole
 path: /home/yangxf/WorkSpace/datasets/..datasets/fire_hole
-dataset_type: MultiModalYoloDataset
+dataset_type: MultiModalMaskDataset
 modalities:
   - img
   - ir
@@ -15,9 +15,8 @@ train_labels_dir: labels/train
 val_labels_dir: labels/val
 
 # Classes
-nc: 4 
+nc: 3
 class_names:
-  - background
   - melt
   - slag
   - tool

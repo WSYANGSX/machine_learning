@@ -3,7 +3,7 @@ from machine_learning.data.dataset.datasets import MultiModalMasksDataset
 from machine_learning.data.dataset.parsers import FireHoleParser
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.ops import img_tensor2np
-from machine_learning.utils.segmentation import visualize_mask
+from machine_learning.utils.segment import visualize_mask
 
 data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/fire_hole.yaml")
 parser = FireHoleParser(data_cfg)

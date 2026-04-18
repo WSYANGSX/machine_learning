@@ -9,12 +9,12 @@ def main():
     # Step 2: Build the evaluate
     predictor = Predictor(
         unet,
-        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_car_2026-04-07_10-52/ckpt/best_model.pth",
-        "car.yaml",
+        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_sbd_2026-04-15_16-43/ckpt/best_model.pth",
+        "sbd.yaml",
     )
 
     # Step 3: Predict
-    predictor.algorithm.predict(stream="/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/train/0ce66b539f52_06.jpg")
+    predictor.algorithm.predict(stream="/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/JPEGImages/2007_000027.jpg")
 
 
 if __name__ == "__main__":

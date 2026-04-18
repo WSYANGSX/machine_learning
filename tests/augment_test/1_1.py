@@ -7,7 +7,7 @@ from PIL import Image
 
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.ops import img_tensor2np
-from machine_learning.utils.detection import visualize_img_bboxes
+from machine_learning.utils.detect import visualize_img_bboxes
 from ultralytics.utils.instance import Instances
 from ultralytics.data.utils import polygon2mask
 from ultralytics.data.augment import (

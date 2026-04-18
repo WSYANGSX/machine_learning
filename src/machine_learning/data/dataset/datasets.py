@@ -1275,20 +1275,19 @@ class MultiModalYoloDataset(MultiModalDatasetBase):
         return new_batch
 
 
-class MasksDataset(DatasetBase):
+class SemanticMaskDataset(DatasetBase):
     """
-    A multimodal Mask dataset compatible with semantic segmentation, instance segmentation, and panoptic segmentation.
+    A Mask dataset for semantic segmentation.
 
     Arguments:
         - imgs: A list of file paths to img file paths or numpy arrays.
         - masks: A list of file paths to the corresponding mask images.
-        - num_classes: The number of classes in the segmentation task (including background).
+        - nc: The number of classes in the segmentation task (including background).
         - imgsz: The target image size for resizing (default: 640).
         - cache: Whether to cache data in RAM or on disk (default: False).
         - augment: Whether to apply data augmentation (default: True).
         - hyp: A dictionary of hyperparameters for augmentation (default: None).
         - fraction: The fraction of the dataset to use (default: 1.0).
-        - task: The segmentation task, either "semantic" or "instance/" (default: "semantic").
         - mode: The dataset mode, one of "train", "val", or "test" (default: "train").
 
     Note:
@@ -1305,29 +1304,24 @@ class MasksDataset(DatasetBase):
         rect: bool = False,
         stride: int = 32,
         pad: float = 0.5,
-        single_cls: bool = False,
-        classes: list[int] = None,
         cache: bool | Literal["ram", "disk"] | None = False,
         augment: bool = True,
         hyp: dict[str, Any] | None = None,
         fraction: float = 1.0,
-        task_type: Literal["semantic", "instance", "panoptic"] = "semantic",
-        panoptic_divisor: Optional[int] = None,
+        single_cls: bool = False,
+        classes: list[int] = None,
+        ignore_value: int | None = 255,
         mode: Literal["train", "val", "test"] = "train",
     ):
-        self.task_type = task_type
-        self.panoptic_divisor = panoptic_divisor
         self.nc = nc
         self.imgsz = imgsz
         self.rect = rect
-        self.single_cls = single_cls  # Only distinguish between the foreground and the background
-        self.classes = classes  # specific class indices to include, None for all classes
         self.batch_size = batch_size
         self.stride = stride
         self.pad = pad
-
-        if self.task_type in {"instance", "panoptic"} and self.panoptic_divisor is None:
-            raise ValueError("panoptic_divisor must be specified for instance and panoptic segmentation tasks.")
+        self.ignore_value = ignore_value
+        self.single_cls = single_cls
+        self.classes = classes
 
         super().__init__(
             data=imgs,
@@ -1543,14 +1537,11 @@ class MasksDataset(DatasetBase):
         # lazy load mask
         mask_file = sample.pop("mask_file")
         if mask_file is not None:
-            if self.task_type == "semantic":
-                mask_raw = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
-            else:
-                mask_raw = cv2.imread(mask_file, cv2.IMREAD_UNCHANGED)
+            raw_mask = np.array(Image.open(mask_file))  # maybe include edge value
         else:
-            mask_raw = np.zeros(sample["ori_shape"], dtype=np.uint8)
+            raw_mask = np.zeros(sample["ori_shape"], dtype=np.uint8)
 
-        sample["mask"] = mask_raw
+        sample["raw_mask"] = raw_mask
 
         # ratio and rectangle
         sample["ratio_pad"] = (
@@ -1563,46 +1554,27 @@ class MasksDataset(DatasetBase):
 
     def update_annotations(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Structure the mask and class labels according to the task type."""
-        raw_mask = sample.pop("mask")
-        hw = sample["resized_shape"]
-
+        raw_mask, hw = sample.pop("raw_mask"), sample["resized_shape"]
         mask_resized = cv2.resize(raw_mask, hw[::-1], interpolation=cv2.INTER_NEAREST)
 
         if self.classes is not None:
-            if self.task_type in ("instance", "panoptic"):
-                class_ids = mask_resized // self.panoptic_divisor
-                mask_resized = np.where(np.isin(class_ids, self.classes), mask_resized, 0)
-            else:
-                mask_resized = np.where(np.isin(mask_resized, self.classes), mask_resized, 0)
+            valid_obj_mask = np.isin(mask_resized, self.classes).astype(np.uint8)
+
+            kernel = np.ones((5, 5), np.uint8)
+            valid_territory = cv2.dilate(valid_obj_mask, kernel, iterations=2)
+
+            is_valid_class = valid_obj_mask > 0
+            is_valid_boundary = (mask_resized == self.ignore_value) & (valid_territory > 0)
+
+            mask_resized = np.where(is_valid_class | is_valid_boundary, mask_resized, 0)
 
         if self.single_cls:
-            mask_resized = np.where(mask_resized > 0, 1, 0)
+            foreground_mask = (mask_resized > 0) & (mask_resized != self.ignore_value)
+            mask_resized = np.where(foreground_mask, 1, mask_resized)
 
-        if self.task_type == "semantic":
-            # Semantic Segmentation: Keep a single channel (H, W) and only retain the category ID
-            sample["mask"] = mask_resized.astype(np.uint8)
-            sample["cls"] = np.unique(sample["mask"])
-
-        elif self.task_type in ["instance", "panoptic"]:
-            # Instance/Panoptic Segmentation: Split into (N, H, W)
-            unique_ids = np.unique(mask_resized)
-            unique_ids = unique_ids[unique_ids != 0]  # Filter out background 0
-
-            N = len(unique_ids)
-            if N > 0:
-                masks = np.zeros((N, hw[0], hw[1]), dtype=np.uint8)
-                classes = np.zeros(N, dtype=np.int64)
-
-                for idx, uid in enumerate(unique_ids):
-                    masks[idx] = (mask_resized == uid).astype(np.uint8)
-                    classes[idx] = uid // self.panoptic_divisor
-
-                sample["masks"] = masks  # Shape (N, H, W)
-                sample["cls"] = classes  # Shape (N,)
-
-            else:
-                sample["masks"] = np.zeros((0, hw[0], hw[1]), dtype=np.uint8)
-                sample["cls"] = np.zeros((0,), dtype=np.int64)
+        sample["mask"] = mask_resized.astype(np.uint8)
+        unique_idx = np.unique(sample["mask"])
+        sample["cls"] = unique_idx[unique_idx != self.ignore_value]
 
         return sample
 
@@ -1691,7 +1663,7 @@ class MasksDataset(DatasetBase):
                 tensors = [torch.from_numpy(v).long() if isinstance(v, np.ndarray) else v.long() for v in values]
                 new_batch[k] = torch.stack(tensors, dim=0)
 
-            elif k in ["masks", "cls"]:
+            elif k == "cls":
                 new_batch[k] = [torch.from_numpy(v) if isinstance(v, np.ndarray) else v for v in values]
 
             elif isinstance(values[0], np.ndarray):

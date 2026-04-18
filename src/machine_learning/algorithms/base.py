@@ -44,8 +44,6 @@ class AlgorithmBase(ABC):
         """
         super().__init__()
 
-        LOGGER.info("Algorithm initializing by self...")
-
         # buffers
         self._nets = {}  # nets buffer
         self._optimizers = {}  # optimizers buffer
@@ -68,14 +66,9 @@ class AlgorithmBase(ABC):
         self.batch_size = self.cfg["data"]["batch_size"]
         self.accumulate = max(1, round(self.nbs / self.batch_size))
 
-        # net
-        self.provided_net = net
-
-        # ema
-        self.ema_enable = ema
-
-        # amp
-        self._init_amp(amp)
+        self.provided_net = net  # net
+        self.ema_enable = ema if ema is not None else self._cfg["algorithm"].get("ema", False)  # ema
+        self.amp_enable = amp if amp is not None else self._cfg["algorithm"].get("amp", False)  # amp
 
     def _init_on_trainer(
         self,
@@ -107,6 +100,9 @@ class AlgorithmBase(ABC):
             LOGGER.info("EMA is enabled.")
             self._init_ema()
 
+        # init amp
+        self._init_amp()
+
         # init opts and schedulers
         self._init_optimizers()
         self._init_schedulers()
@@ -131,7 +127,7 @@ class AlgorithmBase(ABC):
         self.save_dir = save_dir if save_dir is not None else "./"
 
         self.ema_enable = False  # disable ema for evaluation
-        self.amp = False
+        self.amp_enable = False
         # init test dataset and test dataloader
         if load_dataset and dataset is not None:
             self._init_eval_dataset(dataset)
@@ -194,17 +190,17 @@ class AlgorithmBase(ABC):
         return self._test_loader if hasattr(self, "_test_loader") else None
 
     @property
-    def train_batches(self) -> int:
+    def train_batches(self) -> int | None:
         """Return the number of training batches if initialized."""
         return self._train_batches if hasattr(self, "_train_batches") else None
 
     @property
-    def val_batches(self) -> int:
+    def val_batches(self) -> int | None:
         """Return the number of validation batches if initialized."""
         return self._val_batches if hasattr(self, "_val_batches") else None
 
     @property
-    def test_batches(self) -> int:
+    def test_batches(self) -> int | None:
         """Return the number of test batches if initialized."""
         return self._test_batches if hasattr(self, "_test_batches") else None
 
@@ -376,13 +372,12 @@ class AlgorithmBase(ABC):
             dataset (str | Mapping[str, Any]): The dataset configuration.
         """
         LOGGER.info("Parsing dataset cfg...")
-        dataset_cfg = self._load_datasetcfg(dataset)
-        self._add_cfg("data", {"dataset": dataset_cfg})
-        self._dataset_cfg = dataset_cfg
+        self._dataset_cfg = self._load_datasetcfg(dataset)
+        self._add_cfg("data", {"dataset": self.dataset_cfg})
 
         # parser data
-        dataset_name = dataset_cfg["name"]
-        parser: ParserBase = PARSER_MAPS[dataset_name](dataset_cfg)
+        dataset_name = self._dataset_cfg["name"]
+        parser: ParserBase = PARSER_MAPS[dataset_name](self._dataset_cfg)
         parsing = parser.parse()
         train_parsing, val_parsing, test_parsing = parsing["train"], parsing["val"], parsing.get("test", {})
 
@@ -402,6 +397,14 @@ class AlgorithmBase(ABC):
 
         for key, net in self.nets.items():
             self.emas[key] = ModelEMA(net)
+
+    def _init_amp(self) -> None:
+        if self.amp_enable:
+            LOGGER.info("Automatic Mixed Precision (AMP) enabled.")
+            self.scaler = GradScaler()
+        else:
+            LOGGER.info("Automatic Mixed Precision (AMP) disenabled.")
+            self.scaler = None
 
     def _init_train_datasets(self, dataset: str | Mapping[str, Any]) -> None:
         """Initialize train and val datasets of the algorithm."""
@@ -472,11 +475,6 @@ class AlgorithmBase(ABC):
 
             net.view_structure()
 
-    def _init_amp(self, amp: bool | None = None) -> None:
-        self.amp = amp if amp is not None else self._cfg["algorithm"].get("amp", False)
-        self.scaler = GradScaler() if self.amp else None
-        LOGGER.info(f"Automatic Mixed Precision (AMP) mode is {self.amp}.")
-
     def _init_optimizers(self):
         """Configure the training optimizer"""
         LOGGER.info(f"Initializing the optimizers of {self.name}...")
@@ -527,7 +525,7 @@ class AlgorithmBase(ABC):
             self._add_scheduler("scheduler", self.scheduler)
 
         else:
-            ValueError(f"Does not support optimizer:{sch_type} currently.")
+            raise ValueError(f"Does not support scheduler:{sch_type} currently.")
 
     def __str__(self) -> str:
         """Return a summary string of the algorithm instance."""
@@ -648,7 +646,7 @@ class AlgorithmBase(ABC):
             data = self._prepare_batch(batch, "train")
 
             # Loss calculation
-            with autocast(device_type=str(self.device), enabled=self.amp):  # covers the forward computation
+            with autocast(device_type=self.device.type, enabled=self.amp_enable):  # covers the forward computation
                 res = self._forward_batch(self.net, data, "train")
                 loss = res["loss"]
 
@@ -771,6 +769,9 @@ class AlgorithmBase(ABC):
         return metrics, info
 
     def backward(self, loss: torch.Tensor) -> None:
+        if self.accumulate > 1:
+            loss = loss / self.accumulate
+
         if self.scaler:
             self.scaler.scale(loss).backward()
         else:
@@ -817,7 +818,7 @@ class AlgorithmBase(ABC):
             "nets": {},
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
-            "amp": self.amp,
+            "amp": self.amp_enable,
             "record_dir": record_dir,
             "ckpt_dir": ckpt_dir,
             "emas": None,
@@ -928,12 +929,12 @@ class AlgorithmBase(ABC):
                     LOGGER.info(f"Scheduler '{key}' not found in checkpoint.")
 
         if "scaler" in state:
-            if self.amp:
+            if self.amp_enable:
                 self.scaler.load_state_dict(state["scaler"])
                 LOGGER.info("Loaded AMP scaler state.")
             else:
                 LOGGER.warning("Checkpoint has AMP scaler but current AMP is disabled, ignoring scaler.")
-        elif self.amp:
+        elif self.amp_enable:
             LOGGER.warning("AMP enabled but checkpoint has no scaler, use new scaler.")
             if self.scaler is None:
                 self.scaler = GradScaler()

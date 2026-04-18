@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from machine_learning.utils.transforms import DEFAULT_YOLO_AUG
 from examples.transforms import ImgTransform
 from machine_learning.dataset.parsers import YoloParser, YoloParserCfg
-from machine_learning.utils.detection import xywh2xyxy
+from machine_learning.utils.detect import xywh2xyxy
 from machine_learning.utils.plots import visualize_img_with_bboxes
 
 

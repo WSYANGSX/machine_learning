@@ -17,6 +17,7 @@ class V13Net(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
+        single_cls: bool = False,
         *args,
         **kwargs,
     ):
@@ -31,7 +32,7 @@ class V13Net(BaseNet):
         super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
-        self.nc = nc
+        self.nc = nc if not single_cls else 1
         self.net_scale = net_scale
         self.in_channels = channels
 

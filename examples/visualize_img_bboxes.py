@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy as np
-from machine_learning.utils.detection import visualize_img_bboxes, yolo2voc
+from machine_learning.utils.detect import visualize_img_bboxes, yolo2voc
 from ultralytics.utils.ops import segments2boxes
 
 img = Image.open("/home/yangxf/Downloads/vedai/4_co.png")

@@ -1,4 +1,4 @@
-from typing import Union, Sequence, Mapping, Any
+from typing import Union, Sequence, Mapping
 
 import cv2
 import math
@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.ops import zeros_like
-from machine_learning.utils.segmentation import generate_distinct_color
+from machine_learning.utils.segment import generate_distinct_color
 
 
 def xywh2xyxy(x: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:

@@ -5,17 +5,17 @@ from machine_learning.algorithms.segmentation import PerPixelSegmentation
 
 def main():
     # Step 1: Parse the data
-    unet = PerPixelSegmentation("unet.yaml", amp=False)
+    fghf = PerPixelSegmentation("fghf.yaml", amp=False)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(
-        epochs=100,
+        epochs=300,
         log_interval=10,
         save_interval=10,
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, unet, "car.yaml")
+    trainer = Trainer(trainer_cfg, fghf, "sbd.yaml")
 
     # Step 3: Train the model
     trainer.train()

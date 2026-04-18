@@ -1,0 +1,52 @@
+name: sbd
+path: /home/yangxf/WorkSpace/datasets/..datasets/VOC2012
+dataset_type: SemanticMaskDataset
+
+# Directories
+imgs_dir: JPEGImages
+train_masks_dir: SegmentationClassAug
+val_masks_dir: SegmentationClass
+
+# IDs
+train_ids: train_aug.txt
+val_ids: val.txt
+
+# mean and std
+mean: 
+  - 0.485
+  - 0.456
+  - 0.406
+std:
+  - 0.229
+  - 0.224
+  - 0.225
+
+edge_value: 255
+# ignore value
+ignore_value: 255 # ignore edge
+
+# classes
+nc: 21
+class_names:
+  - background
+  - aeroplane
+  - bicycle
+  - bird
+  - boat
+  - bottle
+  - bus
+  - car
+  - cat
+  - chair
+  - cow
+  - diningtable
+  - dog
+  - horse
+  - motorbike
+  - person
+  - pottedplant
+  - sheep
+  - sofa
+  - train
+  - tvmonitor
+

@@ -9,7 +9,7 @@ from machine_learning.modules.blocks import (
     DSC3k2,
     DSConv,
     IntraHyperEnhance,
-    IntreHyperFusionV2,
+    IntreHyperFusion,
     MMFullPAD_Tunnel,
     ModalFuseSE,
     DownsampleConv,
@@ -25,8 +25,9 @@ class M2I2HANet_v8(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "l", "x"] = "n",
-        *args: tuple[Any, ...],
-        **kwargs: dict[str, Any],
+        single_cls: bool = False,
+        *args: Any,
+        **kwargs: Any,
     ):
         """M2I2HA multi-modal object detection network with yolov8 FENs.
 
@@ -39,7 +40,7 @@ class M2I2HANet_v8(BaseNet):
         super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
-        self.nc = nc
+        self.nc = nc if not single_cls else 1
         self.net_scale = net_scale
         self.channels = channels
 
@@ -88,7 +89,7 @@ class M2I2HANet_v8(BaseNet):
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": IntreHyperFusionV2(256, 128, 16, 0.5),
+                    "CHyperACE": IntreHyperFusion(256, 128, 16, 0.5),
                     "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -157,7 +158,7 @@ class M2I2HANet_v8(BaseNet):
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusionV2(512, 256, 12, 0.5),
+                    "CHyperACE": IntreHyperFusion(512, 256, 12, 0.5),
                     "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -343,7 +344,7 @@ class M2I2HANet_v13(BaseNet):
                     "Downsample_1": DownsampleConv(128),
                     "HyperACE_Ir": IntraHyperEnhance(128, 128, 2, 16, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(128),
-                    "CHyperACE": IntreHyperFusionV2(256, 128, 16, 0.5),
+                    "CHyperACE": IntreHyperFusion(256, 128, 16, 0.5),
                     "Conv_0": Conv(128, 256, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -409,7 +410,7 @@ class M2I2HANet_v13(BaseNet):
                     "Downsample_1": DownsampleConv(256),
                     "HyperACE_Ir": IntraHyperEnhance(256, 256, 1, 10, True, True, 0.5, 1, 8, context="both"),
                     "Downsample_2": DownsampleConv(256),
-                    "CHyperACE": IntreHyperFusionV2(512, 256, 12, 0.5),
+                    "CHyperACE": IntreHyperFusion(512, 256, 12, 0.5),
                     "Conv_0": Conv(256, 512, 1, 1),
                     "FullPAD_Tunnel_1": FullPAD_Tunnel(),
                     "FullPAD_Tunnel_2": FullPAD_Tunnel(),
@@ -514,7 +515,7 @@ class M2I2HANet_v13(BaseNet):
     def _initialize_weights(self):
         for m in self.modules():
             t = type(m)
-            if t is nn.Conv2d:
+            if t is nn.Cond:
                 pass
             elif t is nn.BatchNorm2d:
                 m.eps = 1e-3

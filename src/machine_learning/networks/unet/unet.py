@@ -104,12 +104,13 @@ class UNet(BaseNet):
         nc: int = 1,
         bilinear: bool = False,
         activation: Literal["relu", "gelu", "leaky_relu"] = "relu",
+        single_cls: bool = False,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.in_channels = channels
-        self.num_classes = nc
+        self.nc = nc if not single_cls else 2
         self.bilinear = bilinear
         self.imgsz = imgsz
         self.activation = activation
@@ -130,7 +131,7 @@ class UNet(BaseNet):
         self.up4 = UpBlock(128, 64, self.bilinear, activation=activation)
 
         # Final prediction head
-        self.outc = nn.Conv2d(64, self.num_classes + 1, kernel_size=1)
+        self.outc = nn.Conv2d(64, self.nc, kernel_size=1)
 
     @property
     def dummy_input(self) -> torch.Tensor:

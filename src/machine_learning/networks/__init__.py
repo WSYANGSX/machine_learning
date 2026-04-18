@@ -4,6 +4,8 @@ from .diffusion import DiffUNet
 from .unet import UNet
 from .gan import Generator, Discriminator
 from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v8, M2I2HANet_v13, COMONet
+from .fghf import FGHFNet
+
 
 __all__ = [
     "BaseNet",
@@ -18,6 +20,7 @@ __all__ = [
     "V8Net",
     "V13Net",
     "COMONet",
+    "FGHFNet",
 ]
 
 NET_MAPS = {
@@ -30,4 +33,5 @@ NET_MAPS = {
     "como": COMONet,
     "diff_unet": DiffUNet,
     "unet": UNet,
+    "fghf": FGHFNet,
 }

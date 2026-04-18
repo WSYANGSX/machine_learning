@@ -1,13 +1,16 @@
 from machine_learning.utils import load_cfg
-from machine_learning.data.dataset.datasets import MasksDataset
-from machine_learning.data.dataset.parsers import CarParser
+from machine_learning.data.dataset.datasets import SemanticMaskDataset
+from machine_learning.data.dataset.parsers import SBDParser
 from machine_learning.utils.plots import plot_imgs
 from machine_learning.utils.ops import img_tensor2np
-from machine_learning.utils.segmentation import visualize_mask
+from machine_learning.utils.segment import visualize_mask, generate_gt_edges
+import torch
+
+torch.set_printoptions(threshold=torch.inf)
 
 
-data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/car.yaml")
-parser = CarParser(data_cfg)
+data_cfg = load_cfg("/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets/sbd.yaml")
+parser = SBDParser(data_cfg)
 res = parser.parse()
 # res["train"]["data"] = {"imgs": imgs, "irs": irs}
 
@@ -33,7 +36,7 @@ hyp = {
     "bgr": 0.0,
 }
 
-dataset = MasksDataset(
+dataset = SemanticMaskDataset(
     imgs=res["train"]["imgs"],
     masks=res["train"]["labels"],
     nc=data_cfg["nc"],
@@ -41,19 +44,23 @@ dataset = MasksDataset(
     fraction=1,
     rect=False,
     hyp=hyp,
-    single_cls=True,
+    augment=True,
 )
 
-dataset.remove_item(100)
-dataset.remove_item(500)
-print(dataset.length)
 
 for i in range(50):
     sample = dataset.__getitem__(i)
     img = sample["img"]
     masks = sample["mask"]
-    cls = sample["cls"].numpy().reshape(-1)
-    plot_imgs([img_tensor2np(img)])
-    visualize_mask(img_tensor2np(masks))
+    edge2 = generate_gt_edges(masks, edge_width=3)
 
+    cls = sample["cls"].numpy().reshape(-1)
+    plot_imgs(
+        [
+            img_tensor2np(img),
+            img_tensor2np(masks),
+        ]
+    )
+    plot_imgs([img_tensor2np(edge2)], cmap="gray")
+    print(cls)
     print(sample["img_file"], sample["resized_shape"], sample["ori_shape"])

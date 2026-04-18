@@ -322,7 +322,41 @@ class CarParser(ParserBase):
         }
 
 
-"""Helper functions.
+class SBDParser(ParserBase):
+    r"""SBD dataset parser."""
+
+    def __init__(self, dataset_cfg: dict[str, Any]):
+        super().__init__(dataset_cfg)
+
+        self.imgs_dir = self.dataset_cfg["imgs_dir"]
+        self.train_labels_dir = self.dataset_cfg["train_masks_dir"]
+        self.val_labels_dir = self.dataset_cfg["val_masks_dir"]
+
+        self.train_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["train_ids"]))
+        self.val_ids = list_from_txt(os.path.join(self.dataset_path, self.dataset_cfg["val_ids"]))
+
+    def parse(self) -> dict[str, Any]:
+        # train path
+        train_imgs = [os.path.join(self.dataset_path, self.imgs_dir) + f"/{id}.jpg" for id in self.train_ids]
+        train_labels = [os.path.join(self.dataset_path, self.train_labels_dir) + f"/{id}.png" for id in self.train_ids]
+
+        # val path
+        val_imgs = [os.path.join(self.dataset_path, self.imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        val_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.png" for id in self.val_ids]
+
+        # test path
+        test_imgs = [os.path.join(self.dataset_path, self.imgs_dir) + f"/{id}.jpg" for id in self.val_ids]
+        test_labels = [os.path.join(self.dataset_path, self.val_labels_dir) + f"/{id}.png" for id in self.val_ids]
+
+        return {
+            "train": {"imgs": train_imgs, "labels": train_labels},
+            "val": {"imgs": val_imgs, "labels": val_labels},
+            "test": {"imgs": test_imgs, "labels": test_labels},
+        }
+
+
+"""
+Helper functions
 """
 
 
