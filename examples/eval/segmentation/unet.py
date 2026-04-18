@@ -9,14 +9,13 @@ def main():
     # Step 2: Build the evaluate
     evaluator = Evaluator(
         unet,
-        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_car_2026-04-07_10-52/ckpt/best_model.pth",
-        "car.yaml",
-        False,
+        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_sbd_2026-04-15_16-43/ckpt/best_model.pth",
+        "sbd.yaml",
+        True,
     )
 
     # Step 3: Evaluate the model
-    # evaluator.eval("/home/yangxf/WorkSpace/machine_learning/data/coco-2017/images/test/000000580196.jpg")
-    evaluator.algorithm.eval(img_path="/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/train/0ed6904e1004_06.jpg")
+    evaluator.eval()
 
 
 if __name__ == "__main__":

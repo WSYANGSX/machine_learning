@@ -53,7 +53,7 @@ class Trainer:
 
         # ------------------ init global random seed ------------------
         set_seed(self.cfg.seed)
-        LOGGER.info(f"Current seed: {self.cfg.seed}")
+        LOGGER.info(f"Global seed: {self.cfg.seed}")
 
         # ------------------- add cfg to algo -------------------------
         LOGGER.info("Algorithm initializing by trainer...")
@@ -131,6 +131,13 @@ class Trainer:
                 if not isinstance(val, (Real, Integral)):
                     continue
                 self.writer.add_scalar(f"{key}/val", val, epoch)
+
+            # log lr
+            if hasattr(self._algorithm, "optimizers"):
+                for name, opt in self._algorithm.optimizers.items():
+                    for i, param_group in enumerate(opt.param_groups):
+                        lr_val = param_group.get("lr", "N/A")
+                        self.writer.add_scalar(f"{name}: lr_pg{i}/train", lr_val, epoch)
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo

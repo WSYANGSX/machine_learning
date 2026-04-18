@@ -1,6 +1,6 @@
 name: cars
 path: /home/yangxf/WorkSpace/datasets/..datasets/car
-dataset_type: MasksDataset
+dataset_type: SemanticMaskDataset
 
 # Directories
 train_imgs_dir: imgs/train
@@ -11,6 +11,7 @@ train_labels_dir: masks/train
 val_labels_dir: masks/val
 test_labels_dir: masks/test
 
-nc: 1
+nc: 2
 class_names:
+  - background
   - car

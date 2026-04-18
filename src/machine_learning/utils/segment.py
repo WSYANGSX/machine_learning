@@ -2,41 +2,41 @@ import torch
 import torch.nn.functional as F
 
 import numpy as np
-from PIL import ImageColor
 from matplotlib import pyplot as plt
-from machine_learning.utils.constants import CSS_COLORS
 
 
 def calculate_miou(
-    predictions: torch.Tensor,
+    preds: torch.Tensor,
     targets: torch.Tensor,
-    ignore_value: int = -100,
+    ignore_value: int = 255,
 ) -> tuple[float, torch.Tensor, torch.Tensor]:
-    """Calculate mean Intersection over Union (mIoU) for the batch."""
-    predictions = F.interpolate(predictions, size=targets.shape[-2:], mode="bilinear", align_corners=False)
-
-    pred_classes = torch.argmax(predictions, dim=1)
+    """Optimized version of mIoU calculation (no loop required)."""
+    preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+    pred_classes = torch.argmax(preds, dim=1)
 
     valid_mask = targets != ignore_value
 
-    num_classes = predictions.shape[1]
-    intersection = torch.zeros(num_classes, device=predictions.device)
-    union = torch.zeros(num_classes, device=predictions.device)
+    targets_clean = targets.clone()
+    targets_clean[~valid_mask] = 0
+    pred_classes_clean = pred_classes.clone()
+    pred_classes_clean[~valid_mask] = 0
+
+    num_classes = preds.shape[1]
+
+    intersection = torch.zeros(num_classes, device=preds.device)
+    union = torch.zeros(num_classes, device=preds.device)
 
     for cls in range(num_classes):
-        pred_mask = (pred_classes == cls) & valid_mask
-        target_mask = (targets == cls) & valid_mask
-
-        intersection[cls] = (pred_mask & target_mask).sum()
-        union[cls] = (pred_mask | target_mask).sum()
+        pred_mask = (pred_classes_clean == cls) & valid_mask
+        target_mask = (targets_clean == cls) & valid_mask
+        intersection[cls] = (pred_mask & target_mask).sum().float()
+        union[cls] = (pred_mask | target_mask).sum().float()
 
     valid_classes = union > 0
-
     if not valid_classes.any():
         return 0.0, (intersection, union)
 
     iou = intersection[valid_classes] / union[valid_classes]
-
     return iou.mean().item(), intersection, union
 
 
@@ -170,3 +170,120 @@ def visualize_mask(mask: np.ndarray) -> None:
     plt.title(f"{title_prefix} Segmentation - Foreground Items: {num_items}")
     plt.imshow(display_mask)
     plt.show()
+
+
+def generate_gt_edges(
+    mask: torch.Tensor,
+    edge_width: int = 3,
+    exclude_value: int = 255,
+) -> torch.Tensor:
+    """
+    Extract and thicken the edges through morphological operations.
+    Strictly ensure that the dimensions of the input and output are consistent:
+    - Input [H, W] -> Output [H, W]
+    - Input [N, H, W] -> Output [N, H, W]
+
+    Args:
+    mask: Binary or category index mask, supporting 2D or 3D.
+    edge_width: The bold width of the edge (it is recommended to be an odd number, such as 1, 3, 5)
+    exclude_value: The value to ignore/exclude from edge generation (e.g., 255).
+
+    Returns:
+    thick_edges: A binary edge map with the same shape as the input.
+    """
+    original_dim = mask.dim()
+
+    if original_dim == 2:
+        # [H, W] -> [1, 1, H, W]
+        x = mask.unsqueeze(0).unsqueeze(0)
+    elif original_dim == 3:
+        # [N, H, W] -> [N, 1, H, W]
+        x = mask.unsqueeze(1)
+    else:
+        raise ValueError(f"Only 2D [H, W] or 3D [N, H, W] input is supported. The current dimension is: {original_dim}")
+
+    x_float = x.float()
+
+    dilated_mask = F.max_pool2d(x_float, kernel_size=3, stride=1, padding=1)
+    eroded_mask = -F.max_pool2d(-x_float, kernel_size=3, stride=1, padding=1)
+    base_edges = (dilated_mask != eroded_mask).float()
+
+    valid_pixels = ((x_float > 0) & (x_float != exclude_value)).float()
+    has_valid_class = F.max_pool2d(valid_pixels, kernel_size=3, stride=1, padding=1) > 0
+
+    base_edges[~has_valid_class] = 0.0
+
+    if edge_width > 1:
+        padding = edge_width // 2
+        thick_edges = F.max_pool2d(base_edges, kernel_size=edge_width, stride=1, padding=padding)
+    else:
+        thick_edges = base_edges
+
+    if original_dim == 2:
+        # [1, 1, H, W] -> [H, W]
+        out = thick_edges.squeeze(0).squeeze(0)
+    else:
+        # [N, 1, H, W] -> [N, H, W]
+        out = thick_edges.squeeze(1)
+
+    return out
+
+
+class SegmentMetrics:
+    """
+    Metrics for Semantic Segmentation Task.
+    Source from: https://github.com/VainF/DeepLabV3Plus-Pytorch.
+    """
+
+    def __init__(self, nc: int) -> None:
+        self.nc = nc
+        self.confusion_matrix = np.zeros((nc, nc))
+
+    def update(self, target: np.ndarray, preds: np.ndarray):
+        for gt, pred in zip(target, preds):
+            self.confusion_matrix += self._fast_hist(gt.flatten(), pred.flatten())
+
+    @staticmethod
+    def to_str(results):
+        string = "\n"
+        for k, v in results.items():
+            if k != "Class IoU":
+                string += "%s: %f\n" % (k, v)
+
+        return string
+
+    def _fast_hist(self, target: np.ndarray, preds: np.ndarray):
+        mask = (target >= 0) & (target < self.nc)
+        hist = np.bincount(
+            self.nc * target[mask].astype(int) + preds[mask],
+            minlength=self.nc**2,
+        ).reshape(self.nc, self.nc)
+        return hist
+
+    def get_results(self):
+        """Returns accuracy score evaluation result.
+        - overall accuracy
+        - mean accuracy
+        - mean I0U
+        - fwavacc
+        """
+        cm = self.confusion_matrix
+        acc = np.diag(cm).sum() / cm.sum()
+        acc_cls = np.diag(cm) / cm.sum(axis=1)
+        acc_cls = np.nanmean(acc_cls)
+        iu = np.diag(cm) / (cm.sum(axis=1) + cm.sum(axis=0) - np.diag(cm))
+        mean_iu = np.nanmean(iu)
+        freq = cm.sum(axis=1) / cm.sum()
+        fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
+        cls_iu = dict(zip(range(self.nc), iu))
+
+        return {
+            "Overall Acc": acc,
+            "Mean Acc": acc_cls,
+            "FreqW Acc": fwavacc,
+            "Mean IoU": mean_iu,
+            "Class IoU": cls_iu,
+        }
+
+    def reset(self):
+        self.confusion_matrix = np.zeros((self.nc, self.nc))

@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 import albumentations as A
 
-from machine_learning.utils.detection import yolo2voc
+from machine_learning.utils.detect import yolo2voc
 from machine_learning.utils.plots import visualize_img_with_bboxes
 
 np.set_printoptions(threshold=np.inf)

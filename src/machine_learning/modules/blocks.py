@@ -1085,6 +1085,8 @@ class SparseAdaHGConv(nn.Module):
         k = edge_idx.size(-1)
 
         idx = edge_idx.reshape(B, N * k)  # [B,Nk]
+
+        edge_w = edge_w.to(X.dtype)
         contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)  # [B,Nk,D]
 
         He = X.new_zeros(B, E, D)
@@ -1361,6 +1363,7 @@ class CompressAdaHGConv(nn.Module):
 
         idx = edge_idx.reshape(B, N * k).to(device=X.device, dtype=torch.long)  # [B, Nk]
 
+        edge_w = edge_w.to(X.dtype)
         contrib = (edge_w.unsqueeze(-1) * X.unsqueeze(2)).reshape(B, N * k, D)
 
         He = torch.zeros(B, E, D, device=X.device, dtype=X.dtype)  # 使用 X.dtype
@@ -1435,6 +1438,8 @@ class SparseC3AH(nn.Module):
         sparse_ratio: float = 0.5,
         dropout: float = 0.1,
         context: str = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
     ):
         super().__init__()
         c_ = int(c2 * e)
@@ -1450,6 +1455,8 @@ class SparseC3AH(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
         )
         self.cv3 = Conv(2 * c_, c2, 1)
 
@@ -1561,49 +1568,6 @@ class IntraHyperEnhance(nn.Module):
         y.extend(m(y[-1]) for m in self.m)
         y[1] = out1
         y.append(out2)
-        return self.cv2(torch.cat(y, 1))
-
-
-class IntreHyperFusion(nn.Module):
-    def __init__(
-        self,
-        c1,
-        c2,
-        n=1,
-        num_hyperedges=8,
-        dsc3k=True,
-        shortcut=False,
-        e1=0.5,
-        e2=1,
-        rank=16,
-        sparse_ratio=0.5,
-        dropout=0.1,
-        context="both",
-    ):
-        super().__init__()
-        self.c = int(c2 * e1)
-        self.cv1 = Conv(c1, 3 * self.c, 1, 1)
-        self.cv2 = Conv((4 + n) * self.c, c2, 1)
-        self.m = nn.ModuleList(
-            DSC3k(self.c, self.c, 2, shortcut, k1=3, k2=7) if dsc3k else DSBottleneck(self.c, self.c, shortcut=shortcut)
-            for _ in range(n)
-        )
-
-        self.cmca = M2CA(c1, c1)
-        self.fuse = ModalFuseGate(c1)
-        self.branch1 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
-        self.branch2 = CompressC3AH(self.c, self.c, e2, num_hyperedges, rank, sparse_ratio, dropout, context)
-
-    def forward(self, X):
-        X_hat = self.cmca(X)
-        x = self.fuse(X_hat)
-        y = list(self.cv1(x).chunk(3, 1))
-        out1 = self.branch1(y[1])
-        out2 = self.branch2(y[1])
-        y.extend(m(y[-1]) for m in self.m)
-        y[1] = out1
-        y.append(out2)
-
         return self.cv2(torch.cat(y, 1))
 
 
@@ -1931,7 +1895,7 @@ class CorssHGComputation(nn.Module):
         return x_a_out, x_b_out, cross_repr
 
 
-class IntreHyperFusionV2(nn.Module):
+class IntreHyperFusion(nn.Module):
     def __init__(
         self,
         c1,
@@ -1983,6 +1947,403 @@ class MMFullPAD_Tunnel(nn.Module):
     def forward(self, x):
         out = x[0] + self.gate1 * x[1] + self.gate2 * x[2] + self.gate3 * x[3]
         return out
+
+
+# --------------------------------------------- Frenquency attentation  ------------------------------------------------
+class FrequencyVQEmbedding(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        num_embeddings: int = 512,
+        embedding_dim: int = 32,
+        commitment_cost: float = 0.25,
+    ):
+        """
+        Frequency-domain VQ embedding module.
+
+        Args:
+            - in_channels: Number of channels for input frequency-domain features.
+            - num_embeddings: The number of standard frequency features in Codebook (K).
+            - embedding_dim: The dimension of the embedding space (D).
+            - commitment_cost: The commitment Loss weight (beta) in VQ Loss.
+        """
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.num_embeddings = num_embeddings
+        self.commitment_cost = commitment_cost
+
+        self.pre_vq_conv = nn.Conv2d(in_channels, embedding_dim, 1)
+        self.post_vq_conv = nn.Conv2d(embedding_dim, in_channels, 1)
+
+        # Codebook
+        self.embedding = nn.Embedding(self.num_embeddings, self.embedding_dim)
+        # init Codebook
+        self.embedding.weight.data.uniform_(-1 / self.num_embeddings, 1 / self.num_embeddings)
+
+    def forward(self, dct_features):
+        """
+        dct_features: The frequency domain characteristics, [B, C, H, W].
+        """
+        z = self.pre_vq_conv(dct_features)  # [B, C, H, W] -> [B, D, H, W]
+
+        # [B, D, H, W] -> [B, H, W, D] -> [B*H*W, D]
+        z_flattened = z.permute(0, 2, 3, 1).contiguous().view(-1, self.embedding_dim)
+
+        # Calculate the L2 distance between the input vector and the Codebook vector
+        d = torch.cdist(z_flattened.unsqueeze(0), self.embedding.weight.unsqueeze(0), p=2.0).squeeze(0)
+
+        # Codebook argmin
+        min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)  # [B*H*W, 1]
+
+        # Obtain the quantized vector (extract from the Codebook)
+        z_q_flattened = torch.gather(
+            self.embedding.weight, dim=0, index=min_encoding_indices.expand(-1, self.embedding_dim)
+        )
+
+        # [B, H, W, D] -> [B, D, H, W]
+        z_q = (
+            z_q_flattened.view(z.shape[0], z.shape[2], z.shape[3], self.embedding_dim).permute(0, 3, 1, 2).contiguous()
+        )
+
+        # VQ Loss
+        vq_loss = F.mse_loss(z_q, z.detach()) + self.commitment_cost * F.mse_loss(z_q.detach(), z)
+
+        # Straight-Through Estimator, STE
+        z_q = z + (z_q - z).detach()
+        out_features = self.post_vq_conv(z_q)
+
+        return out_features, vq_loss
+
+
+class DCTGaussianLowPassFilter(nn.Module):
+    """
+    Global Gaussian low-pass filter (global mask multiplication) for 2D DCT frequency domain.
+    """
+
+    def __init__(self, init_sigma=0.3, learnable=True):
+        super().__init__()
+
+        # sigma controls the bandwidth (passing threshold) of the filter.
+        # The larger the sigma, the more high frequencies are retained.
+        # The smaller the sigma, the stricter the low-pass filtering.
+        if learnable:
+            self.sigma = nn.Parameter(torch.tensor(init_sigma, dtype=torch.float32))
+        else:
+            self.register_buffer("sigma", torch.tensor(init_sigma, dtype=torch.float32))
+
+        # Cache grid distance to avoid duplicate calculation for each Batch
+        self.cache_shape = None
+        self.D_squared = None
+
+    def forward(self, dct_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Input (tensor):
+            The tensor transformed by 2D DCT, with the shape of [B, C, H, W].
+        Output (tensor):
+            The DCT tensor after applying Gaussian low-pass mask.
+        """
+        B, C, H, W = dct_tensor.shape
+        device = dct_tensor.device
+
+        # If the input size or device changes, regenerate the distance square matrix
+        if self.cache_shape != (H, W) or (self.D_squared is not None and self.D_squared.device != device):
+            # Normalize the coordinates to the interval [0, 1] so that the scale of sigma is independent of resolution
+            u = torch.linspace(0, 1, steps=H, device=device, dtype=torch.float32)
+            v = torch.linspace(0, 1, steps=W, device=device, dtype=torch.float32)
+
+            U, V = torch.meshgrid(u, v, indexing="ij")
+
+            # Calculate the square of the distance to the origin of the upper left corner (0, 0) : D^2 = u^2 + v^2
+            self.D_squared = (U**2 + V**2).unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+            self.cache_shape = (H, W)
+
+        # Limit the lower limit of sigma to prevent gradient explosion caused by division by 0 or minimum values
+        safe_sigma = torch.clamp(self.sigma, min=1e-4)
+
+        # Calculate the Gaussian mask weight: W(u, v) = exp(-D^2 / (2 * sigma^2))
+        # The result is within the range of [0, 1], with the top left corner strictly being 1
+        mask = torch.exp(-self.D_squared / (2 * safe_sigma**2))
+
+        # Element-by-element multiplication of the mask with the DCT frequency domain features
+        # to(dct tensor.dtype) ensures type matching under mixed precision (AMP)
+        filtered_dct = dct_tensor * mask.to(dct_tensor.dtype)
+
+        return filtered_dct
+
+
+class FrenquencyGuidedHyperedgeGen(nn.Module):
+    """
+    Low-rank sparse hyperedge generator with frenquency guidance, supports two routing modes.
+
+    Select_mode:
+        - global: For each sample, kE hyperedges are globally selected, and all nodes within the sample share the same
+        set of candidate hyperedges.
+        - node  : Each node selects kE hyper-edges independently (with stronger expressiveness).
+
+    Return:
+        edge_idx: [B, N, kE]  Which hyperedge indexes is each node connected to.
+        edge_w  : [B, N, kE]  Corresponding weights (softmax over kE).
+        E       : int         Total number of excess edges.
+    """
+
+    def __init__(
+        self,
+        node_dim: int,
+        num_hyperedges: int,
+        rank: int = 16,
+        num_heads: int = 4,
+        dropout: float = 0.1,
+        context: Literal["mean", "max", "both"] = "both",
+        sparse_ratio: float = 1.0,
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
+    ):
+        super().__init__()
+
+        assert 0 < sparse_ratio <= 1, f"sparse_ratio must be in (0,1], got {sparse_ratio}"
+        assert node_dim % num_heads == 0, "node_dim must be divisible by num_heads"
+        assert rank <= min(num_hyperedges, node_dim), (
+            f"rank {rank} must be ≤ min(num_hyperedges={num_hyperedges}, node_dim={node_dim})"
+        )
+
+        self.node_dim = node_dim
+        self.num_hyperedges = num_hyperedges
+        self.rank = rank
+        self.num_heads = num_heads
+        self.head_dim = node_dim // num_heads
+        self.context = context
+        self.sparse_ratio = sparse_ratio
+        self.mode = mode
+        self.node_topk_chunk = node_topk_chunk
+
+        # Low-rank parameters
+        self.U = nn.Parameter(torch.empty(num_hyperedges, rank))  # [E,r]
+        self.V = nn.Parameter(torch.empty(rank, node_dim))  # [r,D]
+        self.prototype_bias = nn.Parameter(torch.empty(num_hyperedges, node_dim))
+
+        fre_ctx_dim = node_dim if context in ("mean", "max") else 2 * node_dim
+        # frequency context -> V_offset
+        self.fre_context_net = nn.Linear(fre_ctx_dim, rank * node_dim)
+        if mode == "global":
+            self.fre_score_proj = nn.Linear(fre_ctx_dim, node_dim)
+        else:
+            self.fre_score_proj = nn.Identity()
+
+        self.pre_head_proj = nn.Linear(node_dim, node_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.scaling = math.sqrt(self.head_dim)
+
+        self._init_parameters()
+
+    def _init_parameters(self):
+        nn.init.xavier_uniform_(self.U, gain=0.1)
+        nn.init.xavier_uniform_(self.V, gain=0.1)
+        nn.init.xavier_uniform_(self.fre_context_net.weight)
+        nn.init.zeros_(self.fre_context_net.bias)
+        nn.init.xavier_uniform_(self.prototype_bias)
+        if isinstance(self.fre_score_proj, nn.Linear):
+            nn.init.xavier_uniform_(self.fre_score_proj.weight)
+            nn.init.zeros_(self.fre_score_proj.bias)
+
+    def _get_fre_context(self, fre: torch.Tensor) -> torch.Tensor:
+        """Extracting dct frequency context."""
+        if self.context == "mean":
+            return fre.mean(dim=1)  # [B,D]
+        if self.context == "max":
+            return fre.max(dim=1).values  # [B,D]
+
+        avg = fre.mean(dim=1)
+        mx = fre.max(dim=1).values
+        return torch.cat([avg, mx], dim=-1)  # [B,2D]
+
+    def _compute_V_dynamic(self, fre: torch.Tensor) -> torch.Tensor:
+        """V_dynamic: [B,r,D]."""
+        B = fre.shape[0]
+        V_offset = self.fre_context_net(fre).view(B, self.rank, self.node_dim)  # [B,r,D]
+        return self.V.unsqueeze(0).expand(B, -1, -1) + V_offset  # [B,r,D]
+
+    def _build_prototypes_chunk(self, V_dynamic: torch.Tensor, e0: int, e1: int) -> torch.Tensor:
+        """prototypes_chunk: [B, chunk, D]."""
+        U_chunk = self.U[e0:e1]  # [chunk,r]
+        bias_chunk = self.prototype_bias[e0:e1]  # [chunk,D]
+        # [B,chunk,D] = einsum('er,brd->bed')
+        proto = torch.einsum("er,brd->bed", U_chunk, V_dynamic) + bias_chunk.unsqueeze(0)
+        return proto
+
+    def _global_select_edges(self, V_dynamic: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        """topk_e: [B,kE], select a set of hyperedges for each sample globally."""
+        E = self.num_hyperedges
+        kE = max(1, int(E * self.sparse_ratio))
+
+        score_context = self.fre_score_proj(context)  # [B,D]
+
+        # score = U·(V_dyn@c) + bias·c
+        z = torch.bmm(V_dynamic, score_context.unsqueeze(-1)).squeeze(-1)  # [B,r]
+        score_core = torch.einsum("er,br->be", self.U, z)  # [B,E]
+        score_bias = torch.einsum("ed,bd->be", self.prototype_bias, score_context)  # [B,E]
+        scores = score_core + score_bias  # [B,E]
+
+        _, topk_e = torch.topk(scores, k=kE, dim=1)  # [B,kE]
+        return topk_e
+
+    def forward(self, X: torch.Tensor, fre: torch.Tensor):
+        """
+        X: [B,N,D]
+        """
+        B, N, D = X.shape
+        E = self.num_hyperedges
+        H = self.num_heads
+        d_h = self.head_dim
+
+        X_proj = self.pre_head_proj(X)  # [B,N,D]
+        X_heads = X_proj.view(B, N, H, d_h).transpose(1, 2).contiguous()  # [B,H,N,d_h]
+
+        fre_context = self._get_fre_context(fre)  # [B, 2D] or [B, 4D]
+
+        V_dynamic = self._compute_V_dynamic(fre_context)  # [B,r,D]
+
+        if self.sparse_ratio >= 1:
+            # prototypes: [B,E,D]
+            prototypes = self._build_prototypes_chunk(V_dynamic, 0, E)
+            P_heads = prototypes.view(B, E, H, d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,E,d_h]
+            logits = torch.einsum("bhnd,bhed->bne", X_heads, P_heads) / (self.scaling * H)  # [B,N,E]
+            logits = self.dropout(logits)
+            edge_w = F.softmax(logits, dim=-1)  # [B,N,E]
+            edge_idx = torch.arange(E, device=X.device).view(1, 1, E).expand(B, N, E)
+            return edge_idx, edge_w, E
+
+        if self.mode == "global":
+            topk_e = self._global_select_edges(V_dynamic, fre_context)  # [B,kE]
+            kE = topk_e.size(1)
+
+            U_exp = self.U.unsqueeze(0).expand(B, -1, -1)  # [B,E,r]
+            U_sel = U_exp.gather(1, topk_e.unsqueeze(-1).expand(-1, -1, self.rank))  # [B,kE,r]
+            bias_exp = self.prototype_bias.unsqueeze(0).expand(B, -1, -1)  # [B,E,D]
+            bias_sel = bias_exp.gather(1, topk_e.unsqueeze(-1).expand(-1, -1, D))  # [B,kE,D]
+            prototypes = torch.bmm(U_sel, V_dynamic) + bias_sel  # [B,kE,D]
+
+            P_heads = prototypes.view(B, kE, H, d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,kE,d_h]
+            logits = torch.einsum("bhnd,bhed->bne", X_heads, P_heads) / (self.scaling * H)  # [B,N,kE]
+            logits = self.dropout(logits)
+
+            edge_w = F.softmax(logits, dim=-1)  # [B,N,kE]
+            edge_idx = topk_e.unsqueeze(1).expand(-1, N, -1).contiguous()  # [B,N,kE]
+            return edge_idx, edge_w, E
+
+        # select_mode == "node": Each node selects kE independently (using block topk to avoid materializing [B, N, E])
+        kE = max(1, int(E * self.sparse_ratio))
+        chunk = self.node_topk_chunk or E
+
+        topv = X.new_full((B, N, kE), float("-inf"))  # [B,N,kE]
+        topi = X.new_zeros((B, N, kE), dtype=torch.long)
+
+        for e0 in range(0, E, chunk):
+            e1 = min(E, e0 + chunk)
+            proto_chunk = self._build_prototypes_chunk(V_dynamic, e0, e1)  # [B,chunk,D]
+            P_heads = proto_chunk.view(B, e1 - e0, H, d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,chunk,d_h]
+
+            logits_chunk = torch.einsum("bhnd,bhed->bne", X_heads, P_heads) / (self.scaling * H)  # [B,N,chunk]
+
+            idx_chunk = torch.arange(e0, e1, device=X.device).view(1, 1, e1 - e0).expand(B, N, -1)  # [B,N,chunk]
+            catv = torch.cat([topv, logits_chunk], dim=-1)  # [B,N,kE+chunk]
+            cati = torch.cat([topi, idx_chunk], dim=-1)
+
+            newv, newpos = torch.topk(catv, k=kE, dim=-1)
+            newi = cati.gather(-1, newpos)
+
+            topv, topi = newv, newi
+
+        topv = self.dropout(topv)
+        edge_w = F.softmax(topv, dim=-1)  # [B,N,kE]
+        edge_idx = topi.contiguous()  # [B,N,kE]
+        return edge_idx, edge_w, E
+
+
+class FrenquencyGuidedHGComputation(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_hyperedges: int = 16,
+        num_heads: int = 8,
+        sparse_ratio: float = 0.5,
+        dropout: float = 0.1,
+        rank: int = 8,
+        context: Literal["mean", "max", "both"] = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.hgg = FrenquencyGuidedHyperedgeGen(
+            node_dim=embed_dim,
+            num_hyperedges=num_hyperedges,
+            num_heads=num_heads,
+            rank=rank,
+            dropout=dropout,
+            sparse_ratio=sparse_ratio,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
+        self.hgcnn = CompressAdaHGConv(
+            embed_dim=embed_dim,
+            num_hyperedges=num_hyperedges,
+            dropout=dropout,
+        )
+
+    def forward(self, X: torch.Tensor, fre: torch.Tensor):
+        B, C, H, W = X.shape
+
+        # flatten
+        X_flat = X.flatten(2).transpose(1, 2)
+        fre_flat = fre.flatten(2).transpose(1, 2)
+
+        edge_idx, edge_w, _ = self.hgg(X_flat, fre_flat)
+        out = self.hgcnn(X_flat, edge_idx, edge_w)
+        out = out.transpose(1, 2).view(B, C, H, W)
+
+        return out
+
+
+class FrenquencyGuidedHyperFusion(nn.Module):
+    def __init__(
+        self,
+        c1,
+        c2,
+        e=1.0,
+        num_hyperedges=32,
+        rank: int = 16,
+        sparse_ratio: float = 0.5,
+        dropout: float = 0.1,
+        context: str = "both",
+        mode: Literal["global", "node"] = "global",
+        node_topk_chunk: int | None = None,
+    ):
+        super().__init__()
+        c_ = int(c2 * e)
+        assert c_ % 16 == 0, "Dimension of SparseHGComputation should be a multiple of 16."
+        num_heads = c_ // 16
+
+        self.hg_computation = FrenquencyGuidedHGComputation(
+            embed_dim=c_,
+            num_hyperedges=num_hyperedges,
+            num_heads=num_heads,
+            sparse_ratio=sparse_ratio,
+            dropout=dropout,
+            rank=rank,
+            context=context,
+            mode=mode,
+            node_topk_chunk=node_topk_chunk,
+        )
+
+        # CSP
+        self.cv1 = Conv(c1, c_, 1, 1)  # A Shortcut branch used for compressing the original image
+        self.cv2 = Conv(2 * c_, c2, 1, 1)  # Final fusion output
+
+    def forward(self, X: torch.Tensor, fre: torch.Tensor):
+        hg_out = self.hg_computation(X, fre)
+
+        return self.cv2(torch.cat((hg_out, self.cv1(X)), 1))
 
 
 # ----------------------------------------------- Mamba attentation  ---------------------------------------------------

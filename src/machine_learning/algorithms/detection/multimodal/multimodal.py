@@ -10,7 +10,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.streams import VideoStream, WebcamStream
-from machine_learning.utils.detection import (
+from machine_learning.utils.detect import (
     resize,
     non_max_suppression,
     pad_to_square,

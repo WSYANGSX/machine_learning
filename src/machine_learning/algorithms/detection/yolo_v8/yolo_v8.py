@@ -13,7 +13,7 @@ from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
 from machine_learning.utils.streams import VideoStream, WebcamStream
-from machine_learning.utils.detection import (
+from machine_learning.utils.detect import (
     resize,
     non_max_suppression,
     box_iou,
@@ -86,18 +86,18 @@ class YoloV8(AlgorithmBase):
         self.iouv = torch.linspace(0.5, 0.95, 10)
         self.niou = self.iouv.numel()
 
+        self.topk = self.cfg["algorithm"]["topk"]
+        self.alpha = self.cfg["algorithm"]["alpha"]
+        self.beta = self.cfg["algorithm"]["beta"]
+
     def _init_on_trainer(self, train_cfg, dataset):
         """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
         The attributes that require the dataset parameter are created here.
         """
         super()._init_on_trainer(train_cfg, dataset)
 
-        self.topk = self.cfg["algorithm"]["topk"]
-        self.alpha = self.cfg["algorithm"]["alpha"]
-        self.beta = self.cfg["algorithm"]["beta"]
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
-
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
 
     def _init_on_evaluator(self, ckpt, dataset, load_dataset, plot=False, save_dir=None):
@@ -420,7 +420,7 @@ class YoloV8(AlgorithmBase):
 
             # record statistical information
             stats.append(
-                (tp.detach().cpu(), pred_scores.detach().cpu(), pred_classes.detach().cpu(), tcls.detach().cpu())
+                (tp.detach(), pred_scores.detach(), pred_classes.detach(), tcls.detach())
             )  # put data on cpu to save CPU resources
 
         return stats, img_num

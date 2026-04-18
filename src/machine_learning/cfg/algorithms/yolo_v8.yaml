@@ -63,7 +63,7 @@ data:
   augment: True
   fraction: 1
   pin_memory: False
-  single_cls: False
+  single_cls: True
   rect: False
   stride: 32
   bgr: 0.0

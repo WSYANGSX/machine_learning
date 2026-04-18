@@ -660,6 +660,13 @@ class Mosaic(MixTransformBase):
                     sample["masks"] = masks[indices]
                     sample["cls"] = sample["cls"][indices]
 
+            elif "mask" in sample:  # semantic segment task
+                # update cls
+                cls = [sample["cls"]]
+                for ms in mix_samples:
+                    cls.append(ms["cls"])
+                sample["cls"] = np.unique(np.concatenate(cls, 0))
+
             else:  # classify task
                 # classification task with soft labels (Mixup/CutMix-style)
                 # cls is expected to be one-hot or probability vector

@@ -17,8 +17,9 @@ class COMONet(BaseNet):
         channels: int = 3,
         nc: int = 1,
         net_scale: Literal["n", "s", "m", "l", "x"] = "n",
-        *args: tuple[Any, ...],
-        **kwargs: dict[str, Any],
+        single_cls: bool = False,
+        *args: Any,
+        **kwargs: Any,
     ):
         """
         COMONet: multimodal object detection network (RGB + IR), https://github.com/luluyuu/COMO.
@@ -32,7 +33,7 @@ class COMONet(BaseNet):
         super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
-        self.nc = nc
+        self.nc = nc if not single_cls else 1
         self.channels = channels
         self.net_scale = net_scale
 

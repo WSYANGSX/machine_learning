@@ -17,7 +17,7 @@ from machine_learning.networks import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER, colorstr
 from machine_learning.algorithms.base import AlgorithmBase
-from machine_learning.utils.detection import pad_to_square
+from machine_learning.utils.detect import pad_to_square
 
 
 class MaskFormer(AlgorithmBase):

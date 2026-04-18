@@ -1,7 +1,7 @@
 import cv2
 import torch
 import albumentations as A
-from machine_learning.utils.detection import yolo2voc, resize, visualize_img_bboxes
+from machine_learning.utils.detect import yolo2voc, resize, visualize_img_bboxes
 import torchvision.transforms as T
 
 # from machine_learning.utils.augmentations import PadShortEdge

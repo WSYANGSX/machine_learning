@@ -1,20 +1,28 @@
 algorithm: 
-  name: "unet"
-  imgsz: 512
-  task: "segment"
-  task_type: "semantic"
-
+  name: "fghf"
+  imgsz: 640
+  task: "semantic segment"
+  
   # loss weight
-  ce_weight: 1.0 # (float) loss gain
-
+  ce_weight: 1.0 # (float) ce loss gain
+  geo_weight: 0.5 # (float) edge loss gain
+  
   close_mosaic_epoch: 0.9 # the ratio of the total number of epochs
 
 optimizer:
-  opt_type: "SGD"
-  lr: 0.01
+  opt_type: "Adam"
+  lr: 1.0e-3
   final_factor: 0.01
-  momentum: 0.937
+  beta1: 0.937
+  beta2: 0.999
+  eps: 1.0e-8
   weight_decay: 0.0005
+
+  # opt_type: "SGD"
+  # lr: 0.01
+  # final_factor: 0.01
+  # momentum: 0.937
+  # weight_decay: 0.0005
 
   grad_clip: 1.0
   warmup_epochs: 3.0
@@ -33,16 +41,14 @@ scheduler:
 
 net:
   initialize_weights: True
-  bilinear: False
   channels: 3
-  activation: "relu" # (str) activation function (relu, gelu, leaky_relu)
-
+  net_scale: "s"
 
 data:
   augment: True
   fraction: 1
   pin_memory: True
-  single_cls: False
+  single_cls: True
   rect: False
   stride: 32
   bgr: 0.0

@@ -9,8 +9,8 @@ from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
 from torchvision.transforms import Compose, ToTensor, Normalize
 from machine_learning.utils.streams import VideoStream, WebcamStream
-from machine_learning.utils.detection import pad_to_square, resize
-from machine_learning.utils.segmentation import colour_mask, rescale_masks
+from machine_learning.utils.detect import pad_to_square, resize
+from machine_learning.utils.segment import colour_mask, rescale_masks
 from machine_learning.algorithms.segmentation import PerPixelSegmentation, MaskSegmentation
 
 
