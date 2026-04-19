@@ -120,7 +120,6 @@ def build_dataset(
         )
 
     elif type == "SemanticMaskDataset":
-        return_edge = True if cfg.get("geo_weight") is not None else False
         return SemanticMaskDataset(
             imgs=parsing["imgs"],
             masks=parsing["labels"],
@@ -135,8 +134,7 @@ def build_dataset(
             augment=augment,
             hyp=cfg,
             fraction=fraction,
-            return_edge=return_edge,
-            edge_value=cfg.get("edge_value"),
+            ignore_value=cfg.get("ignore_value", 255),
             mode=mode,
         )
 
