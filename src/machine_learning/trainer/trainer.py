@@ -69,7 +69,14 @@ class Trainer:
 
         # set best_fitness value for saving the best ckpt
         self.task = self.algorithm.cfg["algorithm"].get("task", "")
-        if self.task in ("detect", "segment"):  # mAP, mIOU
+        if self.task in (
+            "detect",
+            "pose detect",
+            "keypoint detect",
+            "semantic segment",
+            "instance segment",
+            "panoptic segment",
+        ):  # mAP, mIOU
             self.best_fitness = 0.0
         else:
             self.best_fitness = torch.inf
@@ -143,8 +150,15 @@ class Trainer:
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
             if self.cfg.save_best and "best_fitness" in val_metrics:
                 current_best_fitness = val_metrics["best_fitness"]
-                if self.task in ("detect", "segment"):
-                    if current_best_fitness > self.best_fitness:  # mAP, mIOU as references
+                if self.task in (
+                    "detect",
+                    "pose detect",
+                    "keypoint detect",
+                    "semantic segment",
+                    "instance segment",
+                    "panoptic segment",
+                ):
+                    if current_best_fitness > self.best_fitness:  # mAP, mIOU, ... as references
                         self.best_fitness = current_best_fitness
                         self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
                 else:  # Vloss as a reference
