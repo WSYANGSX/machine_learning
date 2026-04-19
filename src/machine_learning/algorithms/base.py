@@ -112,7 +112,7 @@ class AlgorithmBase(ABC):
         ckpt: str,
         dataset: str | Mapping[str, Any] | None = None,
         load_dataset: bool = True,
-        plot: bool = False,
+        plot: bool | None = False,
         save_dir: str | None = None,
     ) -> None:
         """
@@ -157,7 +157,7 @@ class AlgorithmBase(ABC):
         Args:
             ckpt (FilePath): Checkpoint file path.
         """
-        self._init_on_evaluator(ckpt, dataset, False)
+        self._init_on_evaluator(ckpt=ckpt, dataset=dataset, load_dataset=False)
 
     @property
     def train_dataset(self) -> None | Dataset:
