@@ -20,4 +20,4 @@ build/
 runs/
 
 # 忽略codex文件
-.codex
+/.codex
