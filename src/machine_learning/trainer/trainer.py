@@ -4,6 +4,7 @@ import os
 import json
 import yaml
 import torch
+from pathlib import Path
 from datetime import datetime
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
@@ -34,25 +35,28 @@ class Trainer:
         Args:
             name (str): The name of the algorithm to train.
             train_cfg (TrainCfg): The configuration of the trainer.
-            algorithm (str, Mapping[str, Any]): The algorithm cfg.
-            dataset (str, Mapping[str, Any]): The dataset cfg.
-            amp (bool): Whether to enable Automatic Mixed Precision during training. Defaults to False.
-            ema (bool): Whether to enable Exponential Moving Average during training. Defaults to False.
-            device (Literal["cuda", "cpu", "auto"]): Running device. Defaults to "auto"-automatic selection.
-            continue_training (bool): Whether to continue training from a checkpoint. Defaults to False.
-            ckpt(str): The path of the checkpoint to continue training. Defaults to None.
+            algorithm_cfg (str, Mapping[str, Any]): The algorithm cfg.
+            dataset_cfg (str, Mapping[str, Any]): The dataset cfg.
+
         """
         self.continue_training = train_cfg.continue_training
 
+        self.resume_ckpt = None
+
+        # TODO support for overwrite
         if self.continue_training:
-            if train_cfg.ckpt is None:
-                raise ValueError("Checkpoint must be provided when continuing training.")
+            if train_cfg.ckpt is not None:
+                LOGGER.info(f"Continuing training from checkpoint: {train_cfg.ckpt}")
+                self.resume_ckpt = train_cfg.ckpt
+                algo_cfg = load_cfg(os.path.join(Path(train_cfg.ckpt).parent.parent, "config.yaml"))
+            elif train_cfg.resume is not None:
+                LOGGER.info(f"Continuing training from resume directory: {train_cfg.resume}")
+                self.resume_ckpt = os.path.join(train_cfg.resume, "ckpt", "last_model.pth")
+                algo_cfg = load_cfg(os.path.join(train_cfg.resume, "config.yaml"))
+            else:
+                raise ValueError("resume directory or checkpoint must be provided when continuing training.")
 
-            LOGGER.info(f"Continuing training from checkpoint: {train_cfg.ckpt}")
-
-            algo_cfg = load_cfg(os.path.join(train_cfg.ckpt, "config.yaml"))
             self.cfg = algo_cfg["trainer"]
-
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
 
@@ -250,8 +254,7 @@ class Trainer:
 
     def train(self) -> None:
         if self.continue_training:
-            last_model = os.path.join(self.ckpt_dir, "last_model.pth")
-            state_dict = self._algorithm.load(last_model)
+            state_dict = self._algorithm.load(self.resume_ckpt)
             start_epoch = state_dict["epoch"] + 1
             self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
             self._train(start_epoch)
