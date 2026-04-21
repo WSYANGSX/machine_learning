@@ -14,7 +14,6 @@ class Predictor(Generic[AlgoType]):
         ckpt: str,
         device: Literal["cpu", "cuda", "auto"] = "auto",
     ):
-        self.ckpt = ckpt
         state = torch.load(ckpt, map_location="cpu", weights_only=False)
         algo_cfg = state["cfg"]
         name = algo_cfg["algorithm"]["name"]
@@ -24,7 +23,7 @@ class Predictor(Generic[AlgoType]):
 
         # --------------------- build algorithm ---------------------
         self._build_algorithm(name, device, algo_cfg, False, False)
-        self.algorithm._init_on_predictor(self.ckpt)
+        self.algorithm._init_on_predictor(ckpt)
         print_cfg("Total configuration", algo_cfg)
 
     @property

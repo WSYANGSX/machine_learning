@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Any
 from dataclasses import dataclass, field
 from machine_learning.cfg.base import BaseCfg
 
@@ -16,3 +16,6 @@ class TrainerCfg(BaseCfg):
     continue_training: bool = field(default=False)
     resume: str = field(default=None)
     ckpt: str = field(default=None)
+
+    # only vaild when continue_training=True
+    overwrite: dict[str, Any] = field(default_factory=dict)
