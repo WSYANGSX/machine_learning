@@ -49,7 +49,7 @@ PARSER_MAPS = {
     "vedai_1024": VedaiParser,
     "drone_vehicle": DVParser,
     "llvip": LLVIPParser,
-    "cars": CarParser,
+    "car": CarParser,
     "sbd": SBDParser,
 }
 

@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import pywt
 import ptwt
+from PIL import Image
+import numpy as np
+
+from machine_learning.utils.ops import img_np2tensor, img_tensor2np
+from machine_learning.utils.plots import plot_imgs
 
 
 class DWTFeatureEnhancer(nn.Module):
@@ -43,18 +48,22 @@ class DWTFeatureEnhancer(nn.Module):
         ll_enhanced = ll
         hl_enhanced = hl
         lh_enhanced = lh
+        hh_enhanced = hh
 
         # ==========================================
         # 2. 计算收益：精准抛弃没用的对角线噪声 (HH)
         # ==========================================
         # 将对角线高频 hh 置零。使用 torch.zeros_like 保持设备和梯度追踪一致
-        hh_dropped = torch.zeros_like(hh)
+        # ll_enhanced = torch.zeros_like(ll)
+        hl_enhanced = torch.zeros_like(hl)
+        lh_enhanced = torch.zeros_like(lh)
+        hh_enhanced = torch.zeros_like(hh)
 
         # ==========================================
         # 3. 还原过程：逆小波变换 (IDWT)
         # ==========================================
         # 将干预后的系数重新打包，准备重构
-        enhanced_coeffs = [ll_enhanced, (hl_enhanced, lh_enhanced, hh_dropped)]
+        enhanced_coeffs = [ll_enhanced, (hl_enhanced, lh_enhanced, hh_enhanced)]
 
         # 无损拼合还原回 32x32 分辨率
         x_reconstructed = ptwt.waverec2(enhanced_coeffs, self.wavelet)
@@ -69,22 +78,29 @@ if __name__ == "__main__":
     # 模拟输入: Batch=2, Channels=64, H=32, W=32
     # 确保 tensor 在 GPU 上以测试 CUDA 加速
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    x = torch.randn(2, 64, 32, 32, requires_grad=True).to(device)
+    img1 = np.array(Image.open("/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/test/3f8d611822bc_02.jpg"))
+
+    img1 = img_np2tensor(img1).detach().clone().to(device).requires_grad_(True)
 
     model = DWTFeatureEnhancer(wavelet_name="haar").to(device)
 
     # 纯测试：完全无损的数学重构验证 (不丢弃 HH)
-    coeffs_test = ptwt.wavedec2(x, pywt.Wavelet("haar"), level=1)
+    coeffs_test = ptwt.wavedec2(img1, pywt.Wavelet("haar"), level=1)
     x_perfect = ptwt.waverec2(coeffs_test, pywt.Wavelet("haar"))
-    max_error = torch.max(torch.abs(x - x_perfect))
+    max_error = torch.max(torch.abs(img1 - x_perfect))
     print(f"100% 完美数学重构的最大误差: {max_error.item():.8f} (接近于0表示完全无损)")
 
     # 网络实际前向传播测试 (丢弃了 HH 噪声)
-    out = model(x)
-    print(f"原始特征图维度: {x.shape}")
+    out = model(img1)
+    print(f"原始特征图维度: {img1.shape}")
     print(f"处理后特征图维度: {out.shape}")
+
+    # 有无损的数学重构验证 (不丢弃 HH)
+    max_error2 = torch.max(torch.abs(img1 - out.clamp(0, 1)))
+    print(f"100% 完美数学重构的最大误差: {max_error2.item():.8f} (接近于0表示完全无损)")
+    plot_imgs([img_tensor2np(out.clamp(0, 1))])
 
     # 测试反向传播是否正常通畅
     loss = out.sum()
     loss.backward()
-    print("梯度形状是否与输入对齐:", x.grad.shape == x.shape)
+    print("梯度形状是否与输入对齐:", img1.grad.shape == img1.shape)

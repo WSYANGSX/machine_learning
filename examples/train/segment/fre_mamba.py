@@ -5,7 +5,7 @@ from machine_learning.algorithms.segmentation import PerPixelSegmentation
 
 def main():
     # Step 1: Parse the data
-    fghf = PerPixelSegmentation("fghf.yaml", amp=False)
+    fghf = PerPixelSegmentation("fre_mamba.yaml", amp=True)
 
     # Step 2: Configure the trainer
     trainer_cfg = TrainerCfg(

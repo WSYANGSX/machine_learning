@@ -4,12 +4,12 @@ from machine_learning.algorithms.segmentation import PerPixelSegmentation
 
 def main():
     # Step 1: Parse the data
-    unet = PerPixelSegmentation("unet.yaml")
+    fghf_net = PerPixelSegmentation("fghf.yaml")
 
     # Step 2: Build the evaluate
     evaluator = Evaluator(
-        unet,
-        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet_car_2026-04-21_09-25/ckpt/best_model.pth",
+        fghf_net,
+        "/home/yangxf/WorkSpace/machine_learning/runs/fghf/fghf_car_2026-04-21_09-50/ckpt/best_model.pth",
         "car.yaml",
         True,
     )
