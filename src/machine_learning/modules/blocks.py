@@ -2015,60 +2015,47 @@ class FrequencyVQEmbedding(nn.Module):
         return out_features, vq_loss
 
 
-class DCTGaussianLowPassFilter(nn.Module):
+class GaussianFrequencySplitter(nn.Module):
     """
-    Global Gaussian low-pass filter (global mask multiplication) for 2D DCT frequency domain.
+    Global Gaussian frequency splitter for 2D DCT frequency domain.
+    Simultaneously outputs Low-Pass (LPF) and High-Pass (HPF) filtered tensors.
     """
 
     def __init__(self, init_sigma=0.3, learnable=True):
         super().__init__()
-
-        # sigma controls the bandwidth (passing threshold) of the filter.
-        # The larger the sigma, the more high frequencies are retained.
-        # The smaller the sigma, the stricter the low-pass filtering.
         if learnable:
             self.sigma = nn.Parameter(torch.tensor(init_sigma, dtype=torch.float32))
         else:
             self.register_buffer("sigma", torch.tensor(init_sigma, dtype=torch.float32))
 
-        # Cache grid distance to avoid duplicate calculation for each Batch
         self.cache_shape = None
         self.D_squared = None
 
-    def forward(self, dct_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, dct_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Input (tensor):
-            The tensor transformed by 2D DCT, with the shape of [B, C, H, W].
-        Output (tensor):
-            The DCT tensor after applying Gaussian low-pass mask.
+        Output:
+            low_pass_dct: Retains low-frequency structural components.
+            high_pass_dct: Retains high-frequency details and edge components.
         """
         B, C, H, W = dct_tensor.shape
         device = dct_tensor.device
 
-        # If the input size or device changes, regenerate the distance square matrix
         if self.cache_shape != (H, W) or (self.D_squared is not None and self.D_squared.device != device):
-            # Normalize the coordinates to the interval [0, 1] so that the scale of sigma is independent of resolution
             u = torch.linspace(0, 1, steps=H, device=device, dtype=torch.float32)
             v = torch.linspace(0, 1, steps=W, device=device, dtype=torch.float32)
-
             U, V = torch.meshgrid(u, v, indexing="ij")
 
-            # Calculate the square of the distance to the origin of the upper left corner (0, 0) : D^2 = u^2 + v^2
-            self.D_squared = (U**2 + V**2).unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+            self.D_squared = (U**2 + V**2).unsqueeze(0).unsqueeze(0)
             self.cache_shape = (H, W)
 
-        # Limit the lower limit of sigma to prevent gradient explosion caused by division by 0 or minimum values
         safe_sigma = torch.clamp(self.sigma, min=1e-4)
 
-        # Calculate the Gaussian mask weight: W(u, v) = exp(-D^2 / (2 * sigma^2))
-        # The result is within the range of [0, 1], with the top left corner strictly being 1
-        mask = torch.exp(-self.D_squared / (2 * safe_sigma**2))
+        low_pass_mask = torch.exp(-self.D_squared / (2 * safe_sigma**2))
+        high_pass_mask = 1.0 - low_pass_mask
+        low_pass_dct = dct_tensor * low_pass_mask.to(dct_tensor.dtype)
+        high_pass_dct = dct_tensor * high_pass_mask.to(dct_tensor.dtype)
 
-        # Element-by-element multiplication of the mask with the DCT frequency domain features
-        # to(dct tensor.dtype) ensures type matching under mixed precision (AMP)
-        filtered_dct = dct_tensor * mask.to(dct_tensor.dtype)
-
-        return filtered_dct
+        return low_pass_dct, high_pass_dct
 
 
 class FrenquencyGuidedHyperedgeGen(nn.Module):

@@ -8,75 +8,105 @@ from datetime import datetime
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
 
-from .trianer_cfg import TrainerCfg
-from machine_learning.utils.logger import LOGGER
-from machine_learning.algorithms import AlgorithmBase
-from machine_learning.utils.constants import ROOT_PATH
-from machine_learning.utils import set_seed, cfg2dict, print_cfg
-
 from rich import box
 from rich.json import JSON
 from rich.table import Table
 from rich.console import Console
 
+from .trianer_cfg import TrainerCfg
+from machine_learning.utils.logger import LOGGER
+from machine_learning.algorithms import AlgorithmBase, global_factory
+from machine_learning.utils.constants import ROOT_PATH, ALGOCFG_PATH, DATACFG_PATH
+from machine_learning.utils import set_seed, cfg2dict, print_cfg, load_cfg
+
 
 class Trainer:
     def __init__(
         self,
-        cfg: TrainerCfg,
-        algo: AlgorithmBase,
-        dataset: str | Mapping[str, Any],
+        name: str,
+        train_cfg: TrainerCfg,
+        algorithm_cfg: str | Mapping[str, Any],
+        dataset_cfg: str | Mapping[str, Any],
     ) -> None:
         """
         The trainer of all machine learning algorithm
 
         Args:
-            cfg (TrainCfg): The configuration of the trainer.
+            name (str): The name of the algorithm to train.
+            train_cfg (TrainCfg): The configuration of the trainer.
+            algorithm (str, Mapping[str, Any]): The algorithm cfg.
             dataset (str, Mapping[str, Any]): The dataset cfg.
-            algo (AlgorithmBase): The algorithm to be trained.
+            amp (bool): Whether to enable Automatic Mixed Precision during training. Defaults to False.
+            ema (bool): Whether to enable Exponential Moving Average during training. Defaults to False.
+            device (Literal["cuda", "cpu", "auto"]): Running device. Defaults to "auto"-automatic selection.
+            continue_training (bool): Whether to continue training from a checkpoint. Defaults to False.
+            ckpt(str): The path of the checkpoint to continue training. Defaults to None.
         """
-        self.cfg = cfg
-        self._algorithm = algo
+        self.continue_training = train_cfg.continue_training
 
-        self.epochs = self.cfg.epochs
+        if self.continue_training:
+            if train_cfg.ckpt is None:
+                raise ValueError("Checkpoint must be provided when continuing training.")
 
-        # datetime suffix for log
-        self.dt_suffix = (
-            self.algorithm.name + "_" + os.path.splitext(dataset)[0] + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M")
-        )
-        self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + f"{self.algorithm.name}/" + self.dt_suffix)
-        self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
+            LOGGER.info(f"Continuing training from checkpoint: {train_cfg.ckpt}")
 
-        # add record path to cfg
-        self.cfg.record_dir = self.record_dir
-        self.cfg.ckpt_dir = self.ckpt_dir
+            algo_cfg = load_cfg(os.path.join(train_cfg.ckpt, "config.yaml"))
+            self.cfg = algo_cfg["trainer"]
+
+            self.record_dir = self.cfg["record_dir"]
+            self.ckpt_dir = self.cfg["ckpt_dir"]
+
+        else:
+            self.cfg = cfg2dict(train_cfg)
+
+            # load cfg
+            algo_cfg = self._load_alogrithm_cfg(algorithm_cfg)
+            dataset_cfg = self._load_datasetcfg(dataset_cfg)
+
+            # datetime suffix for log
+            self.dt_suffix = (
+                name
+                + "_"
+                + (algo_cfg["net"]["net_scale"] if "net_scale" in algo_cfg["net"] else "")
+                + "_"
+                + (os.path.splitext(dataset_cfg)[0] if isinstance(dataset_cfg, str) else dataset_cfg["name"])
+                + "_"
+                + datetime.now().strftime("%Y-%m-%d_%H-%M")
+            )
+
+            self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + f"{name}/" + self.dt_suffix)
+            self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
+            self.cfg["record_dir"] = self.record_dir  # add record path to cfg
+            self.cfg["ckpt_dir"] = self.ckpt_dir  # add ckpt path to cfg
+
+            # add train_cfg and dataset_cfg to algo
+            algo_cfg["trainer"] = self.cfg
+            algo_cfg["data"]["dataset"] = dataset_cfg
+
+        self.epochs = self.cfg["epochs"]
+        amp = self.cfg["amp"]
+        ema = self.cfg["ema"]
+        device = self._configure_device(self.cfg["device"])
+        seed = self.cfg["seed"]
 
         # ------------------ init global random seed ------------------
-        set_seed(self.cfg.seed)
-        LOGGER.info(f"Global seed: {self.cfg.seed}")
+        set_seed(seed)
+        LOGGER.info(f"Global seed: {seed}")
 
-        # ------------------- add cfg to algo -------------------------
-        LOGGER.info("Algorithm initializing by trainer...")
-        self.algorithm._init_on_trainer(cfg2dict(self.cfg), dataset)
-        print_cfg("Total configuration", self.algorithm.cfg)
+        # --------------------- build algorithm ---------------------
+        self._build_algorithm(name, device, algo_cfg, amp, ema)
+        print_cfg("Total configuration", algo_cfg)
 
         # --------------------- init writer ---------------------------
         self._init_writer(self.record_dir)
-
-        # record algorithm cfg
-        with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
-            yaml.dump(self.algorithm.cfg, file, default_flow_style=False, allow_unicode=True)
+        if not self.continue_training:
+            # record algorithm cfg
+            with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
+                yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
 
         # set best_fitness value for saving the best ckpt
-        self.task = self.algorithm.cfg["algorithm"].get("task", "")
-        if self.task in (
-            "detect",
-            "pose detect",
-            "keypoint detect",
-            "semantic segment",
-            "instance segment",
-            "panoptic segment",
-        ):  # mAP, mIOU
+        self.task = algo_cfg["algorithm"].get("task", "")
+        if self.task in ("detect", "segment"):  # mAP, mIOU
             self.best_fitness = 0.0
         else:
             self.best_fitness = torch.inf
@@ -84,6 +114,47 @@ class Trainer:
     @property
     def algorithm(self) -> AlgorithmBase:
         return self._algorithm
+
+    def _load_alogrithm_cfg(self, cfg: str | Mapping[str, Any]) -> dict:
+        """Load algorithm cfg from file or dict."""
+        if isinstance(cfg, str):
+            cfg = os.path.join(ALGOCFG_PATH, cfg)
+        cfg = load_cfg(cfg)
+
+        return cfg
+
+    def _load_datasetcfg(self, cfg: str | Mapping[str, Any]) -> dict:
+        """
+        Load dataset configuration from file path or dict.
+
+        Args:
+            cfg (FilePath | Mapping[str, Any]): Dataset configuration of the algorithm (yaml file path or cfg dict).
+        """
+        if isinstance(cfg, str):
+            cfg = os.path.join(DATACFG_PATH, cfg)
+        cfg = load_cfg(cfg)
+
+        return cfg
+
+    def _configure_device(self, device: str) -> torch.device:
+        """Configure the trianing device."""
+        if device == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(device)
+
+    def _build_algorithm(
+        self,
+        name: str,
+        device: torch.device,
+        cfg: Mapping[str, Any],
+        amp: bool | None = None,
+        ema: bool | None = False,
+    ) -> None:
+        LOGGER.info(f"Building algorithm {name}...")
+        self._algorithm = global_factory.create_algorithm(
+            algo=name, cfg=cfg, name=name, device=device, amp=amp, ema=ema
+        )
+        self._algorithm._init_on_trainer()
 
     def _init_writer(self, path: str):
         try:
@@ -98,15 +169,15 @@ class Trainer:
         for opt in self.algorithm.optimizers.values():
             opt.zero_grad()
 
-    def train(self, start_epoch: int = 0) -> None:
+    def _train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
         LOGGER.info(f"Start training for {self.epochs - start_epoch} epochs...")
         strat_time = datetime.now()
 
         self._setup_train()
 
-        for epoch in range(start_epoch, self.cfg.epochs):
-            train_metrics, train_info = self.algorithm.train_epoch(epoch, self.writer, self.cfg.log_interval)
+        for epoch in range(start_epoch, self.epochs):
+            train_metrics, train_info = self.algorithm.train_epoch(epoch, self.writer, self.cfg["log_interval"])
             val_metrics, val_info = self.algorithm.validate()
 
             # adjust the learning rate
@@ -148,16 +219,9 @@ class Trainer:
 
             # save the best model
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
-            if self.cfg.save_best and "best_fitness" in val_metrics:
+            if self.cfg["save_best"] and "best_fitness" in val_metrics:
                 current_best_fitness = val_metrics["best_fitness"]
-                if self.task in (
-                    "detect",
-                    "pose detect",
-                    "keypoint detect",
-                    "semantic segment",
-                    "instance segment",
-                    "panoptic segment",
-                ):
+                if self.task in ("detect", "segment"):
                     if current_best_fitness > self.best_fitness:  # mAP, mIOU, ... as references
                         self.best_fitness = current_best_fitness
                         self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
@@ -169,7 +233,7 @@ class Trainer:
                 LOGGER.info("Saving of the model with the best fitness skipped.")
 
             # save the model regularly
-            if self.cfg.save_interval and (epoch + 1) % self.cfg.save_interval == 0:
+            if self.cfg["save_interval"] and (epoch + 1) % self.cfg["save_interval"] == 0:
                 self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
 
             # print epoch information
@@ -184,14 +248,15 @@ class Trainer:
             else:
                 self.epoch_info(epoch=epoch)
 
-    def train_from_checkpoint(self, checkpoint: str) -> None:
-        state_dict = self._algorithm.load(checkpoint)
-        start_epoch = state_dict["epoch"] + 1
-        self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
-        self.record_dir = state_dict["record_dir"]
-        self.ckpt_dir = state_dict["ckpt_dir"]
-
-        self.train(start_epoch)
+    def train(self) -> None:
+        if self.continue_training:
+            last_model = os.path.join(self.ckpt_dir, "last_model.pth")
+            state_dict = self._algorithm.load(last_model)
+            start_epoch = state_dict["epoch"] + 1
+            self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
+            self._train(start_epoch)
+        else:
+            self._train()
 
     def save_checkpoint(self, epoch: int, val_return: dict, best_fitness: float, is_best: bool = False) -> None:
         try:
@@ -205,6 +270,10 @@ class Trainer:
         save_path = os.path.join(self.ckpt_dir, filename)
 
         self._algorithm.save(epoch, val_return, best_fitness, save_path, self.record_dir, self.ckpt_dir)
+
+        # save last model
+        last_path = os.path.join(self.ckpt_dir, "last_model.pth")
+        self._algorithm.save(epoch, val_return, best_fitness, last_path, self.record_dir, self.ckpt_dir)
 
     def epoch_info(
         self,

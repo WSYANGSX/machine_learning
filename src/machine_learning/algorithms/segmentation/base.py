@@ -32,14 +32,14 @@ class PerPixelSegmentation(AlgorithmBase):
     def __init__(
         self,
         cfg: FilePath | Mapping[str, Any],
-        net: BaseNet | None = None,
         name: str | None = None,
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
         ema: bool = True,
         modality: str | None = "img",
     ):
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
+        super().__init__(cfg=cfg, name=name, device=device, amp=amp, ema=ema)
+
         self.modality = modality
 
         # loss weight
@@ -50,33 +50,8 @@ class PerPixelSegmentation(AlgorithmBase):
         self.single_cls = self.cfg["data"]["single_cls"]
         self.close_mosaic_epoch = self.cfg["algorithm"]["close_mosaic_epoch"]
 
-    def _init_on_trainer(
-        self,
-        train_cfg: dict[str, Any],
-        dataset: str | Mapping[str, Any],
-    ):
-        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
-        The attributes that require the dataset parameter are created here.
-        """
-        super()._init_on_trainer(train_cfg, dataset)
-
         self.nc = 2 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
-        self.ignore_value = self.dataset_cfg.get("ignore_value", -100)
-        self.metrics = SegmentMetrics(nc=self.nc)
-
-    def _init_on_evaluator(
-        self,
-        ckpt: str,
-        dataset: str | Mapping[str, Any] | None = None,
-        load_dataset: bool = True,
-        plot: bool | None = False,
-        save_dir: str | None = None,
-    ):
-        super()._init_on_evaluator(ckpt, dataset, load_dataset, plot, save_dir)
-
-        self.nc = 2 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
+        self.class_names = ["background", "object"] if self.single_cls else self.dataset_cfg["class_names"]
         self.ignore_value = self.dataset_cfg.get("ignore_value", -100)
         self.metrics = SegmentMetrics(nc=self.nc)
 

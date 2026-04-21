@@ -1,6 +1,5 @@
 from typing import Literal, Mapping, Any
 
-import os
 from tqdm import tqdm
 from numbers import Integral, Real
 from abc import ABC, abstractmethod
@@ -12,33 +11,29 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 
+from machine_learning.utils import get_gpu_mem
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.streams import StreamBase
 from machine_learning.networks import BaseNet, NET_MAPS
 from machine_learning.utils.torch_utils import ModelEMA
-from machine_learning.utils import get_gpu_mem, load_cfg
-from machine_learning.utils.constants import DATACFG_PATH, ALGOCFG_PATH
 from machine_learning.data.dataset import ParserBase, PARSER_MAPS, build_dataset, build_dataloader
 
 
 class AlgorithmBase(ABC):
     def __init__(
         self,
-        cfg: str | Mapping[str, Any],
-        net: BaseNet | None = None,
+        cfg: Mapping[str, Any],
         name: str | None = None,
-        device: Literal["cuda", "cpu", "auto"] = "auto",
+        device: torch.device | None = None,
         amp: bool | None = None,
         ema: bool | None = False,
     ):
         """Base class of all algorithms.
 
         Args:
-            cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-            net (BaseNet): Neural neural required by the algorithm, provided by other algorithms externally.
+            cfg (Mapping[str, Any]): Configuration of the algorithm.
             name (str, optional): Name of the algorithm. Defaults to None.
-            device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
-            "auto"-automatic selection by algorithm.
+            device (torch.device, optional): Running device.
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
             ema (bool): Whether to enable Exponential Moving Average. Defaults to False.
         """
@@ -50,31 +45,29 @@ class AlgorithmBase(ABC):
         self._schedulers = {}  # schedulers buffer
 
         # cfg
-        self._cfg = self._load_config(cfg)
+        self._cfg = cfg
         self._validate_config()
+        self._trainer_cfg = self._cfg["trainer"]
+        self._dataset_cfg = self._cfg["data"]["dataset"]
 
         # name
         self._name = name if name is not None else self._cfg.get("algorithm", {}).get("name", __class__.__name__)
 
         # device
-        self._device = self._configure_device(device)
+        self._device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # settings
         self.training = False  # training mode or not
-        self.last_opt_step = -1
         self.nbs = self.cfg["data"]["nbs"]
         self.batch_size = self.cfg["data"]["batch_size"]
         self.accumulate = max(1, round(self.nbs / self.batch_size))
-
-        self.provided_net = net  # net
         self.ema_enable = ema if ema is not None else self._cfg["algorithm"].get("ema", False)  # ema
         self.amp_enable = amp if amp is not None else self._cfg["algorithm"].get("amp", False)  # amp
 
-    def _init_on_trainer(
-        self,
-        train_cfg: dict[str, Any],
-        dataset: str | Mapping[str, Any],
-    ) -> None:
+        # counts
+        self.last_opt_step = -1
+
+    def _init_on_trainer(self) -> None:
         """
         Initialize the datasets, dataloaders, nets, optimizers, and schedulers. And the attributes that require the
         dataset cfg and trainer cfg are created here.
@@ -83,16 +76,14 @@ class AlgorithmBase(ABC):
             train_cfg (Mapping[str, Any]): Configuration of the trainer.
             dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
         """
-        self._add_cfg("trainer", train_cfg)
-        self._trainer_cfg = train_cfg
-        self.epochs = train_cfg.get("epochs")
+        self.epochs = self.trainer_cfg["epochs"]
 
         # init train/val datasets and dataloaders
-        self._init_train_datasets(dataset)
+        self._init_train_datasets()
         self._init_train_dataloaders()
 
         # build net
-        self._build_net(self.provided_net)
+        self._build_net()
         self._init_nets()
 
         # init ema
@@ -110,8 +101,6 @@ class AlgorithmBase(ABC):
     def _init_on_evaluator(
         self,
         ckpt: str,
-        dataset: str | Mapping[str, Any] | None = None,
-        load_dataset: bool = True,
         plot: bool | None = False,
         save_dir: str | None = None,
     ) -> None:
@@ -120,26 +109,23 @@ class AlgorithmBase(ABC):
 
         Args:
             ckpt (FilePath): Checkpoint file path.
-            dataset (FilePath | Mapping[str, Any]): Configuration of the dataset, it can be yaml file path or cfg dict.
-            load_dataset (bool): Whether to use the dataset provided by the evaluator.
+            plot (bool): Whether to plot result.
+            save_dir (FilePath): Save directory.
         """
         self.plot = plot
         self.save_dir = save_dir if save_dir is not None else "./"
 
         self.ema_enable = False  # disable ema for evaluation
         self.amp_enable = False
-        # init test dataset and test dataloader
-        if load_dataset and dataset is not None:
-            self._init_eval_dataset(dataset)
-            self._init_eval_dataloader()
-        else:
-            self.parse_dataset(dataset)  # add dataset_cfg
-            self._flatten_cfg = self.cfg_flat(self.cfg)  # used for building net
+
+        self._init_eval_dataset()
+        self._init_eval_dataloader()
 
         # build net
-        self._build_net(self.provided_net)
+        self._build_net()
         # load net weights from ema
         self.load(ckpt, load_ema=True)
+
         # set device
         for net in self.nets.values():
             net.to(self.device)
@@ -249,53 +235,15 @@ class AlgorithmBase(ABC):
         """Return the running device of the algorithm."""
         return self._device
 
-    def _load_config(self, cfg: str | Mapping[str, Any]) -> dict:
-        """
-        Load configuration from file path or dict.
-
-        Args:
-            cfg (FilePath | Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
-        """
-        if isinstance(cfg, str):
-            cfg = os.path.join(ALGOCFG_PATH, cfg)
-        cfg = load_cfg(cfg)
-
-        return cfg
-
-    def _load_datasetcfg(self, cfg: str | Mapping[str, Any]) -> dict:
-        """
-        Load dataset configuration from file path or dict.
-
-        Args:
-            cfg (FilePath | Mapping[str, Any]): Dataset configuration of the algorithm (yaml file path or cfg dict).
-        """
-        if isinstance(cfg, str):
-            cfg = os.path.join(DATACFG_PATH, cfg)
-        cfg = load_cfg(cfg)
-
-        return cfg
-
-    def _build_net(self, net: BaseNet) -> None:
+    def _build_net(self) -> None:
         """
         Build the network of the algorithm.
-
-        Args:
-            net (BaseNet): Neural neural required by the algorithm, provided externally.
         """
         LOGGER.info(f"Building network of {self.name}...")
 
-        if net is not None:
-            self.net = net
+        if issubclass(NET_MAPS[self.name], BaseNet):
+            self.net = NET_MAPS[self.name](**self.flatten_cfg)
             self._add_net("net", self.net)
-            # override parameters of net
-            for key in self.cfg["net"]:
-                if key in self.net.__dict__:
-                    self.cfg["net"][key] = self.net.__dict__[key]
-        else:
-            LOGGER.info(f"No outside nets provided, building nets of {self.name} from default configuration...")
-            if issubclass(NET_MAPS[self.name], BaseNet):
-                self.net = NET_MAPS[self.name](**self.flatten_cfg)
-                self._add_net("net", self.net)
 
         # add net name to cfg
         self._add_cfg("net", {"net_name": self.net.__class__.__name__})
@@ -344,36 +292,26 @@ class AlgorithmBase(ABC):
         """
         self._schedulers.update({name: scheduler})
 
-    def _configure_device(self, device: str) -> torch.device:
-        """
-        Configure the running device of the algorithm.
-
-        Args:
-            device (str): The device to run the algorithm on.
-        """
-        if device == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        return torch.device(device)
-
     def _validate_config(self):
         """
         Validate the necessary config of the algorithm.
         """
-        required_sections = ["algorithm", "net", "optimizer", "scheduler", "data"]
+        required_sections = ["algorithm", "net", "optimizer", "scheduler", "data", "trainer"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ValueError(f"The necessary parts are missing in the configuration file: {section}.")
+            if section == "data":
+                if "dataset" not in self.cfg[section]:
+                    raise ValueError(f"Dataset configuration is missing in the configuration file: {section}.")
 
-    def parse_dataset(self, dataset: str | Mapping[str, Any]) -> tuple:
+    def parse_dataset(self) -> tuple:
         """
         Parse dataset info by configuration.
 
         Args:
             dataset (str | Mapping[str, Any]): The dataset configuration.
         """
-        LOGGER.info("Parsing dataset cfg...")
-        self._dataset_cfg = self._load_datasetcfg(dataset)
-        self._add_cfg("data", {"dataset": self.dataset_cfg})
+        LOGGER.info("Parsing dataset...")
 
         # parser data
         dataset_name = self._dataset_cfg["name"]
@@ -406,18 +344,18 @@ class AlgorithmBase(ABC):
             LOGGER.info("Automatic Mixed Precision (AMP) disenabled.")
             self.scaler = None
 
-    def _init_train_datasets(self, dataset: str | Mapping[str, Any]) -> None:
+    def _init_train_datasets(self) -> None:
         """Initialize train and val datasets of the algorithm."""
-        type, train_parsing, val_parsing, _ = self.parse_dataset(dataset)
+        type, train_parsing, val_parsing, _ = self.parse_dataset()
 
         LOGGER.info("Getting train and val datasets...")
         self._flatten_cfg = self.cfg_flat(self.cfg)
         self._train_dataset = build_dataset(type, self.flatten_cfg, train_parsing, self.batch_size, "train")
         self._val_dataset = build_dataset(type, self.flatten_cfg, val_parsing, self.batch_size, "val")
 
-    def _init_eval_dataset(self, dataset: str | Mapping[str, Any]) -> None:
+    def _init_eval_dataset(self) -> None:
         """Initialize the test dataset of the algorithm."""
-        type, _, val_parsing, test_parsing = self.parse_dataset(dataset)
+        type, _, val_parsing, test_parsing = self.parse_dataset()
 
         LOGGER.info("Getting the test dataset...")
         self._flatten_cfg = self.cfg_flat(self.cfg)
@@ -435,7 +373,7 @@ class AlgorithmBase(ABC):
             batch_size=self.batch_size,
             workers=self.cfg["data"].get("workers", 8),
             shuffle=self.cfg["data"].get("shuffle"),
-            pin_memory=self.cfg["data"].get("pin_memory", False),
+            pin_memory=self.cfg["data"].get("pin_memory", True),
             mode="train",
         )
         self._train_batches = len(self.train_loader)
@@ -445,7 +383,7 @@ class AlgorithmBase(ABC):
             batch_size=self.batch_size,
             workers=self.cfg["data"].get("workers", 8),
             shuffle=False,
-            pin_memory=self.cfg["data"].get("pin_memory", False),
+            pin_memory=self.cfg["data"].get("pin_memory", True),
             mode="val",
         )
         self._val_batches = len(self.val_loader)
@@ -459,7 +397,7 @@ class AlgorithmBase(ABC):
             batch_size=self.batch_size,
             workers=self.cfg["data"].get("workers", 8),
             shuffle=False,
-            pin_memory=self.cfg["data"].get("pin_memory", False),
+            pin_memory=self.cfg["data"].get("pin_memory", True),
             mode="test",
         )
         self._test_batches = len(self.test_loader)
@@ -882,6 +820,7 @@ class AlgorithmBase(ABC):
             trainer_cfg.update(self.trainer_cfg)
         self._trainer_cfg = trainer_cfg
 
+        # load setting
         self.last_opt_step = state.get("last_opt_step", -1)
 
         # load the nets' parameters

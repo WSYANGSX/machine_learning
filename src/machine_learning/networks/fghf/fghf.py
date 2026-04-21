@@ -7,7 +7,37 @@ import torch.nn.functional as F
 
 from ultralytics.nn.modules import Conv
 from machine_learning.networks import BaseNet
-from machine_learning.modules.blocks import FrenquencyGuidedHyperFusion
+from machine_learning.modules.blocks import GaussianFrequencySplitter, FrenquencyGuidedHyperFusion, ModalFuseGate
+
+
+class GuidedFilterFusion(nn.Module):
+    """
+    Uses the raw, sharp spatial high-frequency features to guide and re-sharpen
+    the over-smoothed hypergraph high-frequency outputs.
+    """
+
+    def __init__(self, channels):
+        super().__init__()
+        self.coeff_net = nn.Sequential(
+            nn.Conv2d(channels * 2, channels * 2, kernel_size=1),
+            nn.BatchNorm2d(channels * 2),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels * 2, channels * 2, kernel_size=1),
+        )
+        self.out_conv = Conv(channels, channels, 3, 1, 1)
+
+    def forward(self, h_spa_raw: torch.Tensor, h_hg: torch.Tensor) -> torch.Tensor:
+        """
+        h_spa_raw: The raw, sharp spatial high-frequency (Guidance)
+        h_hg: The globally correlated but smoothed hypergraph high-frequency (Input)
+        """
+        cat_feat = torch.cat([h_spa_raw, h_hg], dim=1)
+        coeffs = self.coeff_net(cat_feat)
+        a, b = torch.chunk(coeffs, 2, dim=1)
+        a = torch.tanh(a)
+        out = a * h_spa_raw + b + h_hg
+
+        return self.out_conv(out)
 
 
 class FHGFBlock(nn.Module):
@@ -26,17 +56,35 @@ class FHGFBlock(nn.Module):
     ):
         super().__init__()
 
-        self.fusion = FrenquencyGuidedHyperFusion(
+        self.fre_splitter = GaussianFrequencySplitter()
+        self.l_spa = Conv(in_channels, in_channels, 7, 1, 3)
+        self.h_spa = Conv(in_channels, in_channels, 3, 1, 1)
+
+        self.lfusion = FrenquencyGuidedHyperFusion(
+            in_channels, out_channels, e, num_hyperedges, rank, sparse_ratio, dropout, context, mode, node_topk_chunk
+        )
+        self.hfusion = FrenquencyGuidedHyperFusion(
             in_channels, out_channels, e, num_hyperedges, rank, sparse_ratio, dropout, context, mode, node_topk_chunk
         )
 
-    def forward(self, x):
-        orig_dtype = x.dtype
-        dct_x = dct.dct_2d(x.float(), norm="ortho")
-        dct_x = dct_x.to(orig_dtype)
-        x_out = self.fusion(x, dct_x)
+        # self.hg_gff = GuidedFilterFusion(in_channels)
 
-        return x_out
+        self.fuse = ModalFuseGate(in_channels)
+        self.cv = Conv(in_channels, in_channels, 1, 1)
+
+    def forward(self, spa_feature: torch.Tensor, fre_feature: torch.Tensor):
+        l_fre, h_fre = self.fre_splitter(fre_feature)
+        l_spa, h_spa = self.l_spa(spa_feature), self.h_spa(spa_feature)
+
+        lf_hg = self.lfusion(l_spa, l_fre)
+        hf_hg = self.hfusion(h_spa, h_fre)
+
+        # hf_reshaped = self.hg_gff(h_spa_raw=h_spa, h_hg=hf_hg)
+        # f = self.fuse((lf_hg, hf_reshaped))
+
+        f = self.fuse((lf_hg, hf_hg))
+
+        return self.cv(f)
 
 
 class UpBlock(nn.Module):
@@ -63,9 +111,8 @@ class MaskHead(nn.Module):
         self.cv1 = Conv(channel, channel, 3, 1, 1)
         self.cv2 = nn.Conv2d(channel, nc, kernel_size=1)
 
-    def forward(self, x, edge):
+    def forward(self, x):
         x = self.cvt(x)
-        x -= edge
         x = self.cv1(x)
         x = self.cv2(x)
         return x
@@ -82,7 +129,6 @@ class FGHFNet(BaseNet):
         *args: Any,
         **kwargs: Any,
     ):
-        """Frenquency guided hypergraph fusion segmentation network."""
         super().__init__(args=args, kwargs=kwargs)
 
         self.imgsz = imgsz
@@ -90,7 +136,6 @@ class FGHFNet(BaseNet):
         self.net_scale = net_scale
         self.channels = channels
 
-        # channels
         if self.net_scale == "n":
             ch = [16, 32, 64, 128, 256]
         elif self.net_scale == "s":
@@ -100,10 +145,10 @@ class FGHFNet(BaseNet):
         else:
             raise ValueError(f"Unsupported scale: {net_scale}")
 
-        # ------------------- 1. Encoder (Spatial Backbone) -------------------
-        self.encoder_convs = nn.ModuleList(
+        # ------------------- 1. Spatial Encoder-------------------
+        self.spa_encoders = nn.ModuleList(
             [
-                nn.Sequential(Conv(self.channels, ch[0], 6, 2, 2), Conv(ch[0], ch[0])),  # 0: P1/2
+                nn.Sequential(Conv(self.channels, ch[0], 6, 2, 2), Conv(ch[0], ch[0])),
                 nn.Sequential(Conv(ch[0], ch[1], 3, 2), Conv(ch[1], ch[1])),  # 1: P2/4
                 nn.Sequential(Conv(ch[1], ch[2], 3, 2), Conv(ch[2], ch[2])),  # 2: P3/8
                 nn.Sequential(Conv(ch[2], ch[3], 3, 2), Conv(ch[3], ch[3])),  # 3: P4/16
@@ -112,80 +157,58 @@ class FGHFNet(BaseNet):
         )
 
         # ------------------- 2. Fusion -------------------
-        self.vqfghf_blocks = nn.ModuleList(
+        self.fusion_blocks = nn.ModuleList(
             [
-                nn.Identity(),
-                nn.Identity(),
-                # P3 (1/8), P4 (1/16), P5 (1/32)
-                FHGFBlock(ch[2], ch[2], num_hyperedges=12, rank=8),
-                FHGFBlock(ch[3], ch[3], num_hyperedges=12, rank=8),
-                FHGFBlock(ch[4], ch[4], num_hyperedges=12, rank=8),
+                FHGFBlock(ch[1], ch[1], num_hyperedges=6, rank=3),
+                FHGFBlock(ch[2], ch[2], num_hyperedges=8, rank=4),
+                FHGFBlock(ch[3], ch[3], num_hyperedges=12, rank=6),
+                FHGFBlock(ch[4], ch[4], num_hyperedges=12, rank=6),
             ]
         )
 
-        self.edge_extractors = nn.ModuleList([nn.Conv2d(ch[i], 1, kernel_size=1) for i in range(5)])
-
         # ------------------- 3. Decoder -------------------
-        self.decoder_blocks = nn.ModuleList(
+        self.decoders = nn.ModuleList(
             [
                 UpBlock(in_channels=ch[4], skip_channels=ch[3], out_channels=ch[3]),  # P5 -> P4
                 UpBlock(in_channels=ch[3], skip_channels=ch[2], out_channels=ch[2]),  # P4 -> P3
                 UpBlock(in_channels=ch[2], skip_channels=ch[1], out_channels=ch[1]),  # P3 -> P2
-                UpBlock(in_channels=ch[1], skip_channels=ch[0], out_channels=ch[0]),  # P2 -> P1
             ]
         )
 
-        # edge upsample
-        self.edge_upsample = nn.Upsample(size=(self.imgsz, self.imgsz), mode="bilinear", align_corners=True)
-
         # ------------------- 4. Prediction Heads -------------------
-        self.mask_head = MaskHead(ch[0], self.nc)
+        self.mask_head = MaskHead(ch[1], self.nc)
 
-        self.edge_head = nn.Sequential(
-            nn.Conv2d(in_channels=5, out_channels=16, kernel_size=1, bias=False),
-            Conv(16, 16, 3, 1, 1),
-            nn.Conv2d(16, 1, kernel_size=1),
-            nn.Sigmoid(),
-        )
+    def forward(self, imgs: torch.Tensor):
+        x = imgs
+        spa_skips = []
+        for i, block in enumerate(self.spa_encoders):
+            x = block(x)
+            if i > 0:
+                spa_skips.append(x)  # collect P2, P3, P4, P5
+
+        # 2. Dynamic Frequency & Hypergraph Fusion
+        fusions = []
+        for i, block in enumerate(self.fusion_blocks):
+            cur_spa = spa_skips[i]
+            cur_fre = dct.dct_2d(cur_spa.float(), norm="ortho").to(cur_spa.dtype)
+
+            f = block(cur_spa, cur_fre)
+            fusions.append(f)
+
+        # 3. Decoder
+        out = fusions[3]
+        out = self.decoders[0](out, fusions[2])
+        out = self.decoders[1](out, fusions[1])
+        out = self.decoders[2](out, fusions[0])
+
+        # 4. Prediction heads
+        mask_preds = self.mask_head(out)  # [B, nc, H, W]
+
+        return mask_preds
 
     @property
     def dummy_input(self) -> tuple[torch.Tensor]:
-        return (torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device),)
-
-    def forward(self, imgs: torch.Tensor):
-        # 1. Encoder
-        x = imgs
-        spatial_skips = []
-        for block in self.encoder_convs:
-            x = block(x)
-            spatial_skips.append(x)  # collect P1, P2, P3, P4, P5
-
-        # 2. Frequency & Hypergraph Fusion
-        fusions = []
-        for i, feat in enumerate(spatial_skips):
-            fusion = self.vqfghf_blocks[i](feat)
-            fusions.append(fusion)
-
-        # 3. Feat decoder
-        out = fusions[4]
-        out = self.decoder_blocks[0](out, fusions[3])  # P5 + F4 -> P4
-        out = self.decoder_blocks[1](out, fusions[2])  # P4 + F3 -> P3
-        out = self.decoder_blocks[2](out, fusions[1])  # P3 + F2 -> P2
-        out = self.decoder_blocks[3](out, fusions[0])  # P2 + F1 -> P1
-
-        # 4. Edge decoder
-        edge_maps = [extractor(f) for extractor, f in zip(self.edge_extractors, fusions)]
-
-        edge_maps_up = []
-        for em in edge_maps:
-            edge_maps_up.append(self.edge_upsample(em))
-        fused_multi_edges = torch.cat(edge_maps_up, dim=1)
-
-        # 5. Prediction heads
-        edge_preds = self.edge_head(fused_multi_edges)  # [B, 1, H, W]
-        mask_preds = self.mask_head(out, edge_preds)  # [B, nc, H, W]
-
-        return mask_preds, edge_preds
+        return torch.randn(1, self.channels, self.imgsz, self.imgsz, device=self.device)
 
     def _initialize_weights(self):
         for m in self.modules():

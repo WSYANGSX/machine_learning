@@ -1,12 +1,12 @@
 algorithm: 
-  name: "fghf"
+  name: "fre_mamba"
   imgsz: 640
   task: "segment"
   task_type: "semantic"
   
   # loss weight
   ce_weight: 1.0 # (float) ce loss gain
-  # geo_weight: 0.5 # (float) edge loss gain
+  geo_weight: 0.5 # (float) edge loss gain
   
   close_mosaic_epoch: 0.9 # the ratio of the total number of epochs
 
@@ -43,13 +43,13 @@ scheduler:
 net:
   initialize_weights: True
   channels: 3
-  net_scale: "n"
+  net_scale: "s"
 
 data:
   augment: True
   fraction: 1
   pin_memory: True
-  single_cls: False
+  single_cls: True
   rect: False
   stride: 32
   bgr: 0.0

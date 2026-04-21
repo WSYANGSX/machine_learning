@@ -1,7 +1,8 @@
 algorithm: 
   name: "unet"
-  imgsz: 512
-  task: "semantic segment"
+  imgsz: 640
+  task: "segment"
+  task_type: "semantic"
 
   # loss weight
   ce_weight: 1.0 # (float) loss gain

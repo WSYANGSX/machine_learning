@@ -45,6 +45,7 @@ dataset = SemanticMaskDataset(
     rect=False,
     hyp=hyp,
     augment=True,
+    single_cls=True
 )
 
 

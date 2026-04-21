@@ -1,4 +1,4 @@
-name: cars
+name: car
 path: /home/yangxf/WorkSpace/datasets/..datasets/car
 dataset_type: SemanticMaskDataset
 
