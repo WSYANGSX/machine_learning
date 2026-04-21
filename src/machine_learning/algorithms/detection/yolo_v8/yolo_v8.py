@@ -90,21 +90,9 @@ class YoloV8(AlgorithmBase):
         self.alpha = self.cfg["algorithm"]["alpha"]
         self.beta = self.cfg["algorithm"]["beta"]
 
-    def _init_on_trainer(self, train_cfg, dataset):
-        """Initialize the datasets, dataloaders, nets, optimizers, and schedulers.
-        The attributes that require the dataset parameter are created here.
-        """
-        super()._init_on_trainer(train_cfg, dataset)
-
         self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
         self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
         self.assigner = TaskAlignedAssigner(topk=self.topk, num_classes=self.nc, alpha=self.alpha, beta=self.beta)
-
-    def _init_on_evaluator(self, ckpt, dataset, load_dataset, plot=False, save_dir=None):
-        super()._init_on_evaluator(ckpt, dataset, load_dataset, plot, save_dir)
-
-        self.nc = 1 if self.single_cls else int(self.dataset_cfg["nc"])
-        self.class_names = ["object"] if self.single_cls else self.dataset_cfg["class_names"]
 
     def _init_optimizers(self) -> None:
         self.opt_cfg = self._cfg["optimizer"]

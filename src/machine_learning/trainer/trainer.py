@@ -1,10 +1,10 @@
 from typing import Any, Mapping
 
 import os
+import copy
 import json
 import yaml
 import torch
-from pathlib import Path
 from datetime import datetime
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
@@ -14,7 +14,7 @@ from rich.json import JSON
 from rich.table import Table
 from rich.console import Console
 
-from .trianer_cfg import TrainerCfg
+from .trainer_cfg import TrainerCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase, global_factory
 from machine_learning.utils.constants import ROOT_PATH, ALGOCFG_PATH, DATACFG_PATH
@@ -43,22 +43,24 @@ class Trainer:
 
         self.resume_ckpt = None
 
-        # TODO support for overwrite
         if self.continue_training:
             if train_cfg.ckpt is not None:
                 LOGGER.info(f"Continuing training from checkpoint: {train_cfg.ckpt}")
                 self.resume_ckpt = train_cfg.ckpt
-                algo_cfg = load_cfg(os.path.join(Path(train_cfg.ckpt).parent.parent, "config.yaml"))
             elif train_cfg.resume is not None:
                 LOGGER.info(f"Continuing training from resume directory: {train_cfg.resume}")
                 self.resume_ckpt = os.path.join(train_cfg.resume, "ckpt", "last_model.pth")
-                algo_cfg = load_cfg(os.path.join(train_cfg.resume, "config.yaml"))
             else:
                 raise ValueError("resume directory or checkpoint must be provided when continuing training.")
 
-            self.cfg = algo_cfg["trainer"]
+            state_dict = torch.load(self.resume_ckpt, map_location="cpu", weights_only=False)
+            algo_cfg = copy.deepcopy(state_dict["cfg"])
+
+            # Based on the trainer configuration in ckpt, only overwrite the items explicitly specified in Overwrite
+            self.cfg = self._build_resume_trainer_cfg(algo_cfg["trainer"], train_cfg)
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
+            algo_cfg["trainer"] = copy.deepcopy(self.cfg)
 
         else:
             self.cfg = cfg2dict(train_cfg)
@@ -171,7 +173,8 @@ class Trainer:
     def _setup_train(self):
         # reset optimizer gradients to zeros
         for opt in self.algorithm.optimizers.values():
-            opt.zero_grad()
+            opt.zero_grad(set_to_none=True)
+        self.algorithm.accum_counter = 0
 
     def _train(self, start_epoch: int = 0) -> None:
         """Train the algorithm"""
@@ -241,20 +244,31 @@ class Trainer:
                 self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
 
             # print epoch information
-            if epoch == self.epochs - 1:
-                self.epoch_info(epoch=epoch, val_info=val_info)
 
+            self.epoch_info(
+                epoch=epoch,
+                train_metrics=train_metrics,
+                val_metrics=val_metrics,
+                train_info=train_info,
+                val_info=val_info,
+            )
+
+            if epoch == self.epochs - 1:
                 # Print training completion time
                 total_time = datetime.now() - strat_time
                 total_hours = total_time.total_seconds() / 3600
                 LOGGER.info(f"Training completed in: {total_hours:.2f} hours.")
 
-            else:
-                self.epoch_info(epoch=epoch)
-
     def train(self) -> None:
         if self.continue_training:
             state_dict = self._algorithm.load(self.resume_ckpt)
+
+            # # load() will overwrite the old trainer cfg in ckpt.
+            # Here, the overwritten trainer cfg is backfilled
+            self._algorithm._cfg["trainer"] = self.cfg
+            self._algorithm._trainer_cfg = self.cfg
+            self._algorithm.epochs = self.cfg["epochs"]
+
             start_epoch = state_dict["epoch"] + 1
             self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
             self._train(start_epoch)
@@ -283,8 +297,8 @@ class Trainer:
         epoch: int,
         train_metrics: dict[str, Any] | None = None,
         val_metrics: dict[str, Any] | None = None,
-        train_info: dict[Any] | None = None,
-        val_info: dict[Any] | None = None,
+        train_info: dict[str, Any] | None = None,
+        val_info: dict[str, Any] | None = None,
     ) -> None:
         """
         Print the information of the current epoch using Rich Table.
@@ -345,3 +359,31 @@ class Trainer:
 
         print("\n")
         console.print(table)
+
+    def _build_resume_trainer_cfg(self, ckpt_trainer_cfg: dict, train_cfg: TrainerCfg) -> dict:
+        """
+        Build trainer cfg for continue-training:
+        - start from checkpoint trainer cfg
+        - overwrite only explicitly provided fields in train_cfg.overwrite
+        """
+        merged = copy.deepcopy(ckpt_trainer_cfg)
+        overwrite = copy.deepcopy(getattr(train_cfg, "overwrite", {}) or {})
+
+        forbidden_keys = {"continue_training", "resume", "ckpt", "overwrite"}
+        for key, value in overwrite.items():
+            if key in forbidden_keys:
+                LOGGER.warning(f"Skip overwrite key '{key}', it is managed by Trainer itself.")
+                continue
+            merged[key] = value
+
+        # Runtime resume info is still recorded explicitly
+        merged["continue_training"] = True
+        merged["resume"] = train_cfg.resume
+        merged["ckpt"] = train_cfg.ckpt
+
+        # If the user changes the record dir but does not explicitly change the ckpt dir
+        # it will automatically follow the record dir
+        if "record_dir" in overwrite and "ckpt_dir" not in overwrite:
+            merged["ckpt_dir"] = os.path.join(merged["record_dir"], "ckpt")
+
+        return merged

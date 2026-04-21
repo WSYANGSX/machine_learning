@@ -66,6 +66,7 @@ class AlgorithmBase(ABC):
 
         # counts
         self.last_opt_step = -1
+        self.accum_counter = 0
 
     def _init_on_trainer(self) -> None:
         """
@@ -112,6 +113,7 @@ class AlgorithmBase(ABC):
             ckpt (FilePath): Checkpoint file path.
             plot (bool): Whether to plot result.
             save_dir (FilePath): Save directory.
+            load_dataset (bool): Whether to load dataset. Defaults to True.
         """
         self.plot = plot
         self.save_dir = save_dir if save_dir is not None else "./"
@@ -123,6 +125,8 @@ class AlgorithmBase(ABC):
             # init val/test datasets and dataloaders
             self._init_eval_dataset()
             self._init_eval_dataloader()
+        else:
+            self._flatten_cfg = self.cfg_flat(self.cfg)
 
         # build net
         self._build_net()
@@ -496,6 +500,7 @@ class AlgorithmBase(ABC):
         return "\n".join(summary)
 
     def cfg_flat(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """Flat the configuration dictionary."""
         items = []
         for key, value in cfg.items():
             if isinstance(value, dict):
@@ -574,10 +579,12 @@ class AlgorithmBase(ABC):
         metrics = self._init_metrics("train")
         self.print_metric_titles("train", metrics)
 
+        last_batches = None
         pbar = tqdm(enumerate(self.train_loader), total=self.train_batches)
         for i, batch in pbar:
             # Warmup
             batches = epoch * self.train_batches + i
+            last_batches = batches
             self.warmup(batches, epoch)
 
             data = self._prepare_batch(batch, "train")
@@ -600,6 +607,10 @@ class AlgorithmBase(ABC):
 
             # log
             self.pbar_log("train", pbar, epoch, **metrics)
+
+        # Flush the last incomplete gradient accumulation group at the end of the epoch.
+        if last_batches is not None:
+            self.optimizer_step(last_batches, force=True)
 
         return metrics, info
 
@@ -714,25 +725,68 @@ class AlgorithmBase(ABC):
         else:
             loss.backward()
 
-    def optimizer_step(self, batches: int) -> None:
-        if batches - self.last_opt_step >= self.accumulate:
-            if self.scaler is not None:
-                # unscale gradients, necessary if gradient clipping is performed after.
-                self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
+        self.accum_counter += 1
 
-            if self.scaler is not None:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                self.optimizer.step()
+    def optimizer_step(self, batches: int, force: bool = False) -> None:
+        """
+        Step optimizer when the accumulation target is reached, or force-flush the remaining gradients at the end of an
+        epoch.
 
-            if self.ema_enable:
-                for key, ema in self.emas.items():
-                    ema.update(self.nets[key])  # Update EMA
+        Args:
+            - batches (int): Global batch index.
+            - force (bool): Whether to force an optimizer step for the remaining incomplete accumulation group.
+        """
 
-            self.optimizer.zero_grad()
-            self.last_opt_step = batches
+        if self.accum_counter == 0:
+            return
+
+        should_step = self.accum_counter >= self.accumulate
+        should_flush = force and self.accum_counter > 0
+
+        if not (should_step or should_flush):
+            return
+
+        if should_flush and self.accum_counter < self.accumulate:
+            grad_scale = self.accumulate / self.accum_counter
+        else:
+            grad_scale = 1.0
+
+        if self.scaler is not None:
+            self.scaler.unscale_(self.optimizer)
+
+        if grad_scale != 1.0:
+            for param in self.net.parameters():
+                if param.grad is not None:
+                    param.grad.mul_(grad_scale)
+
+        # Optional Protection: Check if the value remains limited after manual scaling
+        grads_finite = True
+        for param in self.net.parameters():
+            if param.grad is not None and not torch.isfinite(param.grad).all():
+                grads_finite = False
+                break
+
+        if not grads_finite:
+            LOGGER.warning("Non-finite gradients detected after gradient rescaling, skipping optimizer step.")
+            self.optimizer.zero_grad(set_to_none=True)
+            self.accum_counter = 0
+            return
+
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
+
+        if self.scaler is not None:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            self.optimizer.step()
+
+        if self.ema_enable:
+            for key, ema in self.emas.items():
+                ema.update(self.nets[key])
+
+        self.optimizer.zero_grad(set_to_none=None)
+        self.last_opt_step = batches
+        self.accum_counter = 0
 
     @abstractmethod
     def predict(self, streams: str | StreamBase, *args, **kwargs) -> None:
@@ -755,6 +809,7 @@ class AlgorithmBase(ABC):
             "nets": {},
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
+            "accm_counter": self.accum_counter,
             "amp": self.amp_enable,
             "record_dir": record_dir,
             "ckpt_dir": ckpt_dir,
@@ -804,23 +859,15 @@ class AlgorithmBase(ABC):
             dict: The state dict loaded from checkpoint.
         """
         state = torch.load(checkpoint, map_location=self.device, weights_only=False)
+        loaded_cfg = state["cfg"]
 
-        # cfg
-        self._cfg = state["cfg"]  # include dataset, trainer
+        self._cfg = loaded_cfg
+        self._dataset_cfg = loaded_cfg["data"]["dataset"]
+        self._trainer_cfg = loaded_cfg["trainer"]
 
-        # trainer cfg and dataset cfg
-        dataset_cfg = self._cfg["data"].get("dataset", {})
-        if hasattr(self, "_dataset_cfg"):
-            dataset_cfg.update(self.dataset_cfg)
-        self._dataset_cfg = dataset_cfg
-
-        trainer_cfg = self._cfg.get("trainer", {})
-        if hasattr(self, "_trainer_cfg"):
-            trainer_cfg.update(self.trainer_cfg)
-        self._trainer_cfg = trainer_cfg
-
-        # load setting
+        # load counters
         self.last_opt_step = state.get("last_opt_step", -1)
+        self.accum_counter = state.get("accum_counter", 0)
 
         # load the nets' parameters
         if load_ema and state.get("emas") is not None:

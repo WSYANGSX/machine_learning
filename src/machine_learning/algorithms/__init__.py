@@ -1,5 +1,3 @@
-from typing import TypeVar
-
 from .base import AlgorithmBase
 from .generation import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 from .detection import YoloV3, YoloV8, MultimodalDetection
@@ -13,7 +11,6 @@ from .segmentation import (
     MultimodalMaskSegmentation,
 )
 
-AlgoType = TypeVar("AlgoType", bound=AlgorithmBase)
 
 __all__ = [
     "AlgorithmBase",
@@ -43,11 +40,11 @@ class AlgorithmFactory:
     def __init__(self) -> None:
         self.algorithms = {}
 
-    def register_algorithm(self, name: str, algorithm_class: AlgoType) -> None:
+    def register_algorithm(self, name: str, algorithm_class: AlgorithmBase) -> None:
         """Register an algorithm class."""
         self.algorithms[name] = algorithm_class
 
-    def create_algorithm(self, algo: str, *args, **kwargs) -> AlgoType:
+    def create_algorithm(self, algo: str, *args, **kwargs) -> AlgorithmBase:
         if algo not in self.algorithms:
             raise ValueError(f"Unknown algorithm: {algo}")
 
