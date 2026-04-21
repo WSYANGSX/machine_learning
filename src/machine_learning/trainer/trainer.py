@@ -57,7 +57,12 @@ class Trainer:
             algo_cfg = copy.deepcopy(state_dict["cfg"])
 
             # Based on the trainer configuration in ckpt, only overwrite the items explicitly specified in Overwrite
-            self.cfg = self._build_resume_trainer_cfg(algo_cfg["trainer"], train_cfg)
+            self.cfg = self._build_resume_trainer_cfg(
+                algo_cfg["trainer"],
+                train_cfg,
+                resolved_ckpt=self.resume_ckpt,
+            )
+
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
             algo_cfg["trainer"] = copy.deepcopy(self.cfg)
@@ -263,14 +268,19 @@ class Trainer:
         if self.continue_training:
             state_dict = self._algorithm.load(self.resume_ckpt)
 
-            # # load() will overwrite the old trainer cfg in ckpt.
-            # Here, the overwritten trainer cfg is backfilled
             self._algorithm._cfg["trainer"] = self.cfg
             self._algorithm._trainer_cfg = self.cfg
             self._algorithm.epochs = self.cfg["epochs"]
 
             start_epoch = state_dict["epoch"] + 1
             self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
+
+            if start_epoch >= self.cfg["epochs"]:
+                raise ValueError(
+                    f"Resume epoch is {start_epoch}, but configured epochs is {self.cfg['epochs']}. "
+                    "Please set overwrite['epochs'] to a larger value."
+                )
+
             self._train(start_epoch)
         else:
             self._train()
@@ -360,12 +370,7 @@ class Trainer:
         print("\n")
         console.print(table)
 
-    def _build_resume_trainer_cfg(self, ckpt_trainer_cfg: dict, train_cfg: TrainerCfg) -> dict:
-        """
-        Build trainer cfg for continue-training:
-        - start from checkpoint trainer cfg
-        - overwrite only explicitly provided fields in train_cfg.overwrite
-        """
+    def _build_resume_trainer_cfg(self, ckpt_trainer_cfg: dict, train_cfg: TrainerCfg, resolved_ckpt: str) -> dict:
         merged = copy.deepcopy(ckpt_trainer_cfg)
         overwrite = copy.deepcopy(getattr(train_cfg, "overwrite", {}) or {})
 
@@ -376,13 +381,10 @@ class Trainer:
                 continue
             merged[key] = value
 
-        # Runtime resume info is still recorded explicitly
         merged["continue_training"] = True
         merged["resume"] = train_cfg.resume
-        merged["ckpt"] = train_cfg.ckpt
+        merged["ckpt"] = resolved_ckpt
 
-        # If the user changes the record dir but does not explicitly change the ckpt dir
-        # it will automatically follow the record dir
         if "record_dir" in overwrite and "ckpt_dir" not in overwrite:
             merged["ckpt_dir"] = os.path.join(merged["record_dir"], "ckpt")
 
