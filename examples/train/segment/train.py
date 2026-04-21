@@ -21,7 +21,8 @@ def get_argparser():
     parser.add_argument("--ema", type=bool, default=False, help="Whether to enable Exponential Moving Average")
     parser.add_argument("--device", type=str, default="auto", help="Running device")
     parser.add_argument("--continue_training", action="store_true", default=False)
-    parser.add_argument("--ckpt", default=None, type=str, help="restore from checkpoint")
+    parser.add_argument("--resume", default=None, type=str, help="restore from lastest checkpoint in resume directory")
+    parser.add_argument("--ckpt", default=None, type=str, help="restore from specified checkpoint")
 
     # Train Options
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.01)")
@@ -49,6 +50,7 @@ def main():
         ema=opts.ema,
         device=opts.device,
         continue_training=opts.continue_training,
+        resume=opts.resume,
         ckpt=opts.ckpt,
     )
 

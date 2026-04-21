@@ -61,8 +61,8 @@ class AlgorithmBase(ABC):
         self.nbs = self.cfg["data"]["nbs"]
         self.batch_size = self.cfg["data"]["batch_size"]
         self.accumulate = max(1, round(self.nbs / self.batch_size))
-        self.ema_enable = ema if ema is not None else self._cfg["algorithm"].get("ema", False)  # ema
-        self.amp_enable = amp if amp is not None else self._cfg["algorithm"].get("amp", False)  # amp
+        self.ema_enable = ema if ema is not None else self._cfg["trainer"].get("ema", False)
+        self.amp_enable = amp if amp is not None else self._cfg["trainer"].get("amp", False)
 
         # counts
         self.last_opt_step = -1
@@ -103,6 +103,7 @@ class AlgorithmBase(ABC):
         ckpt: str,
         plot: bool | None = False,
         save_dir: str | None = None,
+        load_dataset: bool = True,
     ) -> None:
         """
         Initialize the evaluation dataset, dataloader, net, and load the checkpoint weights.
@@ -118,8 +119,10 @@ class AlgorithmBase(ABC):
         self.ema_enable = False  # disable ema for evaluation
         self.amp_enable = False
 
-        self._init_eval_dataset()
-        self._init_eval_dataloader()
+        if load_dataset:
+            # init val/test datasets and dataloaders
+            self._init_eval_dataset()
+            self._init_eval_dataloader()
 
         # build net
         self._build_net()
@@ -132,18 +135,14 @@ class AlgorithmBase(ABC):
 
         self.set_eval()
 
-    def _init_on_predictor(
-        self,
-        ckpt: str,
-        dataset: str | Mapping[str, Any] | None = None,
-    ) -> None:
+    def _init_on_predictor(self, ckpt: str) -> None:
         """
         Initialize the net, and load the checkpoint weights.
 
         Args:
             ckpt (FilePath): Checkpoint file path.
         """
-        self._init_on_evaluator(ckpt=ckpt, dataset=dataset, load_dataset=False)
+        self._init_on_evaluator(ckpt=ckpt, load_dataset=False)
 
     @property
     def train_dataset(self) -> None | Dataset:

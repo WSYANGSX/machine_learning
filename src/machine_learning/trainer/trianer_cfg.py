@@ -1,3 +1,4 @@
+from typing import Literal
 from dataclasses import dataclass, field
 from machine_learning.cfg.base import BaseCfg
 
@@ -11,6 +12,7 @@ class TrainerCfg(BaseCfg):
     save_best: bool = field(default=True)
     amp: bool = field(default=False)
     ema: bool = field(default=False)
-    device: str = field(default="auto")
+    device: Literal["cpu", "cuda", "auto"] = field(default="auto")
     continue_training: bool = field(default=False)
+    resume: str = field(default=None)
     ckpt: str = field(default=None)

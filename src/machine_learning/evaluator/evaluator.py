@@ -1,14 +1,15 @@
-from typing import Mapping, Any, TypeVar
+from typing import Mapping, Any, TypeVar, Literal
 
 import json
+import torch
 
 from rich import box
 from rich.json import JSON
 from rich.table import Table
 from rich.console import Console
-
 from machine_learning.utils.logger import LOGGER
-from machine_learning.algorithms.base import AlgorithmBase
+from machine_learning.utils import print_cfg
+from machine_learning.algorithms import AlgorithmBase, global_factory
 
 AlgoType = TypeVar("AlgoType", bound=AlgorithmBase)
 
@@ -16,20 +17,41 @@ AlgoType = TypeVar("AlgoType", bound=AlgorithmBase)
 class Evaluator:
     def __init__(
         self,
-        algo: AlgoType,
         ckpt: str,
-        dataset: str | Mapping[str, Any],
-        load_dataset: bool = True,
+        device: Literal["cpu", "cuda", "auto"] = "auto",
         plot: bool = False,
         save_dir: str | None = None,
     ) -> None:
         """Evaluator of all the algorithms."""
-        self.ckpt = ckpt
-        self._algorithm: AlgoType = algo
-        self.load_dataset = load_dataset
+        state = torch.load(ckpt, map_location="cpu", weights_only=False)
+        algo_cfg = state["cfg"]
+        name = algo_cfg["algorithm"]["name"]
+        self.save_dir = algo_cfg["trainer"]["record_dir"] if save_dir is None else save_dir  # for save
+        device = self._configure_device(device)
 
-        LOGGER.info("Algorithm initializing by evaluator...")
-        self.algorithm._init_on_evaluator(self.ckpt, dataset, self.load_dataset, plot, save_dir)
+        # --------------------- build algorithm ---------------------
+        self._build_algorithm(name, device, algo_cfg, False, False)
+        self.algorithm._init_on_evaluator(ckpt, plot, self.save_dir)
+        print_cfg("Total configuration", algo_cfg)
+
+    def _configure_device(self, device: str) -> torch.device:
+        """Configure the trianing device."""
+        if device == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(device)
+
+    def _build_algorithm(
+        self,
+        name: str,
+        device: torch.device,
+        cfg: Mapping[str, Any],
+        amp: bool | None = None,
+        ema: bool | None = False,
+    ) -> None:
+        LOGGER.info(f"Building algorithm {name}...")
+        self._algorithm = global_factory.create_algorithm(
+            algo=name, cfg=cfg, name=name, device=device, amp=amp, ema=ema
+        )
 
     @property
     def algorithm(self) -> AlgorithmBase:
