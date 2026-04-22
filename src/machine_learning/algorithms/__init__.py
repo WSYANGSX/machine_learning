@@ -1,3 +1,7 @@
+from typing import Any, Mapping
+
+import os
+
 from .base import AlgorithmBase
 from .generation import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 from .detection import YoloV3, YoloV8, MultimodalDetection
@@ -10,6 +14,8 @@ from .segmentation import (
     MultimodalPerPixelSegmentation,
     MultimodalMaskSegmentation,
 )
+from machine_learning.utils import load_cfg
+from machine_learning.utils.constants import ALGOCFG_PATH
 
 
 __all__ = [
@@ -31,6 +37,22 @@ __all__ = [
     "MultimodalPerPixelSegmentation",
     "MultimodalMaskSegmentation",
 ]
+
+
+def get_alogrithm_cfg(cfg: str | Mapping[str, Any], overwrites: dict[str, Any] | None = None) -> dict:
+    """Load algorithm cfg from file or dict."""
+    if isinstance(cfg, str):
+        cfg = os.path.join(ALGOCFG_PATH, cfg)
+    cfg = load_cfg(cfg)
+
+    for k, v in cfg.items():
+        if isinstance(v, dict):
+            cfg[k] = get_alogrithm_cfg(v, overwrites)
+        else:
+            if overwrites is not None and k in overwrites:
+                cfg[k] = overwrites[k]
+
+    return cfg
 
 
 # Algorithm factory function
