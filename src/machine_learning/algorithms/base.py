@@ -132,6 +132,7 @@ class AlgorithmBase(ABC):
 
         # build net
         self._build_net()
+        self._init_nets()
         # load net weights from ema
         self.load(ckpt, load_ema=True)
 
