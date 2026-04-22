@@ -5,6 +5,7 @@ import copy
 import json
 import yaml
 import torch
+import shutil
 from datetime import datetime
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
@@ -17,8 +18,8 @@ from rich.console import Console
 from .trainer_cfg import TrainerCfg
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase, global_factory
-from machine_learning.utils.constants import ROOT_PATH, ALGOCFG_PATH, DATACFG_PATH
 from machine_learning.utils import set_seed, cfg2dict, print_cfg, load_cfg
+from machine_learning.utils.constants import ROOT_PATH, ALGOCFG_PATH, DATACFG_PATH
 
 
 class Trainer:
@@ -63,6 +64,7 @@ class Trainer:
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
 
+            name = algo_cfg["algorithm"]["name"]
             algo_cfg["trainer"]["continue_training"] = True
             algo_cfg["trainer"]["ckpt"] = self.resume_ckpt
             if train_cfg["resume"] is not None:
@@ -293,10 +295,9 @@ class Trainer:
         save_path = os.path.join(self.ckpt_dir, filename)
         self._algorithm.save(epoch, val_return, best_fitness, save_path, self.record_dir, self.ckpt_dir)
 
-        # save last model
-        if not is_best:
-            last_path = os.path.join(self.ckpt_dir, "last_model.pth")
-            self._algorithm.save(epoch, val_return, best_fitness, last_path, self.record_dir, self.ckpt_dir)
+        # save last model fast
+        last_path = os.path.join(self.ckpt_dir, "last_model.pth")
+        shutil.copy2(save_path, last_path)
 
     def epoch_info(
         self,

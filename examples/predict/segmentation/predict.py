@@ -4,7 +4,7 @@ from machine_learning.evaluator import Predictor
 def main():
     # Step 1: Build the predictor from ckpt
     predictor = Predictor(
-        "/home/yangxf/WorkSpace/machine_learning/runs/fghf/fghf_n_car_2026-04-22_11-47/ckpt/checkpoint_epoch_30.pth",
+        "/home/yangxf/WorkSpace/machine_learning/runs/unet/unet__car_2026-04-22_11-29/ckpt/best_model.pth",
     )
 
     # Step 3: Predict
