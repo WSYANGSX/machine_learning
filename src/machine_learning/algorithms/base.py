@@ -91,6 +91,8 @@ class AlgorithmBase(ABC):
         if self.ema_enable:
             LOGGER.info("EMA is enabled.")
             self._init_ema()
+        else:
+            LOGGER.info("EMA is disabled.")
 
         # init amp
         self._init_amp()
@@ -868,6 +870,7 @@ class AlgorithmBase(ABC):
 
         # load the nets' parameters
         if load_ema and state.get("emas") is not None:
+            LOGGER.info("Loading EMA parameters into networks.")
             for key, net in self.nets.items():
                 if key in state["emas"]:
                     ema_state = state["emas"][key]
@@ -884,6 +887,7 @@ class AlgorithmBase(ABC):
                         net.load_state_dict(state["nets"][key], strict=True)
 
         else:
+            LOGGER.info("Loading normal weights into networks.")
             for key, net in self.nets.items():
                 net.load_state_dict(state["nets"][key], strict=True)
 
