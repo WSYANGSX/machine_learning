@@ -63,6 +63,11 @@ class Trainer:
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
 
+            algo_cfg["trainer"]["continue_training"] = True
+            algo_cfg["trainer"]["ckpt"] = self.resume_ckpt
+            if train_cfg["resume"] is not None:
+                algo_cfg["trainer"]["resume"] = train_cfg["resume"]
+
         else:
             self.cfg = train_cfg
 
@@ -73,8 +78,7 @@ class Trainer:
             # datetime suffix for log
             self.dt_suffix = (
                 name
-                + "_"
-                + (algo_cfg["net"]["net_scale"] if "net_scale" in algo_cfg["net"] else "")
+                + ("_" + algo_cfg["net"]["net_scale"] if "net_scale" in algo_cfg["net"] else "")
                 + "_"
                 + (os.path.splitext(dataset_cfg)[0] if isinstance(dataset_cfg, str) else dataset_cfg["name"])
                 + "_"
@@ -109,6 +113,9 @@ class Trainer:
         if not self.continue_training:
             # record algorithm cfg
             with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
+                yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
+        else:
+            with open(self.record_dir + "/config_resume.yaml", "w", encoding="utf-8") as file:
                 yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
 
         # set best_fitness value for saving the best ckpt
@@ -282,16 +289,14 @@ class Trainer:
         except OSError as e:
             raise RuntimeError(f"Failed to create ckpt directory at {self.ckpt_dir}: {e}")
 
-        filename = f"checkpoint_epoch_{epoch + 1}.pth"
-        if is_best:
-            filename = "best_model.pth"
+        filename = f"checkpoint_epoch_{epoch + 1}.pth" if not is_best else "best_model.pth"
         save_path = os.path.join(self.ckpt_dir, filename)
-
         self._algorithm.save(epoch, val_return, best_fitness, save_path, self.record_dir, self.ckpt_dir)
 
         # save last model
-        last_path = os.path.join(self.ckpt_dir, "last_model.pth")
-        self._algorithm.save(epoch, val_return, best_fitness, last_path, self.record_dir, self.ckpt_dir)
+        if not is_best:
+            last_path = os.path.join(self.ckpt_dir, "last_model.pth")
+            self._algorithm.save(epoch, val_return, best_fitness, last_path, self.record_dir, self.ckpt_dir)
 
     def epoch_info(
         self,

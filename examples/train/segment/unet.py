@@ -11,6 +11,8 @@ def main():
         save_best=True,
         seed=int(time.time()),
         amp=True,
+        continue_training=True,
+        resume="/home/yangxf/WorkSpace/machine_learning/runs/unet/unet__car_2026-04-22_11-29",
     )
     trainer = Trainer("unet", trainer_cfg, "unet.yaml", "car.yaml")
 
