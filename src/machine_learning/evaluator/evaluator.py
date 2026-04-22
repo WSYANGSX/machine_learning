@@ -1,4 +1,4 @@
-from typing import Mapping, Any, TypeVar, Literal
+from typing import Mapping, Any, Literal
 
 import json
 import torch
@@ -7,11 +7,9 @@ from rich import box
 from rich.json import JSON
 from rich.table import Table
 from rich.console import Console
-from machine_learning.utils.logger import LOGGER
 from machine_learning.utils import print_cfg
+from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase, global_factory
-
-AlgoType = TypeVar("AlgoType", bound=AlgorithmBase)
 
 
 class Evaluator:
@@ -45,7 +43,7 @@ class Evaluator:
         name: str,
         device: torch.device,
         cfg: Mapping[str, Any],
-        amp: bool | None = None,
+        amp: bool | None = False,
         ema: bool | None = False,
     ) -> None:
         LOGGER.info(f"Building algorithm {name}...")
