@@ -746,10 +746,10 @@ class AlgorithmBase(ABC):
         if not (should_step or should_flush):
             return
 
+        # Adjust the gradient scaling correctly
+        grad_scale = 1.0
         if should_flush and self.accum_counter < self.accumulate:
             grad_scale = self.accumulate / self.accum_counter
-        else:
-            grad_scale = 1.0
 
         if self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
@@ -768,23 +768,22 @@ class AlgorithmBase(ABC):
 
         if not grads_finite:
             LOGGER.warning("Non-finite gradients detected after gradient rescaling, skipping optimizer step.")
-            self.optimizer.zero_grad(set_to_none=True)
-            self.accum_counter = 0
-            return
-
-        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
+        else:
+            # Gradient clipping is only performed when the gradients are healthy
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
 
         if self.scaler is not None:
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
-            self.optimizer.step()
+            if grads_finite:
+                self.optimizer.step()
 
-        if self.ema_enable:
+        if grads_finite and self.ema_enable:
             for key, ema in self.emas.items():
                 ema.update(self.nets[key])
 
-        self.optimizer.zero_grad(set_to_none=None)
+        self.optimizer.zero_grad(set_to_none=True)
         self.last_opt_step = batches
         self.accum_counter = 0
 
@@ -809,7 +808,6 @@ class AlgorithmBase(ABC):
             "nets": {},
             "optimizers": {},
             "last_opt_step": self.last_opt_step,
-            "accm_counter": self.accum_counter,
             "amp": self.amp_enable,
             "record_dir": record_dir,
             "ckpt_dir": ckpt_dir,
@@ -867,7 +865,6 @@ class AlgorithmBase(ABC):
 
         # load counters
         self.last_opt_step = state.get("last_opt_step", -1)
-        self.accum_counter = state.get("accum_counter", 0)
 
         # load the nets' parameters
         if load_ema and state.get("emas") is not None:

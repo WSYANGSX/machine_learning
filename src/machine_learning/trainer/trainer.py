@@ -28,6 +28,8 @@ class Trainer:
         train_cfg: TrainerCfg,
         algorithm_cfg: str | Mapping[str, Any],
         dataset_cfg: str | Mapping[str, Any],
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         """
         The trainer of all machine learning algorithm
@@ -39,36 +41,30 @@ class Trainer:
             dataset_cfg (str, Mapping[str, Any]): The dataset cfg.
 
         """
-        self.continue_training = train_cfg.continue_training
+        train_cfg = cfg2dict(train_cfg)
 
+        self.continue_training = train_cfg["continue_training"]
         self.resume_ckpt = None
 
         if self.continue_training:
-            if train_cfg.ckpt is not None:
-                LOGGER.info(f"Continuing training from checkpoint: {train_cfg.ckpt}")
-                self.resume_ckpt = train_cfg.ckpt
-            elif train_cfg.resume is not None:
-                LOGGER.info(f"Continuing training from resume directory: {train_cfg.resume}")
-                self.resume_ckpt = os.path.join(train_cfg.resume, "ckpt", "last_model.pth")
+            if train_cfg["ckpt"] is not None:
+                LOGGER.info(f"Continuing training from checkpoint: {train_cfg['ckpt']}")
+                self.resume_ckpt = train_cfg["ckpt"]
+            elif train_cfg["resume"] is not None:
+                LOGGER.info(f"Continuing training from resume directory: {train_cfg['resume']}")
+                self.resume_ckpt = os.path.join(train_cfg["resume"], "ckpt", "last_model.pth")
             else:
                 raise ValueError("resume directory or checkpoint must be provided when continuing training.")
 
             state_dict = torch.load(self.resume_ckpt, map_location="cpu", weights_only=False)
             algo_cfg = copy.deepcopy(state_dict["cfg"])
 
-            # Based on the trainer configuration in ckpt, only overwrite the items explicitly specified in Overwrite
-            self.cfg = self._build_resume_trainer_cfg(
-                algo_cfg["trainer"],
-                train_cfg,
-                resolved_ckpt=self.resume_ckpt,
-            )
-
+            self.cfg = algo_cfg["trainer"]
             self.record_dir = self.cfg["record_dir"]
             self.ckpt_dir = self.cfg["ckpt_dir"]
-            algo_cfg["trainer"] = copy.deepcopy(self.cfg)
 
         else:
-            self.cfg = cfg2dict(train_cfg)
+            self.cfg = train_cfg
 
             # load cfg
             algo_cfg = self._load_alogrithm_cfg(algorithm_cfg)
@@ -275,13 +271,8 @@ class Trainer:
             start_epoch = state_dict["epoch"] + 1
             self.best_fitness = state_dict.get("best_fitness", self.best_fitness)
 
-            if start_epoch >= self.cfg["epochs"]:
-                raise ValueError(
-                    f"Resume epoch is {start_epoch}, but configured epochs is {self.cfg['epochs']}. "
-                    "Please set overwrite['epochs'] to a larger value."
-                )
-
             self._train(start_epoch)
+
         else:
             self._train()
 
@@ -369,23 +360,3 @@ class Trainer:
 
         print("\n")
         console.print(table)
-
-    def _build_resume_trainer_cfg(self, ckpt_trainer_cfg: dict, train_cfg: TrainerCfg, resolved_ckpt: str) -> dict:
-        merged = copy.deepcopy(ckpt_trainer_cfg)
-        overwrite = copy.deepcopy(getattr(train_cfg, "overwrite", {}) or {})
-
-        forbidden_keys = {"continue_training", "resume", "ckpt", "overwrite"}
-        for key, value in overwrite.items():
-            if key in forbidden_keys:
-                LOGGER.warning(f"Skip overwrite key '{key}', it is managed by Trainer itself.")
-                continue
-            merged[key] = value
-
-        merged["continue_training"] = True
-        merged["resume"] = train_cfg.resume
-        merged["ckpt"] = resolved_ckpt
-
-        if "record_dir" in overwrite and "ckpt_dir" not in overwrite:
-            merged["ckpt_dir"] = os.path.join(merged["record_dir"], "ckpt")
-
-        return merged
