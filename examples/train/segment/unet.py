@@ -3,7 +3,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
-    # step 1: set trainer cfg
+    # step 1: setup trainer
     trainer_cfg = TrainerCfg(
         epochs=100,
         log_interval=10,
@@ -16,7 +16,7 @@ def main():
     )
     trainer = Trainer("unet", trainer_cfg, "unet.yaml", "car.yaml")
 
-    # Step 3: Train the model
+    # Step 2: train
     trainer.train()
 
 

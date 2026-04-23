@@ -23,24 +23,26 @@ from machine_learning.utils.constants import ROOT_PATH, ALGOCFG_PATH, DATACFG_PA
 
 
 class Trainer:
+    """
+    The trainer of all machine learning algorithm.
+
+    Args:
+        name (str): The name of the algorithm to train.
+        train_cfg (TrainCfg): The configuration of the trainer.
+        algorithm_cfg (str, Mapping[str, Any]): The algorithm cfg.
+        dataset_cfg (str, Mapping[str, Any]): The dataset cfg.
+    """
+
     def __init__(
         self,
         name: str,
         train_cfg: TrainerCfg,
         algorithm_cfg: str | Mapping[str, Any],
         dataset_cfg: str | Mapping[str, Any],
-        *args: Any,
-        **kwargs: Any,
     ) -> None:
         """
-        The trainer of all machine learning algorithm
-
-        Args:
-            name (str): The name of the algorithm to train.
-            train_cfg (TrainCfg): The configuration of the trainer.
-            algorithm_cfg (str, Mapping[str, Any]): The algorithm cfg.
-            dataset_cfg (str, Mapping[str, Any]): The dataset cfg.
-
+        Initialize the trainer by the name of the algorithm to be trained, the cfg of trainer, the cfg of algorithm and
+        the cfg of dataset to be used.
         """
         train_cfg = cfg2dict(train_cfg)
 
@@ -83,6 +85,7 @@ class Trainer:
                 + ("_" + algo_cfg["net"]["net_scale"] if "net_scale" in algo_cfg["net"] else "")
                 + "_"
                 + (os.path.splitext(dataset_cfg)[0] if isinstance(dataset_cfg, str) else dataset_cfg["name"])
+                + ("_" + algo_cfg["algorithm"]["modality"] if "modality" in algo_cfg["algorithm"] else "")
                 + "_"
                 + datetime.now().strftime("%Y-%m-%d_%H-%M")
             )
@@ -254,11 +257,8 @@ class Trainer:
                 self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
 
             # print epoch information
-
             self.epoch_info(
                 epoch=epoch,
-                train_metrics=train_metrics,
-                val_metrics=val_metrics,
                 train_info=train_info,
                 val_info=val_info,
             )
@@ -302,8 +302,6 @@ class Trainer:
     def epoch_info(
         self,
         epoch: int,
-        train_metrics: dict[str, Any] | None = None,
-        val_metrics: dict[str, Any] | None = None,
         train_info: dict[str, Any] | None = None,
         val_info: dict[str, Any] | None = None,
     ) -> None:
@@ -343,18 +341,6 @@ class Trainer:
                 for i, param_group in enumerate(opt.param_groups):
                     lr_val = param_group.get("lr", "N/A")
                     table.add_row("lr", f"{name}/(pg{i})", _format_value(lr_val))
-
-        if train_metrics:
-            for k, v in train_metrics.items():
-                table.add_row("Train Metric", k, _format_value(v))
-
-        if val_metrics:
-            for k, v in val_metrics.items():
-                style = "bold green" if k == "best_fitness" else None
-                val_str = _format_value(v)
-                if style:
-                    pass
-                table.add_row("Val Metric", k, val_str)
 
         if train_info:
             for k, v in train_info.items():

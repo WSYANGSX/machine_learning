@@ -30,13 +30,11 @@ from ultralytics.utils.loss import TaskAlignedAssigner, BboxLoss
 class YoloV8(AlgorithmBase):
     def __init__(
         self,
-        cfg: FilePath | Mapping[str, Any],
-        net: BaseNet | None = None,
+        cfg: Mapping[str, Any],
         name: str | None = None,
-        device: Literal["cuda", "cpu", "auto"] = "auto",
+        device: torch.device | None = None,
         amp: bool = True,
         ema: bool = True,
-        modality: str = "img",
     ) -> None:
         """
         Implementation of YoloV8 object detection algorithm
@@ -45,7 +43,6 @@ class YoloV8(AlgorithmBase):
             cfg (FilePath, Mapping[str, Any]): Configuration of the algorithm, it can be yaml file path or cfg dict.
             data (Mapping[str, Union[Dataset, Any]]): Parsed specific dataset data, must including train dataset and val
             dataset, may contain data information of the specific dataset.
-            net (BaseNet): Models required by the YoloV8 algorithm.
             name (str): Name of the algorithm, it can be instantiated as v8, v9, v10, v11, v13 by cfg. Defaults to None.
             device (Literal["cuda", "cpu", "auto"], optional): Running device. Defaults to
             "auto"-automatic selection by algorithm.
@@ -54,9 +51,9 @@ class YoloV8(AlgorithmBase):
             modality (str): The data modality to use for multimodal dataset selection. Only relevant for multimodal
             datasets. Defaults to "img".
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
+        super().__init__(cfg=cfg, name=name, device=device, amp=amp, ema=ema)
 
-        self.modality = modality
+        self.modality = self.cfg["algorithm"].get("modality", "img")
 
         # main parameters of the algorithm
         self.task = self.cfg["algorithm"]["task"]
