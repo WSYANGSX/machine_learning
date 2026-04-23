@@ -12,7 +12,7 @@ def main():
         seed=int(time.time()),
         device="cuda:0",
     )
-    trainer = Trainer("fghf", trainer_cfg, "fghf.yaml", "sbd.yaml")
+    trainer = Trainer("fghf", trainer_cfg, "fghf.yaml", "car.yaml")
 
     # Step 3: Train the model
     trainer.train()

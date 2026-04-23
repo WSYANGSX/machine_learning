@@ -148,7 +148,7 @@ class FGHFNet(BaseNet):
         # ------------------- 1. Spatial Encoder-------------------
         self.spa_encoders = nn.ModuleList(
             [
-                nn.Sequential(Conv(self.channels, ch[0], 6, 2, 2), Conv(ch[0], ch[0])),
+                nn.Sequential(Conv(self.channels, ch[0], 6, 2, 2), Conv(ch[0], ch[0])),  # 0: P1/2
                 nn.Sequential(Conv(ch[0], ch[1], 3, 2), Conv(ch[1], ch[1])),  # 1: P2/4
                 nn.Sequential(Conv(ch[1], ch[2], 3, 2), Conv(ch[2], ch[2])),  # 2: P3/8
                 nn.Sequential(Conv(ch[2], ch[3], 3, 2), Conv(ch[3], ch[3])),  # 3: P4/16
@@ -159,6 +159,7 @@ class FGHFNet(BaseNet):
         # ------------------- 2. Fusion -------------------
         self.fusion_blocks = nn.ModuleList(
             [
+                FHGFBlock(ch[0], ch[0], num_hyperedges=4, rank=2),
                 FHGFBlock(ch[1], ch[1], num_hyperedges=6, rank=3),
                 FHGFBlock(ch[2], ch[2], num_hyperedges=8, rank=4),
                 FHGFBlock(ch[3], ch[3], num_hyperedges=12, rank=6),
@@ -172,6 +173,7 @@ class FGHFNet(BaseNet):
                 UpBlock(in_channels=ch[4], skip_channels=ch[3], out_channels=ch[3]),  # P5 -> P4
                 UpBlock(in_channels=ch[3], skip_channels=ch[2], out_channels=ch[2]),  # P4 -> P3
                 UpBlock(in_channels=ch[2], skip_channels=ch[1], out_channels=ch[1]),  # P3 -> P2
+                UpBlock(in_channels=ch[1], skip_channels=ch[0], out_channels=ch[0]),  # P2 -> P1
             ]
         )
 
@@ -183,8 +185,7 @@ class FGHFNet(BaseNet):
         spa_skips = []
         for i, block in enumerate(self.spa_encoders):
             x = block(x)
-            if i > 0:
-                spa_skips.append(x)  # collect P2, P3, P4, P5
+            spa_skips.append(x)
 
         # 2. Dynamic Frequency & Hypergraph Fusion
         fusions = []
@@ -196,10 +197,11 @@ class FGHFNet(BaseNet):
             fusions.append(f)
 
         # 3. Decoder
-        out = fusions[3]
-        out = self.decoders[0](out, fusions[2])
-        out = self.decoders[1](out, fusions[1])
-        out = self.decoders[2](out, fusions[0])
+        out = fusions[4]
+        out = self.decoders[0](out, fusions[3])
+        out = self.decoders[1](out, fusions[2])
+        out = self.decoders[2](out, fusions[1])
+        out = self.decoders[3](out, fusions[0])
 
         # 4. Prediction heads
         mask_preds = self.mask_head(out)  # [B, nc, H, W]
