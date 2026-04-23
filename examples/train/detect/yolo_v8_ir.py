@@ -1,13 +1,9 @@
 import time
-from machine_learning.algorithms.detection import YoloV8
 from machine_learning.trainer import Trainer, TrainerCfg
 
 
 def main():
-    # Step 1: Parse the data
-    yolo_v8 = YoloV8("yolo_v8.yaml", amp=True, modality="ir")
-
-    # Step 2: Configure the trainer
+    # Step 1: Setup the trainer
     trainer_cfg = TrainerCfg(
         epochs=300,
         log_interval=10,
@@ -15,9 +11,9 @@ def main():
         save_best=True,
         seed=int(time.time()),
     )
-    trainer = Trainer(trainer_cfg, yolo_v8, "vedai.yaml")
+    trainer = Trainer("yolo_v8", trainer_cfg, "yolo_v8.yaml", "vedai.yaml")
 
-    # Step 3: Train the model
+    # Step 2: Train the model
     trainer.train()
 
 

@@ -3,11 +3,10 @@ from typing import Literal, Mapping, Any
 import cv2
 import torch
 import numpy as np
-
 from torchvision.transforms import Compose, ToTensor, Normalize
+
 from ..yolo_v8 import YoloV8
 from machine_learning.networks import BaseNet
-from machine_learning.types.aliases import FilePath
 from machine_learning.utils.logger import LOGGER
 from machine_learning.utils.streams import VideoStream, WebcamStream
 from machine_learning.utils.detect import (
@@ -22,10 +21,9 @@ from machine_learning.utils.detect import (
 class MultimodalDetection(YoloV8):
     def __init__(
         self,
-        cfg: FilePath | Mapping[str, Any],
-        net: BaseNet | None = None,
+        cfg: Mapping[str, Any],
         name: str | None = None,
-        device: Literal["cuda", "cpu", "auto"] = "auto",
+        device: torch.device | None = None,
         amp: bool = False,
         ema: bool = True,
     ) -> None:
@@ -41,7 +39,7 @@ class MultimodalDetection(YoloV8):
             amp (bool): Whether to enable Automatic Mixed Precision. Defaults to False.
             ema (bool): Whether to enable Exponential Moving Average. Defaults to True.
         """
-        super().__init__(cfg=cfg, net=net, name=name, device=device, amp=amp, ema=ema)
+        super().__init__(cfg=cfg, name=name, device=device, amp=amp, ema=ema)
 
     def _prepare_batch(self, batch: dict[str, Any], mode: Literal["train", "val", "test"]) -> dict[str, Any]:
         """Prepare different batch data for different modes."""

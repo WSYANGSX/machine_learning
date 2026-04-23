@@ -3,6 +3,7 @@ algorithm:
   name: "yolo_v13"
   task: "detect"
   imgsz: 640
+  modality: "img"
   
   # train
   use_dfl: True
