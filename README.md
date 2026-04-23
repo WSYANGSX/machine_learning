@@ -2,12 +2,10 @@
 
 Cite us
 
-@misc{yang2026m2i2hamultimodalobjectdetection,
-      title={M2I2HA: Multi-modal Object Detection Based on Intra- and Inter-Modal Hypergraph Attention}, 
-      author={Xiaofan Yang and Yubin Liu and Wei Pan and Guoqing Chu and Junming Zhang and Jie Zhao and Zhuoqi Man and Xuanming Cao},
-      year={2026},
-      eprint={2601.14776},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2601.14776}, 
+@article{yang2026m2i2ha,
+  title={M2I2HA: Multi-modal Object Detection Based on Intra-and Inter-Modal Hypergraph Attention},
+  author={Yang, Xiaofan and Liu, Yubin and Pan, Wei and Chu, Guoqing and Zhang, Junming and Zhao, Jie and Man, Zhuoqi and Cao, Xuanming},
+  journal={arXiv e-prints},
+  pages={arXiv--2601},
+  year={2026}
 }
