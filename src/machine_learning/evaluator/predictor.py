@@ -3,7 +3,6 @@ from typing import TypeVar, Generic, Mapping, Any, Literal
 import torch
 from machine_learning.utils.logger import LOGGER
 from machine_learning.algorithms import AlgorithmBase, global_factory
-from machine_learning.utils import print_cfg
 
 AlgoType = TypeVar("AlgoType", bound=AlgorithmBase)
 
@@ -24,7 +23,6 @@ class Predictor(Generic[AlgoType]):
         # --------------------- build algorithm ---------------------
         self._build_algorithm(name, device, algo_cfg, False, False)
         self.algorithm._init_on_predictor(ckpt)
-        print_cfg("Total configuration", algo_cfg)
 
     @property
     def algorithm(self) -> AlgorithmBase:

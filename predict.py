@@ -16,10 +16,10 @@ def main():
     opts = get_argparser().parse_args()
 
     # Step 2: Build the predictor from ckpt
-    predictor = Predictor(opts.ckpt)
+    predictor = Predictor(opts.ckpt, device=opts.device)
 
     # Step 3: Predict
-    predictor.algorithm.predict(stream="/home/yangxf/WorkSpace/datasets/..datasets/car/imgs/test/3f202616a2b9_11.jpg")
+    predictor.algorithm.predict(stream=opts.stream)
 
 
 if __name__ == "__main__":
