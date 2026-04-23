@@ -4,7 +4,7 @@ from machine_learning.evaluator import Evaluator
 def main():
     # Step 1: Build the evaluate from ckpt
     evaluator = Evaluator(
-        "/home/yangxf/WorkSpace/machine_learning/runs/fghf/fghf_n_car_2026-04-22_11-47/ckpt/checkpoint_epoch_100.pth",
+        "/home/yangxf/WorkSpace/machine_learning/runs/fghf/fghf_n_car_2026-04-22_11-47/ckpt/best_model.pth",
         device="cuda:1",
     )
 
