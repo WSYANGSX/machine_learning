@@ -1,21 +1,18 @@
 import time
 from machine_learning.trainer import Trainer, TrainerCfg
-from machine_learning.algorithms.segmentation import PerPixelSegmentation
 
 
 def main():
-    # Step 1: Parse the data
-    fghf = PerPixelSegmentation("fre_mamba.yaml", amp=True)
-
-    # Step 2: Configure the trainer
+    # Step 1: Setup the trainer
     trainer_cfg = TrainerCfg(
-        epochs=300,
+        epochs=100,
         log_interval=10,
         save_interval=10,
         save_best=True,
         seed=int(time.time()),
+        device="cuda:0",
     )
-    trainer = Trainer(trainer_cfg, fghf, "sbd.yaml")
+    trainer = Trainer("fghf", trainer_cfg, "fghf.yaml", "sbd.yaml")
 
     # Step 3: Train the model
     trainer.train()

@@ -92,8 +92,10 @@ def cfg2dict(cfg: BaseCfg) -> dict:
     return cfg_dict
 
 
-def get_gpu_mem() -> float:
-    return torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0
+def get_gpu_mem(device: torch.device = None) -> float:
+    """Return the GPU memory of the device in GB."""
+    mem = torch.cuda.memory_reserved(device) / 1e9 if torch.cuda.is_available() else 0
+    return mem
 
 
 def flatten_dict(input_dict: dict[str, Any]) -> dict[str, Any]:
