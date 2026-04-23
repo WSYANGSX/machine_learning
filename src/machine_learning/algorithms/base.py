@@ -526,7 +526,7 @@ class AlgorithmBase(ABC):
 
         if mode == "train":
             epoch_str = "%g/%g" % (epoch + 1, self.cfg["trainer"]["epochs"])
-            mem = "%.3gG" % get_gpu_mem()
+            mem = "%.3gG" % get_gpu_mem(self.device)
             args.extend([epoch_str, mem])
         elif mode == "val":
             args.extend(["", ""])
