@@ -132,7 +132,7 @@ class AlgorithmBase(ABC):
 
         # build net
         self._build_net()
-        # Key corrections: ensure hyperparameters of layers (etc. eps in BN) are consistent
+        # Key corrections: ensure hyperparameters of layers (e.g. eps in BN) are consistent
         self._init_nets()
         # load net weights from ema
         self.load(ckpt, load_ema=True)
