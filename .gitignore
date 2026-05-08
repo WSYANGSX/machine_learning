@@ -23,5 +23,7 @@ runs/
 /.codex
 
 # 忽略正在进行的项目
-**/fghf/
-**/fre_mamba/
+src/machine_learning/networks/fghf
+src/machine_learning/networks/fre_mamba
+src/machine_learning/cfg/algorithms/fghf.yaml
+src/machine_learning/cfg/algorithms/naha.yaml
