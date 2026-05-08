@@ -5,7 +5,7 @@ from machine_learning.trainer import Trainer, TrainerCfg
 def main():
     # Step 1: Setup the trainer
     trainer_cfg = TrainerCfg(
-        epochs=300,
+        epochs=150,
         log_interval=10,
         save_interval=10,
         save_best=True,
