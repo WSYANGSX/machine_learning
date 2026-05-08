@@ -8,8 +8,8 @@ def get_argparser():
     parser = argparse.ArgumentParser()
 
     # Main Segmentation Algorithm Options
-    parser.add_argument("--name", type=str, default="fghf", help="Algorithm name")
-    parser.add_argument("--cfg", type=str, default="fghf.yaml", help="Algorithm configuration yaml file path")
+    parser.add_argument("--name", type=str, default=None, help="Algorithm name")
+    parser.add_argument("--cfg", type=str, default=None, help="Algorithm configuration yaml file path")
     parser.add_argument("--net_scale", type=str, default=None, help="The size of the network (default: n)")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate (default: 0.01)")
     parser.add_argument("--batch_size", type=int, default=None, help="Batch size (default: 16)")
@@ -34,6 +34,7 @@ def get_argparser():
     parser.add_argument("--amp", action="store_true", help="Whether to enable Automatic Mixed Precision")
     parser.add_argument("--ema", action="store_true", help="Whether to enable Exponential Moving Average")
     parser.add_argument("--continue_training", action="store_true", help="Whether to continue training from checkpoint")
+    parser.add_argument("--finetune", action="store_true", help="Whether to finetune the model from checkpoint")
     parser.add_argument("--resume", default=None, type=str, help="Restore from lastest checkpoint in resume directory")
     parser.add_argument("--ckpt", default=None, type=str, help="Restore from specified checkpoint")
 

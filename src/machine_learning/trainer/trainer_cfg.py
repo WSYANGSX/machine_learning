@@ -29,8 +29,11 @@ class TrainerCfg(BaseCfg):
     # Training device
     device: Literal["cpu", "cuda", "auto"] = field(default="auto")
 
-    # Continue training from resume directory or specified .pth checkpoint file
+    # Continue training from interrupted checkpoint with full training state
     continue_training: bool = field(default=False)
+
+    # Fine-tune from a pretrained/best checkpoint with new training strategy
+    finetune: bool = field(default=False)
 
     # Resume directory
     resume: str = field(default=None)

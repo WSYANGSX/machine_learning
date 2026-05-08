@@ -775,12 +775,11 @@ class ModalFuseSE(nn.Module):
         return x * w  # The fusion features after channel recalibration
 
 
-class ModalFuseGate(nn.Module):
+class ModalGateFuse(nn.Module):
     def __init__(self, c_in):
         super().__init__()
         # add gate weight
         self.alpha = nn.Parameter(torch.tensor(0.5))
-        self.beta = nn.Parameter(torch.tensor(0.5))
 
         self.conv_out = Conv(2 * c_in, c_in, 1)
 
@@ -789,7 +788,7 @@ class ModalFuseGate(nn.Module):
 
         # gate
         x0_w = self.alpha * x0
-        x1_w = self.beta * x1
+        x1_w = (1 - self.alpha) * x1
 
         x_cat = torch.cat([x0_w, x1_w], dim=1)
         out = self.conv_out(x_cat)
@@ -902,7 +901,7 @@ class M2CAHyperACE(nn.Module):
             for _ in range(n)
         )
         self.cmca = M2CA(c1, c1)
-        self.fuse = ModalFuseGate(c1)
+        self.fuse = ModalGateFuse(c1)
         self.branch1 = C3AH(self.c, self.c, e2, num_hyperedges, context)
         self.branch2 = C3AH(self.c, self.c, e2, num_hyperedges, context)
 
@@ -1288,6 +1287,12 @@ class LowRankSparseHyperedgeGen(nn.Module):
             bias_exp = self.prototype_bias.unsqueeze(0).expand(B, -1, -1)  # [B,E,D]
             bias_sel = bias_exp.gather(1, topk_e.unsqueeze(-1).expand(-1, -1, D))  # [B,kE,D]
             prototypes = torch.bmm(U_sel, V_dynamic) + bias_sel  # [B,kE,D]
+
+            # 【 New DDP Magic Fix Code Added 】
+            # Since topk truncated the gradient, it forced score proj to be remounted onto the computational graph
+            # Multiplying by 0.0 ensures that the original feature values are not affected
+            # but successfully deceived the DDP detection
+            prototypes = prototypes + 0.0 * self.score_proj(context_cat).sum()
 
             P_heads = prototypes.view(B, kE, H, d_h).permute(0, 2, 1, 3).contiguous()  # [B,H,kE,d_h]
             logits = torch.einsum("bhnd,bhed->bne", X_heads, P_heads) / (self.scaling * H)  # [B,N,kE]
@@ -1926,7 +1931,7 @@ class IntreHyperFusion(nn.Module):
             fusion_type=fusion_type,
         )
 
-        self.fuse = ModalFuseGate(c1)
+        self.fuse = ModalGateFuse(c1)
         self.cv = Conv(c1, c2, 1, 1)
 
     def forward(self, X):

@@ -263,7 +263,7 @@ class V13Net(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def _initialize_weights(self):
+    def _init_scratch_weights(self):
         """Initialize model weights to random values."""
         for m in self.modules():
             t = type(m)
@@ -275,10 +275,10 @@ class V13Net(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
-        self._initialize_strides()
+        self._init_strides()
         self.head.bias_init()
 
-    def _initialize_strides(self):
+    def _init_strides(self):
         self.stride = torch.tensor(
             [self.imgsz / x.shape[-2] for x in self.forward(self.dummy_input)], dtype=torch.int8, device=self.device
         )

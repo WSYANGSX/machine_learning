@@ -6,12 +6,13 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Compose, ToTensor, Normalize
+from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
 
 from machine_learning.utils.logger import LOGGER
 from machine_learning.networks.base import BaseNet
 from machine_learning.types.aliases import FilePath
 from machine_learning.algorithms.base import AlgorithmBase
-from torchvision.transforms import Compose, ToTensor, Normalize
 from machine_learning.utils.streams import VideoStream, WebcamStream
 from machine_learning.utils.detect import pad_to_square, resize
 from machine_learning.utils.segment import colour_mask, rescale_masks, generate_gt_edges, SegmentMetrics
@@ -36,11 +37,10 @@ class PerPixelSegmentation(AlgorithmBase):
         device: Literal["cuda", "cpu", "auto"] = "auto",
         amp: bool = True,
         ema: bool = True,
-        modality: str | None = "img",
     ):
         super().__init__(cfg=cfg, name=name, device=device, amp=amp, ema=ema)
 
-        self.modality = modality
+        self.modality = self.cfg["algorithm"].get("modality", "img")
 
         # loss weight
         self.ce_weight = self.cfg["algorithm"].get("ce_weight")
@@ -59,6 +59,31 @@ class PerPixelSegmentation(AlgorithmBase):
         # close mosaic
         if epoch == int(self.close_mosaic_epoch * self.epochs):
             self.close_dataloader_mosaic()
+
+    def warmup(self, batches, epoch):
+        if self.opt_cfg.get("warmup_epochs", 0) <= 0:
+            return
+
+        wb = max(1, round(self.opt_cfg["warmup_epochs"] * self.train_batches))
+
+        if batches <= wb:
+            xi = [0, wb]
+
+            self.accumulate = max(1, int(np.interp(batches, xi, [1, self.nbs / self.batch_size]).round()))
+
+            for group in self.optimizer.param_groups:
+                warmup_lr_start = self.opt_cfg.get("warmup_lr_start", 0.0)
+
+                # FIX: Interpolate directly to the initial learning rate.
+                # Removed the undefined self.lf(current_epoch) multiplier.
+                target_lr = group["initial_lr"]
+
+                group["lr"] = np.interp(batches, xi, [warmup_lr_start, target_lr])
+
+                if "momentum" in group:
+                    warmup_momentum = self.opt_cfg.get("warmup_momentum", 0.8)
+                    target_momentum = self.opt_cfg.get("momentum", 0.937)
+                    group["momentum"] = np.interp(batches, xi, [warmup_momentum, target_momentum])
 
     def _init_metrics(self, mode: Literal["train", "val", "test"]) -> dict[str, Any]:
         if mode == "train":
@@ -86,9 +111,10 @@ class PerPixelSegmentation(AlgorithmBase):
         return data
 
     def _forward_batch(
-        self, net: BaseNet, data: dict[str, Any], mode: Literal["train", "val", "test"]
+        self, nets: dict[str, BaseNet], data: dict[str, Any], mode: Literal["train", "val", "test"]
     ) -> dict[str, Any]:
         imgs = data["imgs"]
+        net = nets["net"]
 
         if mode in ("train", "val"):
             targets = data["targets"]
@@ -189,12 +215,17 @@ class PerPixelSegmentation(AlgorithmBase):
             masks, edges = preds[0], preds[1]
 
             masks = F.interpolate(masks, size=targets.shape[-2:], mode="bilinear", align_corners=False)
-            edges = F.interpolate(edges, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+            edges = [
+                F.interpolate(edge, size=targets.shape[-2:], mode="bilinear", align_corners=False) for edge in edges
+            ]
             ce_loss_raw = nn.CrossEntropyLoss(ignore_index=self.ignore_value)(masks, targets)
 
             gt_edges = generate_gt_edges(targets).unsqueeze(1).to(self.device)
-            edge_loss_raw = nn.BCEWithLogitsLoss()(edges, gt_edges)
-            total_loss = ce_loss_raw * self.ce_weight + edge_loss_raw * self.geo_weight
+
+            edge_loss_raw = 0
+            for edge in edges:
+                edge_loss_raw += nn.BCEWithLogitsLoss()(edge, gt_edges)
+            total_loss = ce_loss_raw * self.ce_weight + edge_loss_raw / len(edges) * self.geo_weight
 
             return total_loss, (ce_loss_raw, edge_loss_raw)
 

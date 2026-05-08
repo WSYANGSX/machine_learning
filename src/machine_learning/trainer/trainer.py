@@ -1,4 +1,4 @@
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Union
 
 import os
 import copy
@@ -6,6 +6,7 @@ import json
 import yaml
 import torch
 import shutil
+import threading
 from datetime import datetime
 from numbers import Integral, Real
 from torch.utils.tensorboard import SummaryWriter
@@ -29,16 +30,17 @@ class Trainer:
     Args:
         name (str): The name of the algorithm to train.
         train_cfg (TrainCfg): The configuration of the trainer.
+        net (str): The name of the network to use.
         algorithm_cfg (str, Mapping[str, Any]): The algorithm cfg.
         dataset_cfg (str, Mapping[str, Any]): The dataset cfg.
     """
 
     def __init__(
         self,
-        name: str,
         train_cfg: TrainerCfg,
-        algorithm_cfg: str | Mapping[str, Any],
-        dataset_cfg: str | Mapping[str, Any],
+        name: Optional[str] = None,
+        algorithm_cfg: Optional[Union[str, Mapping[str, Any]]] = None,
+        dataset_cfg: Optional[Union[str, Mapping[str, Any]]] = None,
     ) -> None:
         """
         Initialize the trainer by the name of the algorithm to be trained, the cfg of trainer, the cfg of algorithm and
@@ -47,57 +49,23 @@ class Trainer:
         train_cfg = cfg2dict(train_cfg)
 
         self.continue_training = train_cfg["continue_training"]
+        self.finetune = train_cfg["finetune"]
+        if self.continue_training and self.finetune:
+            raise ValueError(
+                "Continue_training and finetune cannot both be True. "
+                "Use continue_training for resume, and finetune for fine-tuning."
+            )
         self.resume_ckpt = None
 
+        # train from ckpt and ckpt_cfg
         if self.continue_training:
-            if train_cfg["ckpt"] is not None:
-                LOGGER.info(f"Continuing training from checkpoint: {train_cfg['ckpt']}")
-                self.resume_ckpt = train_cfg["ckpt"]
-            elif train_cfg["resume"] is not None:
-                LOGGER.info(f"Continuing training from resume directory: {train_cfg['resume']}")
-                self.resume_ckpt = os.path.join(train_cfg["resume"], "ckpt", "last_model.pth")
-            else:
-                raise ValueError("resume directory or checkpoint must be provided when continuing training.")
-
-            state_dict = torch.load(self.resume_ckpt, map_location="cpu", weights_only=False)
-            algo_cfg = copy.deepcopy(state_dict["cfg"])
-
-            self.cfg = algo_cfg["trainer"]
-            self.record_dir = self.cfg["record_dir"]
-            self.ckpt_dir = self.cfg["ckpt_dir"]
-
-            name = algo_cfg["algorithm"]["name"]
-            algo_cfg["trainer"]["continue_training"] = True
-            algo_cfg["trainer"]["ckpt"] = self.resume_ckpt
-            if train_cfg["resume"] is not None:
-                algo_cfg["trainer"]["resume"] = train_cfg["resume"]
-
+            name, algo_cfg = self._handle_continue_training(train_cfg)
+        # trian to finetune the model
+        elif self.finetune:
+            algo_cfg = self._handle_finetune(name, train_cfg, algorithm_cfg, dataset_cfg)
+        # train from scratch
         else:
-            self.cfg = train_cfg
-
-            # load cfg
-            algo_cfg = self._load_alogrithm_cfg(algorithm_cfg)
-            dataset_cfg = self._load_datasetcfg(dataset_cfg)
-
-            # datetime suffix for log
-            self.dt_suffix = (
-                name
-                + ("_" + algo_cfg["net"]["net_scale"] if "net_scale" in algo_cfg["net"] else "")
-                + "_"
-                + (os.path.splitext(dataset_cfg)[0] if isinstance(dataset_cfg, str) else dataset_cfg["name"])
-                + ("_" + algo_cfg["algorithm"]["modality"] if "modality" in algo_cfg["algorithm"] else "")
-                + "_"
-                + datetime.now().strftime("%Y-%m-%d_%H-%M")
-            )
-
-            self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + f"{name}/" + self.dt_suffix)
-            self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
-            self.cfg["record_dir"] = self.record_dir  # add record path to cfg
-            self.cfg["ckpt_dir"] = self.ckpt_dir  # add ckpt path to cfg
-
-            # add train_cfg and dataset_cfg to algo
-            algo_cfg["trainer"] = self.cfg
-            algo_cfg["data"]["dataset"] = dataset_cfg
+            algo_cfg = self._handle_scratch_training(name, train_cfg, algorithm_cfg, dataset_cfg)
 
         self.epochs = self.cfg["epochs"]
         amp = self.cfg["amp"]
@@ -105,7 +73,7 @@ class Trainer:
         device = self._configure_device(self.cfg["device"])
         seed = self.cfg["seed"]
 
-        # ------------------ init global random seed ------------------
+        # ------------------ init global random seed ----------------
         set_seed(seed)
         LOGGER.info(f"Global seed: {seed}")
 
@@ -113,22 +81,115 @@ class Trainer:
         self._build_algorithm(name, device, algo_cfg, amp, ema)
         print_cfg("Total configuration", algo_cfg)
 
-        # --------------------- init writer ---------------------------
+        # --------------------- init writer -------------------------
         self._init_writer(self.record_dir)
-        if not self.continue_training:
+
+        # --------------------- record cfg --------------------------
+        if self.continue_training:
+            with open(self.record_dir + "/config_resume.yaml", "w", encoding="utf-8") as file:
+                yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
+        elif self.finetune:
+            with open(self.record_dir + "/config_finetune.yaml", "w", encoding="utf-8") as file:
+                yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
+        else:
             # record algorithm cfg
             with open(self.record_dir + "/config.yaml", "w", encoding="utf-8") as file:
                 yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
-        else:
-            with open(self.record_dir + "/config_resume.yaml", "w", encoding="utf-8") as file:
-                yaml.dump(algo_cfg, file, default_flow_style=False, allow_unicode=True)
+
+            with open(self.record_dir + "/net_structure.txt", "w", encoding="utf-8") as file:
+                for name, net in self.algorithm.nets.items():
+                    file.write(f"{str(net)}\n")
 
         # set best_fitness value for saving the best ckpt
         self.task = algo_cfg["algorithm"].get("task", "")
-        if self.task in ("detect", "segment"):  # mAP, mIOU
+        if self.task in ("detect", "segment", "classify"):  # mAP, mIOU, Accuracy, ... as references
             self.best_fitness = 0.0
         else:
             self.best_fitness = torch.inf
+
+        self.save_threads = []  # to keep track of save threads
+
+    def _handle_continue_training(self, train_cfg) -> tuple[str, Mapping[str, Any]]:
+        """The loading logic of continue-training configuration."""
+        if train_cfg["ckpt"] is not None:
+            LOGGER.info(f"Continuing training from checkpoint: {train_cfg['ckpt']}")
+            self.resume_ckpt = train_cfg["ckpt"]
+        elif train_cfg["resume"] is not None:
+            LOGGER.info(f"Continuing training from resume directory: {train_cfg['resume']}")
+            self.resume_ckpt = os.path.join(train_cfg["resume"], "ckpt", "last_model.pth")
+        else:
+            raise ValueError("resume directory or checkpoint must be provided when continuing training.")
+
+        state_dict = torch.load(self.resume_ckpt, map_location="cpu", weights_only=False)
+        algo_cfg = copy.deepcopy(state_dict["cfg"])
+
+        self.cfg = algo_cfg["trainer"]
+        self.record_dir = self.cfg["record_dir"]
+        self.ckpt_dir = self.cfg["ckpt_dir"]
+
+        name = algo_cfg["algorithm"]["name"]
+        algo_cfg["trainer"]["continue_training"] = True
+        algo_cfg["trainer"]["ckpt"] = self.resume_ckpt
+        if train_cfg["resume"] is not None:
+            algo_cfg["trainer"]["resume"] = train_cfg["resume"]
+
+        return name, algo_cfg
+
+    def _handle_finetune(self, name, train_cfg, algorithm_cfg, dataset_cfg) -> Mapping[str, Any]:
+        """The loading logic of finetune configuration."""
+        if train_cfg["ckpt"] is not None:
+            LOGGER.info(f"Finetuning from checkpoint: {train_cfg['ckpt']}")
+            self.finetune_ckpt = train_cfg["ckpt"]
+        elif train_cfg["resume"] is not None:
+            LOGGER.info(f"Finetuning from resume directory: {train_cfg['resume']}")
+            self.finetune_ckpt = os.path.join(train_cfg["resume"], "ckpt", "best_model.pth")
+        else:
+            raise ValueError("resume directory or checkpoint must be provided when finetuning.")
+
+        self.cfg = train_cfg
+
+        return self._setup_cfg(name, algorithm_cfg, dataset_cfg, finetune=True)
+
+    def _handle_scratch_training(self, name, train_cfg, algorithm_cfg, dataset_cfg):
+        """The loading logic of common configuration."""
+        self.cfg = train_cfg
+
+        return self._setup_cfg(name, algorithm_cfg, dataset_cfg, finetune=False)
+
+    def _setup_cfg(self, name, algorithm_cfg, dataset_cfg, finetune: bool = False):
+        # load cfg
+        algo_cfg = self._load_alogrithm_cfg(algorithm_cfg)
+        dataset_cfg = self._load_datasetcfg(dataset_cfg)
+
+        # datetime suffix for log
+        net_mark = (
+            algo_cfg["net"]["net_scale"]
+            if "net_scale" in algo_cfg["net"]
+            else algo_cfg["net"]["backbone"]
+            if "backbone" in algo_cfg["net"]
+            else None
+        )
+        self.dt_suffix = (
+            name
+            + ("_" + net_mark if net_mark is not None else "")
+            + "_"
+            + (os.path.splitext(dataset_cfg)[0] if isinstance(dataset_cfg, str) else dataset_cfg["name"])
+            + ("_" + algo_cfg["algorithm"]["modality"] if "modality" in algo_cfg["algorithm"] else "")
+            + ("_finetune" if finetune else "")
+            + "_"
+            + datetime.now().strftime("%Y-%m-%d_%H-%M")
+        )
+
+        self.record_dir = os.path.abspath(ROOT_PATH + "/runs/" + f"{name}/" + self.dt_suffix)
+        self.ckpt_dir = os.path.abspath(self.record_dir + "/ckpt")
+        self.cfg["record_dir"] = self.record_dir  # add record path to cfg
+        self.cfg["ckpt_dir"] = self.ckpt_dir  # add ckpt path to cfg
+
+        # add train_cfg and dataset_cfg to algo
+        algo_cfg["trainer"] = self.cfg
+        algo_cfg["data"]["dataset"] = dataset_cfg
+
+        return algo_cfg
 
     @property
     def algorithm(self) -> AlgorithmBase:
@@ -241,20 +302,20 @@ class Trainer:
             # must set the best_model option to True in train_cfg and return "save_indicator" item in val method in algo
             if self.cfg["save_best"] and "best_fitness" in val_metrics:
                 current_best_fitness = val_metrics["best_fitness"]
-                if self.task in ("detect", "segment"):
-                    if current_best_fitness > self.best_fitness:  # mAP, mIOU, ... as references
+                if self.task in ("detect", "segment", "classify"):
+                    if current_best_fitness > self.best_fitness:  # mAP, mIOU, accuracy... as references
                         self.best_fitness = current_best_fitness
-                        self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
+                        self._async_save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
                 else:  # Vloss as a reference
                     if current_best_fitness < self.best_fitness:
                         self.best_fitness = current_best_fitness
-                        self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
+                        self._async_save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=True)
             else:
                 LOGGER.info("Saving of the model with the best fitness skipped.")
 
             # save the model regularly
             if self.cfg["save_interval"] and (epoch + 1) % self.cfg["save_interval"] == 0:
-                self.save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
+                self._async_save_checkpoint(epoch, val_metrics, self.best_fitness, is_best=False)
 
             # print epoch information
             self.epoch_info(
@@ -269,6 +330,14 @@ class Trainer:
                 total_hours = total_time.total_seconds() / 3600
                 LOGGER.info(f"Training completed in: {total_hours:.2f} hours.")
 
+        if hasattr(self, "save_threads") and self.save_threads:
+            active_threads = [t for t in self.save_threads if t.is_alive()]
+            if active_threads:
+                LOGGER.info("Waiting for background saving tasks to complete before exiting...")
+                for t in active_threads:
+                    t.join()  # Block the main thread until the child thread has completed execution.
+                LOGGER.info("All background tasks finished. Exit gracefully.")
+
     def train(self) -> None:
         if self.continue_training:
             state_dict = self._algorithm.load(self.resume_ckpt)
@@ -282,10 +351,38 @@ class Trainer:
 
             self._train(start_epoch)
 
+        elif self.finetune:
+            self._algorithm.finetune(self.finetune_ckpt)
+
+            self._train()
+
         else:
             self._train()
 
-    def save_checkpoint(self, epoch: int, val_return: dict, best_fitness: float, is_best: bool = False) -> None:
+    def _async_save_checkpoint(self, epoch: int, val_return: dict, best_fitness: float, is_best: bool = False) -> None:
+        """
+        The main thread is responsible for memory extraction, while the child thread is responsible for disk writing.
+        """
+        safe_state = self._algorithm.get_checkpoint_state(
+            epoch, val_return, best_fitness, self.record_dir, self.ckpt_dir
+        )
+
+        filename = f"checkpoint_epoch_{epoch + 1}.pth" if not is_best else "best_model.pth"
+        LOGGER.info(f"Saving {filename} asynchronously...")
+
+        save_thread = threading.Thread(
+            target=self.save_checkpoint,
+            args=(epoch, safe_state, is_best),
+            daemon=True,
+        )
+        save_thread.start()
+
+        # Clean up finished threads to prevent memory leaks
+        self.save_threads.append(save_thread)
+        self.save_threads = [t for t in self.save_threads if t.is_alive()]
+
+    def save_checkpoint(self, epoch: int, state: dict, is_best: bool = False) -> None:
+        """The disk writing function actually executed in the background."""
         try:
             os.makedirs(self.ckpt_dir, exist_ok=True)
         except OSError as e:
@@ -293,9 +390,9 @@ class Trainer:
 
         filename = f"checkpoint_epoch_{epoch + 1}.pth" if not is_best else "best_model.pth"
         save_path = os.path.join(self.ckpt_dir, filename)
-        self._algorithm.save(epoch, val_return, best_fitness, save_path, self.record_dir, self.ckpt_dir)
 
-        # save last model fast
+        torch.save(state, save_path)
+
         last_path = os.path.join(self.ckpt_dir, "last_model.pth")
         shutil.copy2(save_path, last_path)
 

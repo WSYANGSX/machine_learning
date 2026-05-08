@@ -7,31 +7,33 @@ from machine_learning.utils.segment import visualize_mask, generate_gt_edges
 from machine_learning.utils.plots import plot_imgs
 
 
-# img = cv2.imread(
-#     "/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/SegmentationClass/2007_000032.png",
-#     cv2.IMREAD_UNCHANGED,
+# img1 = cv2.imread(
+#     "/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/SegmentationClassAug/2008_000880.png",
+#     cv2.IMREAD_COLOR,
 # )
-img1 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/car/masks/test/4b74275babf7_01.jpg")
+
+img1 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/SegmentationClassAug/2008_000880.png")
 img1 = np.array(img1)
+visualize_mask(img1)
 # plot_imgs([img])
 # img_tensor = img_np2tensor(img).unsqueeze(0)
 
 
-img2 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/car/masks/test/4baf50a3d8c2_05.jpg")
+img2 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/SegmentationClassAug/2008_002943.png")
 img2 = np.array(img2)
 
 
-img3 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/car/masks/test/4dc8a7fe7c02_12.jpg")
+img3 = Image.open("/home/yangxf/WorkSpace/datasets/..datasets/VOC2012/SegmentationClassAug/2008_003819.png")
 img3 = np.array(img3)
 
 
-masks = np.stack([img1, img2, img1])
+plot_imgs([img1, img2, img3])
 
-plot_imgs([masks[0], masks[1], masks[2]])
+edge1 = generate_gt_edges(torch.tensor(img1), edge_width=1)
+edge2 = generate_gt_edges(torch.tensor(img2), edge_width=1)
+edge3 = generate_gt_edges(torch.tensor(img3), edge_width=1)
 
-edges = generate_gt_edges(torch.tensor(masks), edge_width=1)
-
-plot_imgs([edges[0].numpy(), edges[1].numpy(), edges[2].numpy()])
+plot_imgs([edge1.squeeze(0).numpy(), edge2.squeeze(0).numpy(), edge3.squeeze(0).numpy()])
 
 # # 显示结果
 # cv2.namedWindow("fft shifted (Original Dark)", cv2.WINDOW_NORMAL)

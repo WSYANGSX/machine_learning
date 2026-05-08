@@ -255,7 +255,7 @@ class M2I2HANet_v8(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def _initialize_weights(self):
+    def _init_scratch_weights(self):
         for m in self.modules():
             t = type(m)
             if t is nn.Conv2d:
@@ -266,10 +266,10 @@ class M2I2HANet_v8(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
-        self._initialize_strides()
+        self._init_strides()
         self.head.bias_init()
 
-    def _initialize_strides(self):
+    def _init_strides(self):
         self.stride = torch.tensor(
             [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
@@ -512,7 +512,7 @@ class M2I2HANet_v13(BaseNet):
 
         return self.head([det1, det2, det3])
 
-    def _initialize_weights(self):
+    def _init_scratch_weights(self):
         for m in self.modules():
             t = type(m)
             if t is nn.Cond:
@@ -523,11 +523,17 @@ class M2I2HANet_v13(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
-        self._initialize_strides()
+        self._init_strides()
         self.head.bias_init()
 
-    def _initialize_strides(self):
+    def _init_strides(self):
         self.stride = torch.tensor(
             [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
         self.head.stride = self.stride
+
+
+if __name__ == "__main__":
+    model = M2I2HANet_v8(imgsz=640, net_scale="n", single_cls=False).to("cuda:0")
+    model._init_weights()
+    print(model)

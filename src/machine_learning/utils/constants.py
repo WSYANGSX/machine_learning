@@ -7,6 +7,7 @@ NUM_THREADS = min(32, os.cpu_count() + 4)  # number of multiprocessing threads
 ROOT_PATH = "/home/yangxf/WorkSpace/machine_learning"
 DATACFG_PATH = "/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/datasets"  # data cfg dir
 ALGOCFG_PATH = "/home/yangxf/WorkSpace/machine_learning/src/machine_learning/cfg/algorithms"
+PRETRAINED_PATH = "/home/yangxf/WorkSpace/machine_learning/pretrained"
 
 
 # Img file types

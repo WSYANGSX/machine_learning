@@ -21,3 +21,7 @@ runs/
 
 # 忽略codex文件
 /.codex
+
+# 忽略正在进行的项目
+**/fghf/
+**/fre_mamba/

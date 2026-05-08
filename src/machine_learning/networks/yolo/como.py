@@ -343,7 +343,7 @@ class COMONet(BaseNet):
         x9 = self.ir_backbone["SPPF_9"](x8)  # P5_ir
         return x4, x6, x9
 
-    def _initialize_weights(self):
+    def _init_scratch_weights(self):
         for m in self.modules():
             t = type(m)
             if t is nn.Conv2d:
@@ -354,10 +354,10 @@ class COMONet(BaseNet):
             elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
                 m.inplace = True
 
-        self._initialize_strides()
+        self._init_strides()
         self.head.bias_init()
 
-    def _initialize_strides(self):
+    def _init_strides(self):
         self.stride = torch.tensor(
             [self.imgsz / x.shape[-2] for x in self.forward(*self.dummy_input)], dtype=torch.int8, device=self.device
         )
@@ -395,3 +395,9 @@ class COMONet(BaseNet):
 
         # Detect head: [P3, P4, P5]
         return self.head([p3_out, p4_pan, p5_pan])
+
+
+if __name__ == "__main__":
+    model = COMONet(imgsz=640, net_scale="n", single_cls=False).to("cuda:0")
+    model._init_weights()
+    print(model)

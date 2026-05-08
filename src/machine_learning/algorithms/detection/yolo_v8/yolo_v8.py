@@ -246,10 +246,12 @@ class YoloV8(AlgorithmBase):
 
     def _forward_batch(
         self,
-        net: BaseNet,
+        nets: dict[str, BaseNet],
         data: dict[str, Any],
         mode: Literal["train", "val", "test"],
     ) -> dict[str, Any]:
+        net = nets["net"]
+
         if mode in ("train", "val"):
             imgs = data["imgs"]
             targets = data["targets"]
@@ -328,27 +330,25 @@ class YoloV8(AlgorithmBase):
         writer.add_scalar("closs/train_batch", metrics["closs"], batches)
         writer.add_scalar("dloss/train_batch", metrics["dloss"], batches)
 
-    def warmup(self, batch_inters: int, epoch: int) -> None:
+    def warmup(self, batches: int, epoch: int) -> None:
         wb = (
             max(round(self.opt_cfg["warmup_epochs"] * self.train_batches), 100)
             if self.opt_cfg["warmup_epochs"] > 0
             else -1
         )  # warmup batches
 
-        if batch_inters <= wb:
+        if batches <= wb:
             xi = [0, wb]  # x interp
-            self.accumulate = max(1, int(np.interp(batch_inters, xi, [1, self.nbs / self.batch_size]).round()))
+            self.accumulate = max(1, int(np.interp(batches, xi, [1, self.nbs / self.batch_size]).round()))
             for j, x in enumerate(self.optimizer.param_groups):
                 # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                 x["lr"] = np.interp(
-                    batch_inters,
+                    batches,
                     xi,
                     [self.opt_cfg["warmup_bias_lr"] if j == 2 else 0.0, x["initial_lr"] * self.lf(epoch)],
                 )
                 if "momentum" in x:
-                    x["momentum"] = np.interp(
-                        batch_inters, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]]
-                    )
+                    x["momentum"] = np.interp(batches, xi, [self.opt_cfg["warmup_momentum"], self.opt_cfg["momentum"]])
 
     def close_dataloader_mosaic(self) -> None:
         if hasattr(self.train_loader.dataset, "close_mosaic"):

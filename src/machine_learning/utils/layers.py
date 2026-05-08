@@ -1,4 +1,4 @@
-from typing import Sequence, Any
+from typing import Sequence
 
 import torch.nn as nn
 

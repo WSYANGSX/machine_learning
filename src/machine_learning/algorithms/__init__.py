@@ -3,6 +3,7 @@ from typing import Any, Mapping
 import os
 
 from .base import AlgorithmBase
+from .classification import Classification
 from .generation import AutoEncoder, VAE, GAN, VQ_VAE, Diffusion
 from .detection import YoloV3, YoloV8, MultimodalDetection
 from .segmentation import (
@@ -20,6 +21,7 @@ from machine_learning.utils.constants import ALGOCFG_PATH
 
 __all__ = [
     "AlgorithmBase",
+    "Classification",
     "AutoEncoder",
     "VAE",
     "GAN",
@@ -82,6 +84,9 @@ global_factory.register_algorithm("gan", GAN)
 global_factory.register_algorithm("vq_vae", VQ_VAE)
 global_factory.register_algorithm("diffusion", Diffusion)
 global_factory.register_algorithm("autoencoder", AutoEncoder)
+
+# classification algorithms
+global_factory.register_algorithm("superatten", Classification)
 
 # object detection algorithms
 global_factory.register_algorithm("yolo_v3", YoloV3)

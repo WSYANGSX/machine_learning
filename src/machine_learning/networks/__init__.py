@@ -4,8 +4,8 @@ from .diffusion import DiffUNet
 from .unet import UNet
 from .gan import Generator, Discriminator
 from .yolo import DarkNet53, V8Net, V13Net, M2I2HANet_v8, M2I2HANet_v13, COMONet
-from .fghf import FGHFNet
-from .fre_mamba import FMFNet
+from .fghf import FGHFNet, NAHANet
+from .fre_mamba import FreMambaNet
 
 
 __all__ = [
@@ -22,10 +22,12 @@ __all__ = [
     "V13Net",
     "COMONet",
     "FGHFNet",
-    "FMFNet"
+    "NAHANet",
+    "FreMambaNet",
 ]
 
 NET_MAPS = {
+    "nahanet": NAHANet,
     "auto_encoder": AENet,
     "gan": {"g": Generator, "d": Discriminator},
     "yolo_v3": DarkNet53,
@@ -36,5 +38,5 @@ NET_MAPS = {
     "diff_unet": DiffUNet,
     "unet": UNet,
     "fghf": FGHFNet,
-    "fre_mamba": FMFNet
+    "fre_mamba": FreMambaNet,
 }

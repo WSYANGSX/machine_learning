@@ -5,14 +5,15 @@ from machine_learning.trainer import Trainer, TrainerCfg
 def main():
     # Step 1: Setup the trainer
     trainer_cfg = TrainerCfg(
-        epochs=100,
+        epochs=300,
         log_interval=10,
         save_interval=10,
         save_best=True,
         seed=int(time.time()),
-        device="cuda:0",
+        device="cuda:1",
+        amp=True,
     )
-    trainer = Trainer("fghf", trainer_cfg, "fghf.yaml", "car.yaml")
+    trainer = Trainer(trainer_cfg, "fghf", "fghf.yaml", "sbd.yaml")
 
     # Step 3: Train the model
     trainer.train()

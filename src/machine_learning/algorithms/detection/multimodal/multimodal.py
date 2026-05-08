@@ -60,10 +60,12 @@ class MultimodalDetection(YoloV8):
 
     def _forward_batch(
         self,
-        net: BaseNet,
+        nets: dict[str, BaseNet],
         data: dict[str, Any],
         mode: Literal["train", "val", "test"],
     ) -> dict[str, Any]:
+        net = nets["net"]
+
         if mode in ("train", "val"):
             imgs = data["imgs"]
             irs = data["irs"]

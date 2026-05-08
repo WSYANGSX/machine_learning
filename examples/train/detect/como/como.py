@@ -12,7 +12,7 @@ def main():
         seed=int(time.time()),
         amp=True,
     )
-    trainer = Trainer("como", trainer_cfg, "como.yaml", "vedai.yaml")
+    trainer = Trainer(trainer_cfg, "como", "como.yaml", "vedai.yaml")
 
     # Step 2: train
     trainer.train()

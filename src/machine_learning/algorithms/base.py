@@ -99,6 +99,7 @@ class AlgorithmBase(ABC):
 
         # init opts and schedulers
         self._init_optimizers()
+        self._check_optimizer_param_overlap()  # Ensure that different optimizers manage different parameters
         self._init_schedulers()
 
     def _init_on_evaluator(
@@ -248,7 +249,9 @@ class AlgorithmBase(ABC):
         """
         LOGGER.info(f"Building network of {self.name}...")
 
-        if issubclass(NET_MAPS[self.name], BaseNet):
+        if self.name not in NET_MAPS:
+            raise ValueError(f"Does not support net:{self.name} currently.")
+        elif issubclass(NET_MAPS[self.name], BaseNet):
             self.net = NET_MAPS[self.name](**self.flatten_cfg)
             self._add_net("net", self.net)
 
@@ -415,8 +418,9 @@ class AlgorithmBase(ABC):
 
         for net in self.nets.values():
             net.to(self._device)
+
             if self.cfg["net"]["initialize_weights"]:
-                net._initialize_weights()
+                net._init_weights()
 
             net.view_structure()
 
@@ -425,32 +429,32 @@ class AlgorithmBase(ABC):
         LOGGER.info(f"Initializing the optimizers of {self.name}...")
 
         self.optimizer = None
-        opt_cfg = self._cfg["optimizer"]
-        opt_type = opt_cfg.get("opt_type", None)
+        self.opt_cfg = self._cfg["optimizer"]
+        opt_type = self.opt_cfg.get("opt_type", None)
         if opt_type is None:
             raise ValueError("Please provide opt_type parameter in algorithm cfg file under optimizer item.")
 
         if opt_type == "SGD":
             self.optimizer = torch.optim.SGD(
                 params=self.net.parameters(),
-                lr=opt_cfg["lr"],
-                momentum=opt_cfg["momentum"],
-                weight_decay=opt_cfg["weight_decay"],
+                lr=self.opt_cfg["lr"],
+                momentum=self.opt_cfg["momentum"],
+                weight_decay=self.opt_cfg["weight_decay"],
             )
-            self._add_optimizer("optimizer", self.optimizer)
 
         elif opt_type == "Adam":
             self.optimizer = torch.optim.Adam(
                 params=self.net.parameters(),
-                lr=opt_cfg["lr"],
-                betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
-                eps=opt_cfg["eps"],
-                weight_decay=opt_cfg["weight_decay"],
+                lr=self.opt_cfg["lr"],
+                betas=(self.opt_cfg["beta1"], self.opt_cfg["beta2"]),
+                eps=self.opt_cfg["eps"],
+                weight_decay=self.opt_cfg["weight_decay"],
             )
-            self._add_optimizer("optimizer", self.optimizer)
 
         else:
             raise ValueError(f"Does not support optimizer:{opt_type} currently.")
+
+        self._add_optimizer("optimizer", self.optimizer)
 
     def _init_schedulers(self):
         """Initialize the learning rate scheduler"""
@@ -467,39 +471,50 @@ class AlgorithmBase(ABC):
                 factor=sch_cfg.get("factor", 0.1),
                 patience=sch_cfg.get("patience", 10),
             )
-            self._add_scheduler("scheduler", self.scheduler)
+
+        elif sch_type == "CosineAnnealingLR":
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.epochs,
+                eta_min=sch_cfg.get("eta_min", 0.0001),
+            )
+
+        elif sch_type == "CosineAnnealingWarmRestarts":
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer,
+                T_0=sch_cfg.get("t0", 20),
+                T_mult=sch_cfg.get("t_mult", 2),
+                eta_min=sch_cfg.get("eta_min", 1e-6),
+            )
 
         else:
             raise ValueError(f"Does not support scheduler:{sch_type} currently.")
+
+        self._add_scheduler("scheduler", self.scheduler)
 
     def __str__(self) -> str:
         """Return a summary string of the algorithm instance."""
         # Basic info
         summary = [
-            f"Algorithm: {self.name}",
-            f"Device: {self.device}",
-            f"Batch size: {self.batch_size}",
+            f"Algorithm: {self.name}, Device: {self.device}, Batch size: {self.batch_size}\n",
         ]
 
         # Networks info
-        nets_info = []
-        for name, net in self.nets.items():
-            num_params = sum(p.numel() for p in net.parameters())
-            nets_info.append(f"  {name}: {type(net).__name__} ({num_params / 1e6:.2f}M params)")
-        summary.append("Networks:\n" + "\n".join(nets_info) if nets_info else "Networks: None")
+        for net in self.nets.values():
+            summary.append(str(net) + "\n")
 
         # Optimizers info
         optim_info = []
         for name, opt in self.optimizers.items():
             lr = opt.param_groups[0]["lr"] if opt.param_groups else "N/A"
             optim_info.append(f"  {name}: {type(opt).__name__} (lr={lr:.2e})")
-        summary.append("Optimizers:\n" + "\n".join(optim_info) if optim_info else "Optimizers: None")
+        summary.append(("Optimizers:\n" + "\n".join(optim_info) if optim_info else "Optimizers: None") + "\n")
 
         # Schedulers info
         sched_info = []
         for name, sched in self.schedulers.items():
             sched_info.append(f"  {name}: {type(sched).__name__}")
-        summary.append("Schedulers:\n" + "\n".join(sched_info) if sched_info else "Schedulers: None")
+        summary.append(("Schedulers:\n" + "\n".join(sched_info) if sched_info else "Schedulers: None") + "\n")
 
         return "\n".join(summary)
 
@@ -595,7 +610,7 @@ class AlgorithmBase(ABC):
 
             # Loss calculation
             with autocast(device_type=self.device.type, enabled=self.amp_enable):  # covers the forward computation
-                res = self._forward_batch(self.net, data, "train")
+                res = self._forward_batch(self.nets, data, "train")
                 loss = res["loss"]
 
             # Gradient backpropagation
@@ -638,7 +653,7 @@ class AlgorithmBase(ABC):
 
     @abstractmethod
     def _forward_batch(
-        self, net: BaseNet, data: dict[str, Any], mode: Literal["train", "val", "test"]
+        self, nets: dict[str, BaseNet], data: dict[str, Any], mode: Literal["train", "val", "test"]
     ) -> dict[str, Any]:
         """Compute loss, preds and other statistics for different modes."""
         raise NotImplementedError("_forward_batch method must be implemented.")
@@ -685,13 +700,38 @@ class AlgorithmBase(ABC):
         pbar = tqdm(enumerate(self.val_loader), total=self.val_batches)
         for i, batch in pbar:
             data = self._prepare_batch(batch, "val")
-            net = self.net if not self.ema_enable else self.emas["net"].ema
-            res = self._forward_batch(net, data, "val")
+            nets = self.nets if not self.ema_enable else self._get_ema_nets()
+            res = self._forward_batch(nets, data, "val")
 
             self._post_process(i, res, batch, data, metrics, statistics, info, "val")
             self.pbar_log("val", pbar, **metrics)
 
         return metrics, info
+
+    def _get_ema_nets(self) -> dict[str, BaseNet]:
+        """Get the ema nets for validation."""
+        if self.ema_enable and hasattr(self, "emas"):
+            return {k: ema.ema for k, ema in self.emas.items()}
+        return self.nets
+
+    def _check_optimizer_param_overlap(self):
+        """
+        Check if there are parameters that appear in multiple optimizers, which may cause duplicated step or
+        duplicated AMP unscale.
+        """
+        seen = {}
+
+        for opt_name, opt in self.optimizers.items():
+            for group in opt.param_groups:
+                for p in group["params"]:
+                    pid = id(p)
+                    if pid in seen:
+                        raise ValueError(
+                            f"Parameter appears in multiple optimizers: "
+                            f"{seen[pid]} and {opt_name}. "
+                            f"This may cause duplicated step or duplicated AMP unscale."
+                        )
+                    seen[pid] = opt_name
 
     @torch.no_grad()
     def eval(self) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -713,7 +753,7 @@ class AlgorithmBase(ABC):
         pbar = tqdm(enumerate(self.test_loader), total=self.test_batches)
         for i, batch in pbar:
             data = self._prepare_batch(batch, "test")
-            res = self._forward_batch(self.net, data, "test")
+            res = self._forward_batch(self.nets, data, "test")
 
             self._post_process(i, res, batch, data, metrics, statistics, info, "test")
             self.pbar_log("test", pbar, **metrics)
@@ -756,38 +796,48 @@ class AlgorithmBase(ABC):
             grad_scale = self.accumulate / self.accum_counter
 
         if self.scaler is not None:
-            self.scaler.unscale_(self.optimizer)
+            for opt in self.optimizers.values():
+                self.scaler.unscale_(opt)
 
         if grad_scale != 1.0:
-            for param in self.net.parameters():
-                if param.grad is not None:
-                    param.grad.mul_(grad_scale)
+            for net in self.nets.values():
+                for param in net.parameters():
+                    if param.grad is not None:
+                        param.grad.mul_(grad_scale)
 
         # Optional Protection: Check if the value remains limited after manual scaling
         grads_finite = True
-        for param in self.net.parameters():
-            if param.grad is not None and not torch.isfinite(param.grad).all():
-                grads_finite = False
+        for net in self.nets.values():
+            if not grads_finite:
                 break
+            for param in net.parameters():
+                if param.grad is not None and not torch.isfinite(param.grad).all():
+                    grads_finite = False
+                    break
 
-        if not grads_finite:
-            LOGGER.warning("Non-finite gradients detected after gradient rescaling, skipping optimizer step.")
-        else:
+        if grads_finite:
             # Gradient clipping is only performed when the gradients are healthy
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg["optimizer"]["grad_clip"])
+            params_to_clip = self._get_unique_grad_params()
+            if params_to_clip:
+                torch.nn.utils.clip_grad_norm_(params_to_clip, self.cfg["optimizer"]["grad_clip"])
 
         if self.scaler is not None:
-            self.scaler.step(self.optimizer)
+            if grads_finite:
+                for opt in self.optimizers.values():
+                    self.scaler.step(opt)
             self.scaler.update()
         else:
             if grads_finite:
-                self.optimizer.step()
+                for opt in self.optimizers.values():
+                    opt.step()
 
         if grads_finite and self.ema_enable:
             for key, ema in self.emas.items():
                 ema.update(self.nets[key])
 
-        self.optimizer.zero_grad(set_to_none=True)
+        for opt in self.optimizers.values():
+            opt.zero_grad(set_to_none=True)
+
         self.last_opt_step = batches
         self.accum_counter = 0
 
@@ -802,9 +852,31 @@ class AlgorithmBase(ABC):
         self.set_eval()
 
     def save(
-        self, epoch: int, val_info: dict, best_fitness: float, save_path: str, record_dir: str, ckpt_dir: str
+        self, epoch: int, val_metrics: dict, best_fitness: float, save_path: str, record_dir: str, ckpt_dir: str
     ) -> None:
         """Save checkpoint."""
+        state = self.get_checkpoint_state(epoch, val_metrics, best_fitness, record_dir, ckpt_dir)
+
+        torch.save(state, save_path)
+        LOGGER.info(f"Saved checkpoint to {save_path}.")
+
+    def _get_unique_grad_params(self):
+        """Avoid doubling the penalty due to network parameter sharing."""
+        params = []
+        seen = set()
+
+        for net in self.nets.values():
+            for p in net.parameters():
+                if p.grad is not None and id(p) not in seen:
+                    params.append(p)
+                    seen.add(id(p))
+
+        return params
+
+    def get_checkpoint_state(
+        self, epoch: int, val_metrics: dict, best_fitness: float, record_dir: str, ckpt_dir: str
+    ) -> str:
+        """For asynchronous model saving in Trainer, get the checkpoint state to be saved."""
         state = {
             "epoch": epoch,
             "cfg": self.cfg,
@@ -818,7 +890,7 @@ class AlgorithmBase(ABC):
             "emas": None,
         }
 
-        for key, val in val_info.items():
+        for key, val in val_metrics.items():
             state[key] = val
 
         # save the nets' parameters
@@ -847,10 +919,49 @@ class AlgorithmBase(ABC):
                 }
             state["emas"] = emas
 
-        torch.save(state, save_path)
-        LOGGER.info(f"Saved checkpoint to {save_path}.")
+        return state
 
-    def load(self, checkpoint: str, load_ema: bool = False) -> dict[str, Any]:
+    def finetune(self, checkpoint: str, load_ema: bool = True) -> None:
+        """
+        Fine-tune from a checkpoint.
+
+        Only network parameters are loaded. Optimizer, scheduler, scaler, epoch, and best_fitness are not restored.
+        """
+        state = torch.load(checkpoint, map_location=self.device, weights_only=False)
+
+        if load_ema and state.get("emas") is not None:
+            LOGGER.info("Loading EMA parameters into networks for finetuning.")
+
+            for key, net in self.nets.items():
+                if key in state["emas"] and "model_state" in state["emas"][key]:
+                    net.load_state_dict(state["emas"][key]["model_state"], strict=True)
+                    LOGGER.info(f"Loaded EMA parameters into network '{key}' for finetuning.")
+                elif key in state.get("nets", {}):
+                    LOGGER.warning(f"EMA for network '{key}' not found, loading normal weights.")
+                    net.load_state_dict(state["nets"][key], strict=True)
+                else:
+                    raise KeyError(f"Network '{key}' not found in checkpoint.")
+
+        else:
+            LOGGER.info("Loading normal weights into networks for finetuning.")
+
+            for key, net in self.nets.items():
+                if key in state.get("nets", {}):
+                    net.load_state_dict(state["nets"][key], strict=True)
+                    LOGGER.info(f"Loaded normal weights into network '{key}' for finetuning.")
+                else:
+                    raise KeyError(f"Network '{key}' not found in checkpoint.")
+
+        # Reset EMA from the loaded finetuning weights
+        if self.ema_enable and hasattr(self, "emas"):
+            LOGGER.info("Resetting EMA states from finetuned networks.")
+            for key, ema in self.emas.items():
+                ema.ema.load_state_dict(self.nets[key].state_dict())
+                ema.updates = 0
+
+        LOGGER.info(f"Successfully loaded checkpoint for finetuning from {checkpoint}.")
+
+    def load(self, checkpoint: str, load_ema: bool = True) -> dict[str, Any]:
         """
         Load checkpoint.
 
